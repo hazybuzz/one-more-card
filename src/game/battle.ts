@@ -1,0 +1,728 @@
+import { Card, Suit, formatCard, isJoker } from './card';
+import { enemyName, t } from './i18n';
+import { Deck } from './deck';
+import { EnemyState, createEnemies, decideInvite } from './enemy';
+import { EnemyType } from './enemy';
+import { ResonanceKind, ScoreResult, scoreHand } from './scoring';
+
+export type BattlePhase = 'choice' | 'enemy-turn' | 'player-turn' | 'round-result' | 'battle-result';
+export type BattleOutcome = 'victory' | 'defeat' | undefined;
+
+export interface PlayerState {
+  hp: number;
+  maxHp: number;
+  hand: Card[];
+  fateMode: boolean;
+  drawCountThisRound: number;
+  resonanceShiftUsed: boolean;
+  resonanceSummonUsed: boolean;
+  drawLocked: boolean;
+  incomingDamageBonus: number;
+  soulRedeemUsed: boolean;
+}
+
+export interface BattleResult {
+  enemy: EnemyState;
+  enemyScore: ScoreResult;
+  playerScore: ScoreResult;
+  outcome: 'win' | 'lose' | 'draw';
+  damage: number;
+}
+
+export interface DamageEvent {
+  type: 'damage' | 'clash';
+  attacker?: 'player' | 'enemy';
+  enemyId: EnemyType;
+  amount: number;
+}
+
+export interface SkillResult {
+  used: boolean;
+  success: boolean;
+  message: string;
+}
+
+export class Battle {
+  readonly player: PlayerState;
+  readonly enemies: EnemyState[];
+  readonly log: string[];
+
+  phase: BattlePhase;
+  battleOutcome: BattleOutcome;
+  currentEnemyIndex: number;
+  round: number;
+  heat: number;
+  roundRevealed: boolean;
+  results: BattleResult[];
+  damageEvents: DamageEvent[];
+
+  private deck: Deck;
+
+  constructor() {
+    this.deck = new Deck();
+    this.player = {
+      hp: 12,
+      maxHp: 12,
+      hand: [],
+      fateMode: false,
+      drawCountThisRound: 0,
+      resonanceShiftUsed: false,
+      resonanceSummonUsed: false,
+      drawLocked: false,
+      incomingDamageBonus: 0,
+      soulRedeemUsed: false,
+    };
+    this.enemies = createEnemies();
+    this.log = [];
+    this.phase = 'choice';
+    this.battleOutcome = undefined;
+    this.currentEnemyIndex = 0;
+    this.round = 0;
+    this.heat = 0;
+    this.roundRevealed = false;
+    this.results = [];
+    this.damageEvents = [];
+    this.startRound();
+  }
+
+  chooseViewHand(): void {
+    if (this.phase !== 'choice') {
+      return;
+    }
+
+    this.player.fateMode = false;
+    this.logEvent(t('log.viewHand', { cards: this.player.hand.map(formatCard).join(' ') }));
+    this.phase = 'enemy-turn';
+  }
+
+  chooseFate(): void {
+    if (this.phase !== 'choice') {
+      return;
+    }
+
+    this.player.fateMode = true;
+    this.logEvent(t('log.fate'));
+    this.phase = 'enemy-turn';
+  }
+
+  inviteCurrentEnemy(): void {
+    this.clearDamageEvents();
+    const enemy = this.currentEnemy;
+    if (!enemy || this.phase !== 'enemy-turn' || enemy.invited !== undefined) {
+      return;
+    }
+
+    const drawCount = 1;
+    if (enemy.id === 'goblin' && enemy.hp < 3 && !enemy.passiveTriggeredThisRound) {
+      enemy.passiveTriggeredThisRound = true;
+      this.logEvent(t('log.goblinInstinct'));
+    }
+
+    const decision = decideInvite(enemy, this.heat, this.playerScore().point);
+    enemy.invited = true;
+    enemy.invitedDrawCount = drawCount;
+    enemy.acceptedInvite = decision.accepts;
+    if (decision.accepts) {
+      const cards = this.drawCards(drawCount);
+      enemy.hand.push(...cards);
+      this.addHeat(drawCount);
+      this.logEvent(t('log.enemyAcceptInvite', { enemy: enemyName(enemy.id), reason: decision.reason }));
+    } else {
+      this.logEvent(t('log.enemyRejectInvite', { enemy: enemyName(enemy.id), reason: decision.reason }));
+    }
+
+    this.advanceEnemy();
+  }
+
+  compareCurrentEnemy(): void {
+    this.clearDamageEvents();
+    const enemy = this.currentEnemy;
+    if (!enemy || this.phase !== 'enemy-turn') {
+      return;
+    }
+
+    this.applyLowPointCompareHeat();
+    const result = this.compareEnemy(enemy);
+    this.results.push(result);
+    enemy.compared = true;
+    this.logCompareResult(result);
+    this.applyDefeatAndReward(enemy);
+
+    if (this.trySoulRedeem()) {
+      return;
+    }
+
+    if (this.player.hp <= 0) {
+      this.battleOutcome = 'defeat';
+      this.phase = 'battle-result';
+      this.logEvent(t('log.playerHpZero'));
+      return;
+    }
+
+    this.advanceEnemy();
+  }
+
+  playerDraw(): void {
+    this.clearDamageEvents();
+    if (this.phase !== 'player-turn' || this.player.drawLocked || this.player.drawCountThisRound >= 2) {
+      return;
+    }
+
+    const heatGain = this.player.drawCountThisRound === 0 ? 1 : 2;
+    const card = this.deck.draw();
+    this.player.hand.push(card);
+    this.player.drawCountThisRound += 1;
+    this.addHeat(heatGain);
+    if (this.player.drawCountThisRound >= 2) {
+      this.player.incomingDamageBonus = 1;
+    }
+    this.logEvent(this.player.fateMode
+      ? t('log.playerDrawFate', { heatGain })
+      : t('log.playerDraw', { card: formatCard(card), heatGain }));
+
+    if (this.player.drawCountThisRound >= 2) {
+      this.logEvent(t('log.secondDrawRisk'));
+      this.logEvent(t('log.roundRevealNow'));
+      this.revealRound();
+    }
+  }
+
+  useResonanceShift(): SkillResult {
+    this.clearDamageEvents();
+    if (this.phase !== 'player-turn') {
+      return { used: false, success: false, message: t('skill.invalid.playerTurnOnly') };
+    }
+
+    if (this.player.resonanceShiftUsed) {
+      return { used: false, success: false, message: t('skill.invalid.shiftUsed') };
+    }
+
+    if (this.playerScore().resonance !== 'none') {
+      return { used: false, success: false, message: t('skill.invalid.shiftAlreadyResonant') };
+    }
+
+    const candidates = this.player.hand.filter((card) => !isJoker(card) && card.suit);
+    if (candidates.length < 2) {
+      this.logEvent(t('log.shiftNotEnough'));
+      return { used: false, success: false, message: t('skill.invalid.notEnoughSuitedCards') };
+    }
+
+    const conversion = this.chooseResonanceShift(candidates);
+    if (!conversion) {
+      this.logEvent(t('log.shiftNoNeed'));
+      return { used: false, success: false, message: t('skill.invalid.noShiftPath') };
+    }
+
+    this.player.resonanceShiftUsed = true;
+    this.player.drawLocked = true;
+
+    if (Math.random() >= 0.7) {
+      this.logEvent(t('log.shiftFail'));
+      return { used: true, success: false, message: t('log.shiftFail') };
+    }
+
+    const before = formatCard(conversion.card);
+    conversion.card.suit = conversion.targetSuit;
+    const after = formatCard(conversion.card);
+    this.logEvent(t('log.shiftSuccess', { before, after }));
+    return { used: true, success: true, message: t('log.shiftSuccessShort', { before, after }) };
+  }
+
+  useResonanceSummon(): SkillResult {
+    this.clearDamageEvents();
+    if (this.phase !== 'player-turn') {
+      return { used: false, success: false, message: t('skill.invalid.playerTurnOnly') };
+    }
+
+    if (this.player.resonanceSummonUsed) {
+      return { used: false, success: false, message: t('skill.invalid.summonUsed') };
+    }
+
+    const score = this.playerScore();
+    if (score.resonance === 'none') {
+      this.logEvent(t('log.summonNoResonance'));
+      return { used: false, success: false, message: t('skill.invalid.noResonance') };
+    }
+
+    const targetSuit = this.chooseResonanceSummonSuit();
+    if (!targetSuit) {
+      this.logEvent(t('log.summonNoSuit'));
+      return { used: false, success: false, message: t('skill.invalid.noSummonSuit') };
+    }
+
+    const card = this.deck.drawWhere((candidate) => !isJoker(candidate) && candidate.suit === targetSuit);
+    if (!card) {
+      this.logEvent(t('log.summonNoDeckSuit', { suit: targetSuit }));
+      return { used: false, success: false, message: t('skill.invalid.noSuitInDeck', { suit: targetSuit }) };
+    }
+
+    this.player.resonanceSummonUsed = true;
+    this.player.incomingDamageBonus = 1;
+    this.player.hand.push(card);
+    this.addHeat(1);
+    this.logEvent(t('log.summon', { card: formatCard(card) }));
+    this.revealRound();
+    return { used: true, success: true, message: t('log.summonShort', { card: formatCard(card) }) };
+  }
+
+  playerStand(): void {
+    this.clearDamageEvents();
+    if (this.phase !== 'player-turn') {
+      return;
+    }
+
+    this.logEvent(t('log.playerStand'));
+    this.revealRound();
+  }
+
+  nextRound(): void {
+    this.clearDamageEvents();
+    if (this.phase !== 'round-result') {
+      return;
+    }
+
+    this.startRound();
+  }
+
+  get currentEnemy(): EnemyState | undefined {
+    return this.enemies[this.currentEnemyIndex];
+  }
+
+  get aliveEnemies(): EnemyState[] {
+    return this.enemies.filter((enemy) => !enemy.defeated);
+  }
+
+  get heatStage(): string {
+    if (this.heat <= 2) {
+      return t('battle.heatStage.conservative');
+    }
+
+    if (this.heat <= 5) {
+      return t('battle.heatStage.balanced');
+    }
+
+    return t('battle.heatStage.aggressive');
+  }
+
+  playerScore(): ScoreResult {
+    return scoreHand(this.player.hand);
+  }
+
+  canUseResonanceShift(): boolean {
+    if (this.phase !== 'player-turn' || this.player.resonanceShiftUsed || this.playerScore().resonance !== 'none') {
+      return false;
+    }
+
+    const candidates = this.player.hand.filter((card) => !isJoker(card) && card.suit);
+    return this.chooseResonanceShift(candidates) !== undefined;
+  }
+
+  private startRound(): void {
+    this.deck = new Deck();
+    this.round += 1;
+    this.results = [];
+    this.phase = 'choice';
+    this.battleOutcome = undefined;
+    this.roundRevealed = false;
+    this.currentEnemyIndex = this.firstAliveEnemyIndex();
+    this.player.fateMode = false;
+    this.player.drawCountThisRound = 0;
+    this.player.resonanceShiftUsed = false;
+    this.player.resonanceSummonUsed = false;
+    this.player.drawLocked = false;
+    this.player.incomingDamageBonus = 0;
+    this.player.hand = [this.deck.draw(), this.deck.draw()];
+    this.enemies.forEach((enemy) => {
+      enemy.hand = [];
+      enemy.revealed = false;
+      enemy.compared = false;
+      enemy.invited = undefined;
+      enemy.acceptedInvite = undefined;
+      enemy.invitedDrawCount = undefined;
+      enemy.passiveTriggeredThisRound = false;
+
+      if (enemy.defeated) {
+        return;
+      }
+
+      enemy.hand = [this.deck.draw(), this.deck.draw()];
+    });
+    this.logEvent(t('log.roundStart', { round: this.round }));
+  }
+
+  private advanceEnemy(): void {
+    const enemy = this.currentEnemy;
+    if (enemy) {
+      enemy.revealed = false;
+    }
+
+    this.currentEnemyIndex += 1;
+    this.currentEnemyIndex = this.nextAliveEnemyIndex(this.currentEnemyIndex);
+    if (this.currentEnemyIndex >= this.enemies.length) {
+      if (this.aliveEnemies.every((enemy) => enemy.compared)) {
+        this.logEvent(t('log.allComparedReveal'));
+        this.revealRound();
+        return;
+      }
+
+      this.phase = 'player-turn';
+      this.logEvent(t('log.enemyPhaseDone'));
+    } else {
+      const nextEnemy = this.currentEnemy;
+      if (nextEnemy) {
+        this.logEvent(t('log.currentTarget', { enemy: enemyName(nextEnemy.id) }));
+      }
+    }
+  }
+
+  private compareEnemy(enemy: EnemyState, playerScoreOverride?: ScoreResult): BattleResult {
+    this.applyPreComparePassive(enemy);
+    const playerScore = playerScoreOverride ?? this.scoreFor(this.player.hand);
+    const fateDamageMultiplier = this.player.fateMode ? 2 : 1;
+    const enemyScore = this.scoreFor(enemy.hand);
+    let outcome: BattleResult['outcome'] = 'draw';
+    let damage = 0;
+
+    const comparison = compareScores(playerScore, enemyScore);
+
+    if (comparison > 0) {
+      outcome = 'win';
+      damage = playerScore.multiplier * fateDamageMultiplier;
+      enemy.hp = Math.max(0, enemy.hp - damage);
+      this.damageEvents.push({ type: 'damage', attacker: 'player', enemyId: enemy.id, amount: damage });
+    } else if (comparison < 0) {
+      outcome = 'lose';
+      damage = enemyScore.multiplier + (this.heat >= 5 ? 1 : 0) + this.player.incomingDamageBonus;
+      this.player.hp = Math.max(0, this.player.hp - damage);
+      this.applyPostDamagePassive(enemy, damage);
+      this.damageEvents.push({ type: 'damage', attacker: 'enemy', enemyId: enemy.id, amount: damage });
+    } else {
+      this.damageEvents.push({ type: 'clash', enemyId: enemy.id, amount: 0 });
+    }
+
+    return {
+      enemy,
+      enemyScore,
+      playerScore,
+      outcome,
+      damage,
+    };
+  }
+
+  private revealRound(): void {
+    this.comparePendingEnemies();
+    if (this.trySoulRedeem()) {
+      return;
+    }
+
+    this.roundRevealed = true;
+    this.results.forEach((result) => {
+      result.enemy.revealed = true;
+    });
+
+    this.logEvent(t('log.roundRevealHeader', { round: this.round }));
+    this.logEvent(t('log.playerReveal', { cards: this.player.hand.map(formatCard).join(' '), score: describeScore(this.revealPlayerScore()) }));
+    this.results.forEach((result) => {
+      this.logEvent(t('log.enemyReveal', {
+        enemy: enemyName(result.enemy.id),
+        cards: result.enemy.hand.map(formatCard).join(' '),
+        score: describeScore(result.enemyScore),
+        outcome: describeOutcome(result),
+      }));
+    });
+    this.updateBattleOutcome();
+  }
+
+  private comparePendingEnemies(): void {
+    const playerScore = this.scoreFor(this.player.hand);
+    for (const enemy of this.aliveEnemies) {
+      if (enemy.compared) {
+        continue;
+      }
+
+      const result = this.compareEnemy(enemy, playerScore);
+      this.results.push(result);
+      enemy.compared = true;
+      this.logCompareResult(result);
+      this.applyDefeatAndReward(enemy);
+
+      if (this.player.hp <= 0) {
+        return;
+      }
+    }
+  }
+
+  private applyPreComparePassive(enemy: EnemyState): void {
+    if (enemy.id !== 'gambler' || enemy.hp >= 3 || enemy.passiveTriggeredThisRound) {
+      return;
+    }
+
+    const point = this.scoreFor(enemy.hand).point;
+    if (point >= 4) {
+      return;
+    }
+
+    const drawCount = enemy.hand.length;
+    enemy.hand = this.drawCards(drawCount as 1 | 2);
+    enemy.passiveTriggeredThisRound = true;
+    this.logEvent(t('log.gamblerBlessing', { count: drawCount }));
+  }
+
+  private applyPostDamagePassive(enemy: EnemyState, damage: number): void {
+    if (enemy.id !== 'werewolf' || enemy.hp >= 3 || damage <= 0) {
+      return;
+    }
+
+    const beforeHeal = enemy.hp;
+    enemy.hp = Math.min(enemy.maxHp, enemy.hp + damage);
+    const healed = enemy.hp - beforeHeal;
+    if (healed > 0) {
+      this.logEvent(t('log.werewolfLifesteal', { healed }));
+    }
+  }
+
+  private applyDefeatAndReward(enemy: EnemyState): void {
+    if (enemy.defeated || enemy.hp > 0) {
+      return;
+    }
+
+    enemy.defeated = true;
+    const beforeHeal = this.player.hp;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
+    const healed = this.player.hp - beforeHeal;
+    this.logEvent(t('log.enemyDefeatedReward', { enemy: enemyName(enemy.id), healed }));
+  }
+
+  private trySoulRedeem(): boolean {
+    if (this.player.hp > 0 || this.player.soulRedeemUsed || this.enemies.every((enemy) => enemy.defeated)) {
+      return false;
+    }
+
+    this.player.soulRedeemUsed = true;
+    this.player.hp = 1;
+    this.logEvent(t('log.soulRedeem'));
+    this.startRound();
+    return true;
+  }
+
+  private logCompareResult(result: BattleResult): void {
+    const resonanceText = this.compareResonanceText(result);
+    if (result.outcome === 'win') {
+      this.logEvent(t('log.enemyDefeated', { enemy: enemyName(result.enemy.id), resonance: resonanceText, damage: result.damage }));
+    } else if (result.outcome === 'lose') {
+      this.logEvent(t('log.playerDefeated', { resonance: resonanceText, damage: result.damage }));
+    } else {
+      this.logEvent(t('log.compareDraw', { enemy: enemyName(result.enemy.id), resonance: resonanceText }));
+    }
+  }
+
+  private compareResonanceText(result: BattleResult): string {
+    if (result.outcome === 'win' && result.playerScore.resonance !== 'none') {
+      return t('log.triggerResonance', { resonance: result.playerScore.resonance === 'strong' ? t('log.triggerResonanceStrong') : t('log.triggerResonanceNormal') });
+    }
+
+    if (result.outcome === 'lose' && result.enemyScore.resonance !== 'none') {
+      return t('log.triggerResonance', { resonance: result.enemyScore.resonance === 'strong' ? t('log.triggerResonanceStrong') : t('log.triggerResonanceNormal') });
+    }
+
+    return '';
+  }
+
+  private updateBattleOutcome(): void {
+    if (this.enemies.every((enemy) => enemy.defeated)) {
+      this.battleOutcome = 'victory';
+      this.phase = 'battle-result';
+      this.logEvent(t('log.battleVictory'));
+      return;
+    }
+
+    if (this.trySoulRedeem()) {
+      return;
+    }
+
+    if (this.player.hp <= 0) {
+      this.battleOutcome = 'defeat';
+      this.phase = 'battle-result';
+      this.logEvent(t('log.playerHpZero'));
+      return;
+    }
+
+    this.phase = 'round-result';
+    this.logEvent(t('log.nextRoundReady'));
+  }
+
+  private firstAliveEnemyIndex(): number {
+    return this.nextAliveEnemyIndex(0);
+  }
+
+  private nextAliveEnemyIndex(startIndex: number): number {
+    for (let index = startIndex; index < this.enemies.length; index += 1) {
+      if (!this.enemies[index].defeated) {
+        return index;
+      }
+    }
+
+    return this.enemies.length;
+  }
+
+  private logEvent(message: string): void {
+    this.log.unshift(message);
+    if (this.log.length > 18) {
+      this.log.pop();
+    }
+  }
+
+  private clearDamageEvents(): void {
+    this.damageEvents = [];
+  }
+
+  private drawCards(count: number): Card[] {
+    return Array.from({ length: count }, () => this.deck.draw());
+  }
+
+  private addHeat(amount: number): void {
+    this.heat += amount;
+  }
+
+  private applyLowPointCompareHeat(): void {
+    const point = this.playerScore().point;
+    if (point >= 8) {
+      return;
+    }
+
+    this.addHeat(1);
+    this.logEvent(t('log.lowPointCompare', { point }));
+  }
+
+  private scoreFor(hand: Card[]): ScoreResult {
+    return scoreHand(hand);
+  }
+
+  private chooseResonanceShift(cards: Card[]): { card: Card; targetSuit: Suit } | undefined {
+    if (cards.length < 2) {
+      return undefined;
+    }
+
+    const suitGroups = new Map<Suit, Card[]>();
+    cards.forEach((card) => {
+      if (!card.suit) {
+        return;
+      }
+
+      const group = suitGroups.get(card.suit) ?? [];
+      group.push(card);
+      suitGroups.set(card.suit, group);
+    });
+
+    if (suitGroups.size <= 1) {
+      return undefined;
+    }
+
+    const groups = [...suitGroups.entries()];
+    if (groups.length > 2) {
+      return undefined;
+    }
+
+    const counts = groups.map(([, group]) => group.length);
+    const allEqual = counts.every((count) => count === counts[0]);
+
+    if (allEqual) {
+      if (cards.length !== 2) {
+        return undefined;
+      }
+
+      const source = randomItem(cards);
+      const target = randomItem(cards.filter((card) => card !== source && card.suit && card.suit !== source?.suit));
+      if (!source || !target?.suit) {
+        return undefined;
+      }
+
+      return { card: source, targetSuit: target.suit };
+    }
+
+    const maxCount = Math.max(...counts);
+    const minCount = Math.min(...counts);
+    if (minCount !== 1) {
+      return undefined;
+    }
+
+    const majoritySuits = groups.filter(([, group]) => group.length === maxCount).map(([suit]) => suit);
+    const minorityCards = groups.filter(([, group]) => group.length === minCount).flatMap(([, group]) => group);
+    const card = randomItem(minorityCards);
+    const targetSuit = randomItem(majoritySuits);
+    if (!card || !targetSuit || card.suit === targetSuit) {
+      return undefined;
+    }
+
+    return { card, targetSuit };
+  }
+
+  private chooseResonanceSummonSuit(): Suit | undefined {
+    const suitedCards = this.player.hand.filter((card) => !isJoker(card) && card.suit);
+    if (suitedCards.length === 0) {
+      return randomItem(['♠', '♥', '♦', '♣']);
+    }
+
+    const counts = new Map<Suit, number>();
+    suitedCards.forEach((card) => {
+      if (!card.suit) {
+        return;
+      }
+
+      counts.set(card.suit, (counts.get(card.suit) ?? 0) + 1);
+    });
+
+    const maxCount = Math.max(...counts.values());
+    return randomItem([...counts.entries()].filter(([, count]) => count === maxCount).map(([suit]) => suit));
+  }
+
+  private revealPlayerScore(): ScoreResult {
+    const lastPlayerScore = [...this.results].reverse().find((result) => result.playerScore)?.playerScore;
+    return lastPlayerScore ?? this.playerScore();
+  }
+}
+
+export function describeScore(score: ScoreResult): string {
+  const resonance = score.resonance === 'strong'
+    ? t('score.strongResonance', { multiplier: score.multiplier })
+    : score.resonance === 'resonance'
+      ? t('score.resonance', { multiplier: score.multiplier })
+      : t('score.noResonance');
+  return t('score.describe', { point: score.point, resonance });
+}
+
+function describeOutcome(result: BattleResult): string {
+  if (result.outcome === 'win') {
+    return t('score.outcome.playerWin');
+  }
+
+  if (result.outcome === 'lose') {
+    return t('score.outcome.enemyWin', { enemy: enemyName(result.enemy.id) });
+  }
+
+  return t('score.outcome.draw');
+}
+
+function compareScores(playerScore: ScoreResult, enemyScore: ScoreResult): number {
+  if (playerScore.point !== enemyScore.point) {
+    return playerScore.point - enemyScore.point;
+  }
+
+  return resonanceRank(playerScore.resonance) - resonanceRank(enemyScore.resonance);
+}
+
+function resonanceRank(resonance: ResonanceKind): number {
+  if (resonance === 'strong') {
+    return 2;
+  }
+
+  if (resonance === 'resonance') {
+    return 1;
+  }
+
+  return 0;
+}
+
+function randomItem<T>(items: T[]): T | undefined {
+  return items[Math.floor(Math.random() * items.length)];
+}
