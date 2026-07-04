@@ -35,6 +35,26 @@ export function formatCard(card: Card): string {
   return `${card.suit}${card.rank}`;
 }
 
+export function cardImageIndex(card: Card): number {
+  if (card.rank === '小王') {
+    return 53;
+  }
+
+  if (card.rank === '大王') {
+    return 54;
+  }
+
+  const rankOrder: Rank[] = ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2'];
+  const suitOrder: Suit[] = ['♣', '♠', '♥', '♦'];
+  const rankIndex = rankOrder.indexOf(card.rank);
+  const suitIndex = card.suit ? suitOrder.indexOf(card.suit) : -1;
+  if (rankIndex < 0 || suitIndex < 0) {
+    return 53;
+  }
+
+  return rankIndex * 4 + suitIndex + 1;
+}
+
 export function isJoker(card: Card): boolean {
   return card.rank === '小王' || card.rank === '大王';
 }

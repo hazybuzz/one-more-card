@@ -1,4 +1,6 @@
 import Phaser from 'phaser';
+import { preloadCardImages } from '../game/assets';
+import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
 import { BATTLE_ENTRY_COST, payBattleEntry } from '../game/economy';
 import { t, toggleLanguage } from '../game/i18n';
 import { getProgress, resetProgress } from '../game/progress';
@@ -28,7 +30,16 @@ export class StartScene extends Phaser.Scene {
     this.pendingStatus = data?.status ?? '';
   }
 
+  preload(): void {
+    preloadLobbyMusic(this);
+    preloadCardImages(this);
+    if (!this.cache.audio.exists('buttonClick')) {
+      this.load.audio('buttonClick', '/audio/switch28.ogg');
+    }
+  }
+
   create(): void {
+    playLobbyMusic(this);
     this.addBackground();
     this.renderLanguageToggle();
     this.renderSoulCoins();
@@ -100,11 +111,14 @@ export class StartScene extends Phaser.Scene {
         this.time.delayedCall(320, () => this.scene.start('BattleScene'));
       }),
       this.menuButton(0, 78, 260, 58, t('start.shop'), () => {
-        this.showStatus(t('start.shopUnavailable'));
+        this.scene.start('ShopScene');
+      }),
+      this.menuButton(0, 156, 260, 58, t('start.inventory'), () => {
+        this.scene.start('InventoryScene');
       }),
     ]);
 
-    this.statusText = this.add.text(640, 520, '', {
+    this.statusText = this.add.text(640, 596, '', {
       fontFamily: 'Arial',
       fontSize: '17px',
       color: COLORS.accentText,
@@ -132,10 +146,17 @@ export class StartScene extends Phaser.Scene {
     rect.setInteractive({ useHandCursor: true });
     rect.on('pointerover', () => rect.setFillStyle(COLORS.buttonHover));
     rect.on('pointerout', () => rect.setFillStyle(COLORS.button));
-    rect.on('pointerdown', onClick);
+    rect.on('pointerdown', () => {
+      this.playButtonClick();
+      onClick();
+    });
 
     button.add([rect, text]);
     return button;
+  }
+
+  private playButtonClick(): void {
+    this.sound.play('buttonClick', { volume: 0.42 });
   }
 
   private showStatus(message: string): void {

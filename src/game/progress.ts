@@ -14,7 +14,9 @@ const STORAGE_KEY = 'one-more-card-progress';
 
 const DEFAULT_PROGRESS: GameProgress = {
   soulCoins: 100,
-  ownedItems: {},
+  ownedItems: {
+    heal_potion: 2,
+  },
   stats: {
     wins: 0,
     losses: 0,

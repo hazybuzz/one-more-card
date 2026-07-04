@@ -1,4 +1,4 @@
-import { Card, Suit, formatCard, isJoker } from './card';
+import { Card, RANKS, SUITS, Suit, formatCard, isJoker } from './card';
 import { enemyName, t } from './i18n';
 import { Deck } from './deck';
 import { EnemyState, createEnemies, decideInvite } from './enemy';
@@ -34,6 +34,7 @@ export interface DamageEvent {
   attacker?: 'player' | 'enemy';
   enemyId: EnemyType;
   amount: number;
+  resonance?: ResonanceKind;
 }
 
 export interface SkillResult {
@@ -53,6 +54,7 @@ export class Battle {
   round: number;
   heat: number;
   roundRevealed: boolean;
+  pendingSoulRedeem: boolean;
   results: BattleResult[];
   damageEvents: DamageEvent[];
 
@@ -80,6 +82,7 @@ export class Battle {
     this.round = 0;
     this.heat = 0;
     this.roundRevealed = false;
+    this.pendingSoulRedeem = false;
     this.results = [];
     this.damageEvents = [];
     this.startRound();
@@ -148,7 +151,7 @@ export class Battle {
     this.logCompareResult(result);
     this.applyDefeatAndReward(enemy);
 
-    if (this.trySoulRedeem()) {
+    if (this.markSoulRedeemPending()) {
       return;
     }
 
@@ -181,9 +184,9 @@ export class Battle {
       : t('log.playerDraw', { card: formatCard(card), heatGain }));
 
     if (this.player.drawCountThisRound >= 2) {
+      this.player.drawLocked = true;
       this.logEvent(t('log.secondDrawRisk'));
-      this.logEvent(t('log.roundRevealNow'));
-      this.revealRound();
+      this.logEvent(t('log.playerMustReveal'));
     }
   }
 
@@ -257,11 +260,13 @@ export class Battle {
     }
 
     this.player.resonanceSummonUsed = true;
+    this.player.resonanceShiftUsed = true;
+    this.player.drawLocked = true;
     this.player.incomingDamageBonus = 1;
     this.player.hand.push(card);
     this.addHeat(1);
     this.logEvent(t('log.summon', { card: formatCard(card) }));
-    this.revealRound();
+    this.logEvent(t('log.playerMustReveal'));
     return { used: true, success: true, message: t('log.summonShort', { card: formatCard(card) }) };
   }
 
@@ -284,6 +289,11 @@ export class Battle {
     this.startRound();
   }
 
+  revealByItem(): void {
+    this.clearDamageEvents();
+    this.revealRound();
+  }
+
   get currentEnemy(): EnemyState | undefined {
     return this.enemies[this.currentEnemyIndex];
   }
@@ -294,14 +304,26 @@ export class Battle {
 
   get heatStage(): string {
     if (this.heat <= 2) {
-      return t('battle.heatStage.conservative');
+      return t('battle.heatStage.stable');
     }
 
     if (this.heat <= 5) {
-      return t('battle.heatStage.balanced');
+      return t('battle.heatStage.warming');
     }
 
-    return t('battle.heatStage.aggressive');
+    return t('battle.heatStage.overheat');
+  }
+
+  get heatDamageBonus(): number {
+    if (this.heat >= 6) {
+      return 2;
+    }
+
+    if (this.heat >= 3) {
+      return 1;
+    }
+
+    return 0;
   }
 
   playerScore(): ScoreResult {
@@ -317,12 +339,56 @@ export class Battle {
     return this.chooseResonanceShift(candidates) !== undefined;
   }
 
+  healPlayer(amount: number): number {
+    const beforeHp = this.player.hp;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + Math.max(0, Math.floor(amount)));
+    return this.player.hp - beforeHp;
+  }
+
+  reduceHeat(amount: number): number {
+    const beforeHeat = this.heat;
+    this.heat = Math.max(0, this.heat - Math.max(0, Math.floor(amount)));
+    return beforeHeat - this.heat;
+  }
+
+  addLog(message: string): void {
+    this.logEvent(message);
+  }
+
+  useResonanceHorn(): { success: boolean; cards: Card[] } {
+    const success = Math.random() < 0.8;
+    if (success) {
+      this.player.hand = this.createRandomResonantPair();
+    }
+
+    this.player.fateMode = false;
+    this.logEvent(success
+      ? t('itemEffect.resonanceHorn.success', { cards: this.player.hand.map(formatCard).join(' ') })
+      : t('itemEffect.resonanceHorn.fail', { cards: this.player.hand.map(formatCard).join(' ') }));
+    this.phase = 'enemy-turn';
+    return {
+      success,
+      cards: this.player.hand,
+    };
+  }
+
+  rerollPlayerHandByFate(): Card[] {
+    const drawCount = Math.max(1, this.player.hand.length);
+    this.player.hand = this.drawCards(drawCount);
+    this.player.incomingDamageBonus = Math.max(this.player.incomingDamageBonus, 1);
+    this.player.drawLocked = true;
+    this.player.resonanceShiftUsed = true;
+    this.player.resonanceSummonUsed = true;
+    return this.player.hand;
+  }
+
   private startRound(): void {
     this.deck = new Deck();
     this.round += 1;
     this.results = [];
     this.phase = 'choice';
     this.battleOutcome = undefined;
+    this.heat = 0;
     this.roundRevealed = false;
     this.currentEnemyIndex = this.firstAliveEnemyIndex();
     this.player.fateMode = false;
@@ -387,15 +453,15 @@ export class Battle {
 
     if (comparison > 0) {
       outcome = 'win';
-      damage = playerScore.multiplier * fateDamageMultiplier;
+      damage = playerScore.multiplier * fateDamageMultiplier + this.heatDamageBonus;
       enemy.hp = Math.max(0, enemy.hp - damage);
-      this.damageEvents.push({ type: 'damage', attacker: 'player', enemyId: enemy.id, amount: damage });
+      this.damageEvents.push({ type: 'damage', attacker: 'player', enemyId: enemy.id, amount: damage, resonance: playerScore.resonance });
     } else if (comparison < 0) {
       outcome = 'lose';
-      damage = enemyScore.multiplier + (this.heat >= 5 ? 1 : 0) + this.player.incomingDamageBonus;
+      damage = enemyScore.multiplier + this.heatDamageBonus + this.player.incomingDamageBonus;
       this.player.hp = Math.max(0, this.player.hp - damage);
       this.applyPostDamagePassive(enemy, damage);
-      this.damageEvents.push({ type: 'damage', attacker: 'enemy', enemyId: enemy.id, amount: damage });
+      this.damageEvents.push({ type: 'damage', attacker: 'enemy', enemyId: enemy.id, amount: damage, resonance: enemyScore.resonance });
     } else {
       this.damageEvents.push({ type: 'clash', enemyId: enemy.id, amount: 0 });
     }
@@ -411,10 +477,6 @@ export class Battle {
 
   private revealRound(): void {
     this.comparePendingEnemies();
-    if (this.trySoulRedeem()) {
-      return;
-    }
-
     this.roundRevealed = true;
     this.results.forEach((result) => {
       result.enemy.revealed = true;
@@ -430,6 +492,11 @@ export class Battle {
         outcome: describeOutcome(result),
       }));
     });
+
+    if (this.markSoulRedeemPending()) {
+      return;
+    }
+
     this.updateBattleOutcome();
   }
 
@@ -493,15 +560,28 @@ export class Battle {
     this.logEvent(t('log.enemyDefeatedReward', { enemy: enemyName(enemy.id), healed }));
   }
 
-  private trySoulRedeem(): boolean {
+  resolveSoulRedeem(): void {
+    if (!this.pendingSoulRedeem) {
+      return;
+    }
+
+    this.pendingSoulRedeem = false;
+    this.player.hp = 1;
+    this.startRound();
+  }
+
+  private markSoulRedeemPending(): boolean {
     if (this.player.hp > 0 || this.player.soulRedeemUsed || this.enemies.every((enemy) => enemy.defeated)) {
       return false;
     }
 
     this.player.soulRedeemUsed = true;
-    this.player.hp = 1;
+    this.pendingSoulRedeem = true;
+    this.roundRevealed = true;
+    this.results.forEach((result) => {
+      result.enemy.revealed = true;
+    });
     this.logEvent(t('log.soulRedeem'));
-    this.startRound();
     return true;
   }
 
@@ -536,7 +616,7 @@ export class Battle {
       return;
     }
 
-    if (this.trySoulRedeem()) {
+    if (this.markSoulRedeemPending()) {
       return;
     }
 
@@ -572,7 +652,7 @@ export class Battle {
     }
   }
 
-  private clearDamageEvents(): void {
+  clearDamageEvents(): void {
     this.damageEvents = [];
   }
 
@@ -674,6 +754,24 @@ export class Battle {
 
     const maxCount = Math.max(...counts.values());
     return randomItem([...counts.entries()].filter(([, count]) => count === maxCount).map(([suit]) => suit));
+  }
+
+  private createRandomResonantPair(): Card[] {
+    if (Math.random() < 0.5) {
+      const suit = randomItem(SUITS) ?? '♠';
+      return [
+        { suit, rank: randomItem(RANKS) ?? 'A' },
+        { suit, rank: randomItem(RANKS) ?? '2' },
+      ];
+    }
+
+    const rank = randomItem(RANKS) ?? 'A';
+    const firstSuit = randomItem(SUITS) ?? '♠';
+    const otherSuits = SUITS.filter((suit) => suit !== firstSuit);
+    return [
+      { suit: firstSuit, rank },
+      { suit: randomItem(otherSuits) ?? '♥', rank },
+    ];
   }
 
   private revealPlayerScore(): ScoreResult {
