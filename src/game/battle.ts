@@ -1,9 +1,11 @@
 import { Card, RANKS, SUITS, Suit, formatCard, isJoker } from './card';
+import { getLevelById } from './data/levelRegistry';
 import { enemyName, t } from './i18n';
 import { Deck } from './deck';
-import { EnemyState, createEnemies, decideInvite } from './enemy';
+import { EnemyState, createEnemiesForLevel, decideInvite } from './enemy';
 import { EnemyType } from './enemy';
 import { ResonanceKind, ScoreResult, scoreHand } from './scoring';
+import type { LevelConfig } from './types/level';
 
 export type BattlePhase = 'choice' | 'enemy-turn' | 'player-turn' | 'round-result' | 'battle-result';
 export type BattleOutcome = 'victory' | 'defeat' | undefined;
@@ -16,6 +18,8 @@ export interface PlayerState {
   drawCountThisRound: number;
   resonanceShiftUsed: boolean;
   resonanceSummonUsed: boolean;
+  resonanceShiftCooldown: number;
+  resonanceSummonCooldown: number;
   drawLocked: boolean;
   incomingDamageBonus: number;
   soulRedeemUsed: boolean;
@@ -43,10 +47,16 @@ export interface SkillResult {
   message: string;
 }
 
+export interface BattleInitOptions {
+  levelId?: string;
+  levelConfig?: LevelConfig;
+}
+
 export class Battle {
   readonly player: PlayerState;
   readonly enemies: EnemyState[];
   readonly log: string[];
+  readonly levelConfig?: LevelConfig;
 
   phase: BattlePhase;
   battleOutcome: BattleOutcome;
@@ -60,21 +70,25 @@ export class Battle {
 
   private deck: Deck;
 
-  constructor() {
+  constructor(options: BattleInitOptions = {}) {
     this.deck = new Deck();
+    this.levelConfig = options.levelConfig ?? (options.levelId ? getLevelById(options.levelId) : undefined);
+    const playerHp = this.levelConfig?.playerHp ?? 12;
     this.player = {
-      hp: 12,
-      maxHp: 12,
+      hp: playerHp,
+      maxHp: playerHp,
       hand: [],
       fateMode: false,
       drawCountThisRound: 0,
       resonanceShiftUsed: false,
       resonanceSummonUsed: false,
+      resonanceShiftCooldown: 0,
+      resonanceSummonCooldown: 0,
       drawLocked: false,
       incomingDamageBonus: 0,
       soulRedeemUsed: false,
     };
-    this.enemies = createEnemies();
+    this.enemies = createEnemiesForLevel(this.levelConfig);
     this.log = [];
     this.phase = 'choice';
     this.battleOutcome = undefined;
@@ -200,6 +214,10 @@ export class Battle {
       return { used: false, success: false, message: t('skill.invalid.shiftUsed') };
     }
 
+    if (this.player.resonanceShiftCooldown > 0) {
+      return { used: false, success: false, message: t('skill.invalid.shiftCooldown', { rounds: this.player.resonanceShiftCooldown }) };
+    }
+
     if (this.playerScore().resonance !== 'none') {
       return { used: false, success: false, message: t('skill.invalid.shiftAlreadyResonant') };
     }
@@ -217,12 +235,8 @@ export class Battle {
     }
 
     this.player.resonanceShiftUsed = true;
+    this.player.resonanceShiftCooldown = 2;
     this.player.drawLocked = true;
-
-    if (Math.random() >= 0.7) {
-      this.logEvent(t('log.shiftFail'));
-      return { used: true, success: false, message: t('log.shiftFail') };
-    }
 
     const before = formatCard(conversion.card);
     conversion.card.suit = conversion.targetSuit;
@@ -239,6 +253,10 @@ export class Battle {
 
     if (this.player.resonanceSummonUsed) {
       return { used: false, success: false, message: t('skill.invalid.summonUsed') };
+    }
+
+    if (this.player.resonanceSummonCooldown > 0) {
+      return { used: false, success: false, message: t('skill.invalid.summonCooldown', { rounds: this.player.resonanceSummonCooldown }) };
     }
 
     const score = this.playerScore();
@@ -260,6 +278,7 @@ export class Battle {
     }
 
     this.player.resonanceSummonUsed = true;
+    this.player.resonanceSummonCooldown = 2;
     this.player.resonanceShiftUsed = true;
     this.player.drawLocked = true;
     this.player.incomingDamageBonus = 1;
@@ -331,7 +350,7 @@ export class Battle {
   }
 
   canUseResonanceShift(): boolean {
-    if (this.phase !== 'player-turn' || this.player.resonanceShiftUsed || this.playerScore().resonance !== 'none') {
+    if (this.phase !== 'player-turn' || this.player.resonanceShiftUsed || this.player.resonanceShiftCooldown > 0 || this.playerScore().resonance !== 'none') {
       return false;
     }
 
@@ -395,6 +414,8 @@ export class Battle {
     this.player.drawCountThisRound = 0;
     this.player.resonanceShiftUsed = false;
     this.player.resonanceSummonUsed = false;
+    this.player.resonanceShiftCooldown = Math.max(0, this.player.resonanceShiftCooldown - 1);
+    this.player.resonanceSummonCooldown = Math.max(0, this.player.resonanceSummonCooldown - 1);
     this.player.drawLocked = false;
     this.player.incomingDamageBonus = 0;
     this.player.hand = [this.deck.draw(), this.deck.draw()];
@@ -566,7 +587,7 @@ export class Battle {
     }
 
     this.pendingSoulRedeem = false;
-    this.player.hp = 1;
+    this.player.hp = Math.min(this.player.maxHp, 3);
     this.startRound();
   }
 

@@ -1,13 +1,13 @@
 import { Card, isJoker } from './card';
+import { ENEMY_LIST } from './data/enemies';
 import { t } from './i18n';
 import { scoreHand } from './scoring';
+import type { EnemyConfig, EnemyId } from './types/enemy';
+import type { LevelConfig } from './types/level';
 
-export type EnemyType = 'goblin' | 'gambler' | 'werewolf';
+export type EnemyType = EnemyId;
 
-export interface EnemyDefinition {
-  id: EnemyType;
-  maxHp: number;
-}
+export type EnemyDefinition = Pick<EnemyConfig, 'id' | 'maxHp'>;
 
 export interface EnemyState extends EnemyDefinition {
   hp: number;
@@ -26,22 +26,32 @@ export interface EnemyDecision {
   reason: string;
 }
 
-export const ENEMIES: EnemyDefinition[] = [
-  { id: 'goblin', maxHp: 5 },
-  { id: 'gambler', maxHp: 7 },
-  { id: 'werewolf', maxHp: 8 },
-];
+export const ENEMIES: EnemyDefinition[] = ENEMY_LIST.map(({ id, maxHp }) => ({ id, maxHp }));
 
 export function createEnemies(): EnemyState[] {
-  return ENEMIES.map((enemy) => ({
-    ...enemy,
-    hp: enemy.maxHp,
-    hand: [],
-    revealed: false,
-    compared: false,
-    passiveTriggeredThisRound: false,
-    defeated: false,
-  }));
+  return createEnemiesForLevel();
+}
+
+export function createEnemiesForLevel(level?: LevelConfig): EnemyState[] {
+  const enemyIds = level?.enemyIds ?? ENEMIES.map((enemy) => enemy.id);
+  return enemyIds.map((enemyId) => {
+    const baseEnemy = ENEMIES.find((enemy) => enemy.id === enemyId);
+    if (!baseEnemy) {
+      throw new Error(`Unknown enemy id: ${enemyId}`);
+    }
+
+    const maxHp = level?.enemyHpOverrides?.[enemyId] ?? baseEnemy.maxHp;
+    return {
+      ...baseEnemy,
+      maxHp,
+      hp: maxHp,
+      hand: [],
+      revealed: false,
+      compared: false,
+      passiveTriggeredThisRound: false,
+      defeated: false,
+    };
+  });
 }
 
 export function decideInvite(enemy: EnemyState, heat: number, playerPoint?: number): EnemyDecision {

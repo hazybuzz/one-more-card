@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Battle, DamageEvent } from '../game/battle';
+import { BattleEngine, type BattleCombatPresentationEvent, type BattlePresentationEvent } from '../game/engine';
 import { preloadCardImages } from '../game/assets';
 import { playBattleMusic, preloadBattleMusic, stopBattleMusic, stopLobbyMusic } from '../game/audio';
 import { Card, cardImageIndex, formatCard } from '../game/card';
@@ -46,7 +46,7 @@ const SEATS = {
 };
 
 export class BattleScene extends Phaser.Scene {
-  private battle!: Battle;
+  private battle!: BattleEngine;
   private battleEconomySettled = false;
   private economyResult?: EconomyChange;
   private resultModalReady = true;
@@ -54,6 +54,8 @@ export class BattleScene extends Phaser.Scene {
   private itemFeedback?: { title: string; message: string; success: boolean };
   private dealing = false;
   private playerRedealing = false;
+  private actionDealing = false;
+  private autoAdvancingRound = false;
   private stageBannerPlaying = false;
   private actionAnimationPlaying = false;
   private dealingRound = 0;
@@ -112,14 +114,15 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  create(): void {
+  create(data?: { levelId?: string }): void {
     stopLobbyMusic(this);
     playBattleMusic(this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => stopBattleMusic(this));
-    this.battle = new Battle();
+    this.battle = new BattleEngine({ levelId: data?.levelId });
     this.battleEconomySettled = false;
     this.economyResult = undefined;
     this.resultModalReady = true;
+    this.autoAdvancingRound = false;
     this.playRoundStartBannerThenDeal();
   }
 
@@ -252,8 +255,9 @@ export class BattleScene extends Phaser.Scene {
     this.dealtEnemyCards = [0, 0, 0];
     this.itemModalOpen = false;
     this.itemFeedback = undefined;
+    const dealEvents = this.battle.currentRoundDealEvents();
     this.render();
-    this.playDealSequence(() => {
+    this.playDealSequence(dealEvents, () => {
       this.dealing = false;
       this.dealtPlayerCards = this.battle.player.hand.length;
       this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
@@ -325,22 +329,7 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private playDealSequence(onComplete: () => void): void {
-    const steps: Array<{ target: 'player' | number; cardIndex: number }> = [];
-    const maxCards = Math.max(2, ...this.battle.aliveEnemies.map((enemy) => enemy.hand.length));
-
-    for (let cardIndex = 0; cardIndex < maxCards; cardIndex += 1) {
-      if (cardIndex < this.battle.player.hand.length) {
-        steps.push({ target: 'player', cardIndex });
-      }
-
-      this.battle.enemies.forEach((enemy, enemyIndex) => {
-        if (!enemy.defeated && cardIndex < enemy.hand.length) {
-          steps.push({ target: enemyIndex, cardIndex });
-        }
-      });
-    }
-
+  private playDealSequence(steps: BattlePresentationEvent[], onComplete: () => void): void {
     const playStep = (index: number) => {
       if (index >= steps.length || !this.dealing || this.dealingRound !== this.battle.round) {
         onComplete();
@@ -348,19 +337,93 @@ export class BattleScene extends Phaser.Scene {
       }
 
       const step = steps[index];
+      if (step.type !== 'card-dealt') {
+        this.time.delayedCall(0, () => playStep(index + 1));
+        return;
+      }
+
+      const enemyIndex = step.target === 'player'
+        ? -1
+        : this.battle.enemies.findIndex((enemy) => enemy.id === step.target);
+      if (step.target !== 'player' && enemyIndex < 0) {
+        this.time.delayedCall(0, () => playStep(index + 1));
+        return;
+      }
+
       const to = step.target === 'player'
         ? this.dealTargetForPlayer(step.cardIndex)
-        : this.dealTargetForEnemy(step.target, step.cardIndex);
+        : this.dealTargetForEnemy(enemyIndex, step.cardIndex);
 
       this.playDealCard(to, () => {
         if (step.target === 'player') {
           this.dealtPlayerCards = Math.max(this.dealtPlayerCards, step.cardIndex + 1);
         } else {
-          this.dealtEnemyCards[step.target] = Math.max(this.dealtEnemyCards[step.target], step.cardIndex + 1);
+          this.dealtEnemyCards[enemyIndex] = Math.max(this.dealtEnemyCards[enemyIndex], step.cardIndex + 1);
         }
 
         this.render();
         this.time.delayedCall(54, () => playStep(index + 1));
+      });
+    };
+
+    playStep(0);
+  }
+
+  private playActionDealEvents(events: BattlePresentationEvent[], onComplete: () => void): void {
+    const dealEvents = this.cardDealEvents(events);
+    if (dealEvents.length === 0) {
+      onComplete();
+      return;
+    }
+
+    this.actionDealing = true;
+    this.dealtPlayerCards = this.battle.player.hand.length;
+    this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
+    dealEvents.forEach((event) => {
+      if (event.target === 'player') {
+        this.dealtPlayerCards = Math.min(this.dealtPlayerCards, event.cardIndex);
+        return;
+      }
+
+      const enemyIndex = this.battle.enemies.findIndex((enemy) => enemy.id === event.target);
+      if (enemyIndex >= 0) {
+        this.dealtEnemyCards[enemyIndex] = Math.min(this.dealtEnemyCards[enemyIndex], event.cardIndex);
+      }
+    });
+    this.render();
+
+    const playStep = (index: number) => {
+      if (index >= dealEvents.length || !this.actionDealing) {
+        this.actionDealing = false;
+        this.dealtPlayerCards = this.battle.player.hand.length;
+        this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
+        this.render();
+        onComplete();
+        return;
+      }
+
+      const event = dealEvents[index];
+      const enemyIndex = event.target === 'player'
+        ? -1
+        : this.battle.enemies.findIndex((enemy) => enemy.id === event.target);
+      if (event.target !== 'player' && enemyIndex < 0) {
+        this.time.delayedCall(0, () => playStep(index + 1));
+        return;
+      }
+
+      const to = event.target === 'player'
+        ? this.dealTargetForPlayer(event.cardIndex)
+        : this.dealTargetForEnemy(enemyIndex, event.cardIndex);
+
+      this.playDealCard(to, () => {
+        if (event.target === 'player') {
+          this.dealtPlayerCards = Math.max(this.dealtPlayerCards, event.cardIndex + 1);
+        } else {
+          this.dealtEnemyCards[enemyIndex] = Math.max(this.dealtEnemyCards[enemyIndex], event.cardIndex + 1);
+        }
+
+        this.render();
+        this.time.delayedCall(70, () => playStep(index + 1));
       });
     };
 
@@ -409,15 +472,16 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private playPlayerRedealPresentation(cardCount: number): void {
+  private playPlayerRedealPresentation(events: BattlePresentationEvent[]): void {
     this.playerRedealing = true;
     this.dealtPlayerCards = 0;
     this.itemModalOpen = false;
     this.itemFeedback = undefined;
     this.render();
 
-    const playStep = (cardIndex: number) => {
-      if (cardIndex >= cardCount || !this.playerRedealing) {
+    const dealEvents = this.cardDealEvents(events).filter((event) => event.target === 'player');
+    const playStep = (index: number) => {
+      if (index >= dealEvents.length || !this.playerRedealing) {
         this.playerRedealing = false;
         this.dealtPlayerCards = this.battle.player.hand.length;
         this.playRoundResonanceEchoOnce();
@@ -425,10 +489,11 @@ export class BattleScene extends Phaser.Scene {
         return;
       }
 
-      this.playDealCard(this.dealTargetForPlayer(cardIndex), () => {
-        this.dealtPlayerCards = Math.max(this.dealtPlayerCards, cardIndex + 1);
+      const event = dealEvents[index];
+      this.playDealCard(this.dealTargetForPlayer(event.cardIndex), () => {
+        this.dealtPlayerCards = Math.max(this.dealtPlayerCards, event.cardIndex + 1);
         this.render();
-        this.time.delayedCall(70, () => playStep(cardIndex + 1));
+        this.time.delayedCall(70, () => playStep(index + 1));
       });
     };
 
@@ -454,13 +519,13 @@ export class BattleScene extends Phaser.Scene {
     const container = this.add.container(448, 648);
     this.ui.push(container);
 
-    if (this.dealing || this.playerRedealing || this.stageBannerPlaying || this.actionAnimationPlaying) {
+    if (this.dealing || this.playerRedealing || this.actionDealing || this.stageBannerPlaying || this.actionAnimationPlaying) {
       return;
     }
 
     if (this.battle.phase === 'choice') {
       container.add(this.button(0, 0, 190, 48, t('battle.button.viewHand'), () => {
-        this.battle.chooseViewHand();
+        this.battle.execute({ type: 'choose-view-hand' });
         this.playRoundResonanceEchoOnce();
         this.render();
       }, COLORS.button, '19px', 'card'));
@@ -471,17 +536,15 @@ export class BattleScene extends Phaser.Scene {
       const currentEnemy = this.battle.currentEnemy;
       if (currentEnemy?.invited === undefined) {
         container.add(this.button(0, 0, 190, 48, t('battle.button.inviteOne'), () => {
-          const invitedEnemy = this.battle.currentEnemy;
-          this.battle.inviteCurrentEnemy();
-          if (invitedEnemy) {
-            this.showEnemySpeech(invitedEnemy.id, invitedEnemy.acceptedInvite ? t('battle.speech.draw') : t('battle.speech.pass'));
-          }
-          this.render();
+          this.battle.execute({ type: 'invite-current-enemy' });
+          const events = this.battle.consumePresentationEvents();
+          this.playImmediatePresentationEvents(events);
+          this.playActionDealEvents(events, () => this.render());
         }, COLORS.button, '19px', 'card'));
       }
 
       container.add(this.button(currentEnemy?.invited === undefined ? 210 : 0, 0, 170, 48, t('battle.button.compare'), () => {
-        this.runAction(() => this.battle.compareCurrentEnemy());
+        this.runAction(() => this.battle.execute({ type: 'compare-current-enemy' }));
       }, COLORS.button, '19px', 'card'));
       return;
     }
@@ -490,22 +553,37 @@ export class BattleScene extends Phaser.Scene {
       if (!this.battle.player.drawLocked && this.battle.player.drawCountThisRound < 2) {
         const isSecondDraw = this.battle.player.drawCountThisRound === 1;
         container.add(this.button(0, 0, isSecondDraw ? 236 : 200, 48, isSecondDraw ? t('battle.button.drawRisk') : t('battle.button.draw'), () => {
-          this.runAction(() => this.battle.playerDraw());
+          this.runAction(() => this.battle.execute({ type: 'player-draw' }));
         }, isSecondDraw ? COLORS.danger : COLORS.button, '19px', 'card'));
       }
       container.add(this.button(256, 0, 180, 48, t('battle.button.stand'), () => {
-        this.runAction(() => this.battle.playerStand());
+        this.runAction(() => this.battle.execute({ type: 'player-stand' }));
       }, COLORS.button, '19px', 'card'));
       return;
     }
 
     if (this.battle.phase === 'round-result') {
-      container.add(this.button(0, 0, 190, 48, t('battle.button.nextRound'), () => {
-        this.battle.nextRound();
-        this.startDealPresentation();
-      }));
+      this.scheduleNextRound();
       return;
     }
+  }
+
+  private scheduleNextRound(): void {
+    if (this.autoAdvancingRound || this.battle.phase !== 'round-result') {
+      return;
+    }
+
+    this.autoAdvancingRound = true;
+    this.time.delayedCall(900, () => {
+      this.autoAdvancingRound = false;
+      if (this.battle.phase !== 'round-result' || this.battle.battleOutcome) {
+        this.render();
+        return;
+      }
+
+      this.battle.execute({ type: 'next-round' });
+      this.startDealPresentation();
+    });
   }
 
   private settleEconomyIfNeeded(): void {
@@ -644,13 +722,17 @@ export class BattleScene extends Phaser.Scene {
 
   private skillSlot(kind: 'shift' | 'summon', x: number, y: number): Phaser.GameObjects.Container {
     const isShift = kind === 'shift';
+    const cooldown = isShift ? this.battle.player.resonanceShiftCooldown : this.battle.player.resonanceSummonCooldown;
     const available = !this.dealing
       && !this.playerRedealing
+      && !this.actionDealing
       && this.battle.phase === 'player-turn'
+      && cooldown === 0
       && (isShift ? this.battle.canUseResonanceShift() : !this.battle.player.resonanceSummonUsed && this.battle.playerScore().resonance !== 'none');
     const title = isShift ? t('skill.resonanceShift.name') : t('skill.resonanceSummon.name');
     const iconGlyph = isShift ? '◇' : '✦';
-    const tooltip = isShift ? t('skill.resonanceShift.tooltip') : t('skill.resonanceSummon.tooltip');
+    const baseTooltip = isShift ? t('skill.resonanceShift.tooltip') : t('skill.resonanceSummon.tooltip');
+    const tooltip = cooldown > 0 ? t('skill.cooldown.tooltip', { rounds: cooldown }) : baseTooltip;
     const slot = this.add.container(x, y);
     const rect = this.add.rectangle(0, 0, 78, 64, available ? 0x2a2e38 : 0x20232a).setStrokeStyle(2, available ? 0xffd86b : COLORS.line);
     const iconGlow = this.add.circle(0, -10, 19, 0xffd86b, available ? 0.22 : 0.08);
@@ -665,6 +747,14 @@ export class BattleScene extends Phaser.Scene {
       fontSize: '12px',
       color: available ? COLORS.text : COLORS.muted,
     }).setOrigin(0.5);
+    const cooldownLabel = cooldown > 0
+      ? this.add.text(0, 33, `CD ${cooldown}`, {
+        fontFamily: 'Arial',
+        fontSize: '11px',
+        color: COLORS.heat,
+        fontStyle: 'bold',
+      }).setOrigin(0.5)
+      : undefined;
 
     if (available) {
       icon.setShadow(0, 0, COLORS.resonance, 10, true, true);
@@ -686,21 +776,24 @@ export class BattleScene extends Phaser.Scene {
 
       this.playClickSound();
       this.runAction(() => {
-        const result = isShift ? this.battle.useResonanceShift() : this.battle.useResonanceSummon();
-        if (!result.used) {
+        const result = this.battle.execute({
+          type: 'use-skill',
+          skill: isShift ? 'resonance-shift' : 'resonance-summon',
+        });
+        if (!result?.used) {
           // The log only records real skill attempts; surface invalid use in-place.
-          this.showSkillTooltip(SEATS.player.x + x + 70, SEATS.player.y + y - 98, title, result.message);
+          this.showSkillTooltip(SEATS.player.x + x + 70, SEATS.player.y + y - 98, title, result?.message ?? tooltip);
         }
       });
     });
 
-    slot.add([rect, iconGlow, icon, label]);
+    slot.add(cooldownLabel ? [rect, iconGlow, icon, label, cooldownLabel] : [rect, iconGlow, icon, label]);
     return slot;
   }
 
   private itemSlot(x: number, y: number): Phaser.GameObjects.Container {
     const ownedCount = Object.values(getProgress().ownedItems).reduce((total, count) => total + count, 0);
-    const available = ownedCount > 0 && !this.dealing && !this.playerRedealing && !this.stageBannerPlaying && !this.actionAnimationPlaying;
+    const available = ownedCount > 0 && !this.dealing && !this.playerRedealing && !this.actionDealing && !this.stageBannerPlaying && !this.actionAnimationPlaying;
     const slot = this.add.container(x, y);
     const rect = this.add.rectangle(0, 0, 78, 64, available ? 0x2a2e38 : 0x20232a).setStrokeStyle(2, available ? COLORS.accent : COLORS.line);
     const iconGlow = this.add.circle(0, -10, 19, COLORS.accent, available ? 0.18 : 0.08);
@@ -818,7 +911,14 @@ export class BattleScene extends Phaser.Scene {
     }
 
     if (result.used && item.id === 'cooling_charm') {
-      this.playPlayerRedealPresentation(this.battle.player.hand.length);
+      const events: BattlePresentationEvent[] = this.battle.player.hand.map((card, cardIndex) => ({
+        type: 'card-dealt',
+        target: 'player',
+        card,
+        cardIndex,
+        context: 'action',
+      }));
+      this.playPlayerRedealPresentation(events);
       return;
     }
 
@@ -828,13 +928,14 @@ export class BattleScene extends Phaser.Scene {
 
     this.playHealSoundIfHpIncreased(hpBefore);
     this.itemModalOpen = false;
-    const damageEvents = [...this.battle.damageEvents];
-    const shouldDelayResultModal = (this.battle.phase === 'battle-result' || this.battle.pendingSoulRedeem) && damageEvents.length > 0;
+    const events = this.battle.consumePresentationEvents();
+    this.playImmediatePresentationEvents(events);
+    const shouldDelayResultModal = (this.hasBattleEndedEvent(events) || this.battle.pendingSoulRedeem) && this.hasCombatEvents(events);
     this.resultModalReady = !shouldDelayResultModal;
-    if (damageEvents.length === 0) {
+    if (!this.hasCombatEvents(events)) {
       this.render();
     }
-    this.playPostActionAnimations(damageEvents, hpBefore, false, () => {
+    this.playPostActionAnimations(events, hpBefore, false, () => {
       if (!shouldDelayResultModal) {
         this.render();
         return;
@@ -855,12 +956,13 @@ export class BattleScene extends Phaser.Scene {
     this.sound.play('beerBubble', { volume: 0.58 });
     this.playHealGainText(SEATS.player.x, SEATS.player.y - 86, healed);
     this.time.delayedCall(720, () => {
-      this.battle.revealByItem();
+      this.battle.execute({ type: 'reveal-by-item' });
       this.playRoundResonanceEchoOnce();
-      const damageEvents = [...this.battle.damageEvents];
-      const shouldDelayResultModal = (this.battle.phase === 'battle-result' || this.battle.pendingSoulRedeem) && damageEvents.length > 0;
+      const events = this.battle.consumePresentationEvents();
+      this.playImmediatePresentationEvents(events);
+      const shouldDelayResultModal = (this.hasBattleEndedEvent(events) || this.battle.pendingSoulRedeem) && this.hasCombatEvents(events);
       this.resultModalReady = !shouldDelayResultModal;
-      this.playPostActionAnimations(damageEvents, hpBefore, false, () => {
+      this.playPostActionAnimations(events, hpBefore, false, () => {
         if (this.battle.pendingSoulRedeem) {
           this.playSoulRedeemBannerThen(() => {
             const beforeRedeem = this.hpSnapshot();
@@ -1117,7 +1219,7 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const visibleCards = this.dealing
+    const visibleCards = this.dealing || this.actionDealing
       ? enemy.hand.slice(0, Math.min(this.dealtEnemyCards[enemyIndex] ?? 0, enemy.hand.length))
       : enemy.hand;
     const showAll = enemy.revealed || (this.battle.roundRevealed && this.battle.results.some((result) => result.enemy === enemy));
@@ -1169,7 +1271,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private renderPlayerCardRow(container: Phaser.GameObjects.Container, x: number, y: number): void {
-    const visibleCards = this.dealing || this.playerRedealing
+    const visibleCards = this.dealing || this.playerRedealing || this.actionDealing
       ? this.battle.player.hand.slice(0, this.dealtPlayerCards)
       : this.battle.player.hand;
     const faceUp = this.playerRedealing || (!this.dealing && this.battle.phase !== 'choice' && (!this.battle.player.fateMode || this.battle.roundRevealed));
@@ -1272,6 +1374,18 @@ export class BattleScene extends Phaser.Scene {
     this.sound.play('healSound', { volume: 0.5 });
   }
 
+  private playImmediatePresentationEvents(events: BattlePresentationEvent[]): void {
+    if (events.some((event) => event.type === 'heal')) {
+      this.sound.play('healSound', { volume: 0.5 });
+    }
+
+    events.forEach((event) => {
+      if (event.type === 'enemy-speech') {
+        this.showEnemySpeech(event.enemyId, event.text);
+      }
+    });
+  }
+
   private runAction(action: () => void): void {
     const roundBefore = this.battle.round;
     const hpBefore = this.hpSnapshot();
@@ -1279,47 +1393,52 @@ export class BattleScene extends Phaser.Scene {
     const aliveBefore = this.battle.aliveEnemies.length;
     const comparedBefore = this.battle.aliveEnemies.filter((enemy) => enemy.compared).length;
     action();
-    this.playHealSoundIfHpIncreased(hpBefore);
     this.playRoundResonanceEchoOnce();
-    const damageEvents = [...this.battle.damageEvents];
-    const shouldDelayResultModal = this.battle.phase === 'battle-result' && damageEvents.length > 0;
+    const events = this.battle.consumePresentationEvents();
+    this.playImmediatePresentationEvents(events);
+    const shouldDelayResultModal = this.hasBattleEndedEvent(events) && this.hasCombatEvents(events);
     const shouldDealNewRound = this.battle.round > roundBefore && this.battle.phase === 'choice' && !this.battle.battleOutcome;
     this.resultModalReady = !shouldDelayResultModal;
-    if (damageEvents.length === 0) {
-      this.render();
-    }
-    const skipRevealBanner = phaseBefore === 'enemy-turn' && comparedBefore === aliveBefore - 1 && this.battle.roundRevealed;
-    this.playPostActionAnimations(damageEvents, hpBefore, skipRevealBanner, () => {
-      if (this.battle.pendingSoulRedeem) {
-        this.playSoulRedeemBannerThen(() => {
-          const beforeRedeem = this.hpSnapshot();
-          this.battle.resolveSoulRedeem();
-          this.playHealSoundIfHpIncreased(beforeRedeem);
-          this.startDealPresentation();
-        });
-        return;
+    const skipRevealBanner = phaseBefore === 'enemy-turn' && comparedBefore === aliveBefore - 1 && this.hasRoundRevealEvent(events);
+
+    this.playActionDealEvents(events, () => {
+      if (!this.hasCombatEvents(events)) {
+        this.render();
       }
 
-      if (!shouldDelayResultModal) {
+      this.playPostActionAnimations(events, hpBefore, skipRevealBanner, () => {
+        if (this.battle.pendingSoulRedeem) {
+          this.playSoulRedeemBannerThen(() => {
+            const beforeRedeem = this.hpSnapshot();
+            this.battle.resolveSoulRedeem();
+            this.playHealSoundIfHpIncreased(beforeRedeem);
+            this.startDealPresentation();
+          });
+          return;
+        }
+
+        if (!shouldDelayResultModal) {
+          if (shouldDealNewRound) {
+            this.startDealPresentation();
+          } else {
+            this.render();
+          }
+          return;
+        }
+
+        this.resultModalReady = true;
         if (shouldDealNewRound) {
           this.startDealPresentation();
         } else {
           this.render();
         }
-        return;
-      }
-
-      this.resultModalReady = true;
-      if (shouldDealNewRound) {
-        this.startDealPresentation();
-      } else {
-        this.render();
-      }
+      });
     });
   }
 
-  private playPostActionAnimations(events: DamageEvent[], hpBefore: { player: number; enemies: number[] }, skipRevealBanner = false, onComplete?: () => void): void {
-    if (events.length === 0) {
+  private playPostActionAnimations(events: BattlePresentationEvent[], hpBefore: { player: number; enemies: number[] }, skipRevealBanner = false, onComplete?: () => void): void {
+    const combatEvents = this.combatEvents(events);
+    if (combatEvents.length === 0) {
       onComplete?.();
       return;
     }
@@ -1328,14 +1447,14 @@ export class BattleScene extends Phaser.Scene {
       this.actionAnimationPlaying = true;
       this.visualHpOverride = hpBefore;
       this.render();
-      this.playDamageAnimations(events, () => {
+      this.playDamageAnimations(combatEvents, () => {
         this.visualHpOverride = undefined;
         this.actionAnimationPlaying = false;
         onComplete?.();
       });
     };
 
-    if (events.length > 0 && this.battle.roundRevealed && !skipRevealBanner) {
+    if (combatEvents.length > 0 && this.hasRoundRevealEvent(events) && !skipRevealBanner) {
       this.playRevealBannerThen(playWithDelayedHp);
       return;
     }
@@ -1343,7 +1462,27 @@ export class BattleScene extends Phaser.Scene {
     playWithDelayedHp();
   }
 
-  private playDamageAnimations(events: DamageEvent[], onComplete?: () => void): void {
+  private hasCombatEvents(events: BattlePresentationEvent[]): boolean {
+    return events.some((event) => event.type === 'damage' || event.type === 'clash');
+  }
+
+  private hasRoundRevealEvent(events: BattlePresentationEvent[]): boolean {
+    return events.some((event) => event.type === 'round-revealed');
+  }
+
+  private hasBattleEndedEvent(events: BattlePresentationEvent[]): boolean {
+    return events.some((event) => event.type === 'battle-ended');
+  }
+
+  private combatEvents(events: BattlePresentationEvent[]): BattleCombatPresentationEvent[] {
+    return events.filter((event): event is BattleCombatPresentationEvent => event.type === 'damage' || event.type === 'clash');
+  }
+
+  private cardDealEvents(events: BattlePresentationEvent[]): Extract<BattlePresentationEvent, { type: 'card-dealt' }>[] {
+    return events.filter((event): event is Extract<BattlePresentationEvent, { type: 'card-dealt' }> => event.type === 'card-dealt');
+  }
+
+  private playDamageAnimations(events: BattleCombatPresentationEvent[], onComplete?: () => void): void {
     if (events.length === 0) {
       onComplete?.();
       return;
@@ -1356,7 +1495,7 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(totalDuration, () => onComplete?.());
   }
 
-  private playCombatAnimation(event: DamageEvent): void {
+  private playCombatAnimation(event: BattleCombatPresentationEvent): void {
     const enemy = this.battle.enemies.find((item) => item.id === event.enemyId);
     if (!enemy) {
       return;
@@ -1387,7 +1526,7 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private applyVisualDamage(event: DamageEvent, enemy: EnemyState): void {
+  private applyVisualDamage(event: Extract<BattleCombatPresentationEvent, { type: 'damage' }>, enemy: EnemyState): void {
     if (!this.visualHpOverride) {
       return;
     }
@@ -1585,7 +1724,7 @@ export class BattleScene extends Phaser.Scene {
       return t('battle.notParticipating');
     }
 
-    if (this.dealing) {
+    if (this.dealing || this.actionDealing) {
       const enemyIndex = this.battle.enemies.indexOf(enemy);
       const visibleCount = Math.min(this.dealtEnemyCards[enemyIndex] ?? 0, enemy.hand.length);
       return enemy.hand.slice(0, visibleCount).map((card, index) => (index === 0 ? formatCard(card) : '??')).join(' ');
@@ -1599,7 +1738,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playerCardsText(): string {
-    if (this.dealing) {
+    if (this.dealing || this.actionDealing) {
       return this.battle.player.hand.slice(0, this.dealtPlayerCards).map(() => '??').join(' ');
     }
 
