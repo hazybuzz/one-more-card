@@ -53,6 +53,9 @@ export interface FixedRoundConfig {
   triggerDialogue?: Record<string, DialogueLine[]>;
   wrongChoiceHintKey?: string;
   lessonKey?: string;
+  tutorialBeforeCompareKey?: string;
+  revealSummaryKeys?: string[];
+  afterRevealDialogueKeys?: string[];
 }
 
 export interface LevelConfig {

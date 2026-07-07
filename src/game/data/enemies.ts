@@ -1,6 +1,15 @@
 import type { EnemyConfig, EnemyId } from '../types/enemy';
 
 export const ENEMY_CONFIGS: Record<EnemyId, EnemyConfig> = {
+  bartender: {
+    id: 'bartender',
+    maxHp: 3,
+    aiType: 'silent',
+    nameKey: 'enemy.bartender.name',
+    personalityKey: 'enemy.bartender.personality',
+    portraitKey: 'enemy_bartender',
+    colorKey: 'bartender',
+  },
   goblin: {
     id: 'goblin',
     maxHp: 5,

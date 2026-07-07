@@ -1,5 +1,5 @@
 import { Card, isJoker } from './card';
-import { ENEMY_LIST } from './data/enemies';
+import { ENEMY_CONFIGS, ENEMY_LIST } from './data/enemies';
 import { t } from './i18n';
 import { scoreHand } from './scoring';
 import type { EnemyConfig, EnemyId } from './types/enemy';
@@ -35,7 +35,8 @@ export function createEnemies(): EnemyState[] {
 export function createEnemiesForLevel(level?: LevelConfig): EnemyState[] {
   const enemyIds = level?.enemyIds ?? ENEMIES.map((enemy) => enemy.id);
   return enemyIds.map((enemyId) => {
-    const baseEnemy = ENEMIES.find((enemy) => enemy.id === enemyId);
+    const enemyConfig = ENEMY_CONFIGS[enemyId];
+    const baseEnemy = enemyConfig ? { id: enemyConfig.id, maxHp: enemyConfig.maxHp } : undefined;
     if (!baseEnemy) {
       throw new Error(`Unknown enemy id: ${enemyId}`);
     }

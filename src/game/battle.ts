@@ -1,11 +1,12 @@
-import { Card, RANKS, SUITS, Suit, formatCard, isJoker } from './card';
+import { Card, RANKS, SUITS, Suit, cardFromCode, formatCard, isJoker } from './card';
+import type { BattleState } from './core/BattleState';
 import { getLevelById } from './data/levelRegistry';
 import { enemyName, t } from './i18n';
 import { Deck } from './deck';
 import { EnemyState, createEnemiesForLevel, decideInvite } from './enemy';
 import { EnemyType } from './enemy';
 import { ResonanceKind, ScoreResult, scoreHand } from './scoring';
-import type { LevelConfig } from './types/level';
+import type { BattleMechanicId, FixedRoundConfig, LevelConfig } from './types/level';
 
 export type BattlePhase = 'choice' | 'enemy-turn' | 'player-turn' | 'round-result' | 'battle-result';
 export type BattleOutcome = 'victory' | 'defeat' | undefined;
@@ -125,12 +126,12 @@ export class Battle {
   inviteCurrentEnemy(): void {
     this.clearDamageEvents();
     const enemy = this.currentEnemy;
-    if (!enemy || this.phase !== 'enemy-turn' || enemy.invited !== undefined) {
+    if (!this.hasMechanic('invite') || !enemy || this.phase !== 'enemy-turn' || enemy.invited !== undefined) {
       return;
     }
 
     const drawCount = 1;
-    if (enemy.id === 'goblin' && enemy.hp < 3 && !enemy.passiveTriggeredThisRound) {
+    if (this.hasMechanic('enemy_passives') && enemy.id === 'goblin' && enemy.hp < 3 && !enemy.passiveTriggeredThisRound) {
       enemy.passiveTriggeredThisRound = true;
       this.logEvent(t('log.goblinInstinct'));
     }
@@ -181,7 +182,7 @@ export class Battle {
 
   playerDraw(): void {
     this.clearDamageEvents();
-    if (this.phase !== 'player-turn' || this.player.drawLocked || this.player.drawCountThisRound >= 2) {
+    if (!this.hasMechanic('player_draw') || this.phase !== 'player-turn' || this.player.drawLocked || this.player.drawCountThisRound >= 2) {
       return;
     }
 
@@ -206,6 +207,10 @@ export class Battle {
 
   useResonanceShift(): SkillResult {
     this.clearDamageEvents();
+    if (!this.hasMechanic('skills')) {
+      return { used: false, success: false, message: t('skill.invalid.playerTurnOnly') };
+    }
+
     if (this.phase !== 'player-turn') {
       return { used: false, success: false, message: t('skill.invalid.playerTurnOnly') };
     }
@@ -247,6 +252,10 @@ export class Battle {
 
   useResonanceSummon(): SkillResult {
     this.clearDamageEvents();
+    if (!this.hasMechanic('skills')) {
+      return { used: false, success: false, message: t('skill.invalid.playerTurnOnly') };
+    }
+
     if (this.phase !== 'player-turn') {
       return { used: false, success: false, message: t('skill.invalid.playerTurnOnly') };
     }
@@ -321,6 +330,66 @@ export class Battle {
     return this.enemies.filter((enemy) => !enemy.defeated);
   }
 
+  getState(): BattleState {
+    return {
+      levelId: this.levelConfig?.id,
+      levelConfig: this.levelConfig,
+      phase: this.phase,
+      battleOutcome: this.battleOutcome,
+      currentEnemyIndex: this.currentEnemyIndex,
+      currentEnemyId: this.currentEnemy?.id,
+      round: this.round,
+      currentFixedRoundId: this.currentFixedRound()?.id,
+      currentLessonKey: this.currentFixedRound()?.lessonKey,
+      currentTutorialBeforeCompareKey: this.currentFixedRound()?.tutorialBeforeCompareKey,
+      heat: this.heat,
+      heatStage: this.heatStage,
+      heatDamageBonus: this.heatDamageBonus,
+      roundRevealed: this.roundRevealed,
+      pendingSoulRedeem: this.pendingSoulRedeem,
+      player: {
+        hp: this.player.hp,
+        maxHp: this.player.maxHp,
+        hand: this.player.hand.map((card) => ({ ...card })),
+        fateMode: this.player.fateMode,
+        drawCountThisRound: this.player.drawCountThisRound,
+        resonanceShiftUsed: this.player.resonanceShiftUsed,
+        resonanceSummonUsed: this.player.resonanceSummonUsed,
+        resonanceShiftCooldown: this.player.resonanceShiftCooldown,
+        resonanceSummonCooldown: this.player.resonanceSummonCooldown,
+        canUseResonanceShift: this.canUseResonanceShift(),
+        canUseResonanceSummon: this.canUseResonanceSummon(),
+        drawLocked: this.player.drawLocked,
+        incomingDamageBonus: this.player.incomingDamageBonus,
+        soulRedeemUsed: this.player.soulRedeemUsed,
+        score: this.playerScore(),
+      },
+      enemies: this.enemies.map((enemy) => ({
+        id: enemy.id,
+        hp: enemy.hp,
+        maxHp: enemy.maxHp,
+        hand: enemy.hand.map((card) => ({ ...card })),
+        revealed: enemy.revealed,
+        compared: enemy.compared,
+        invited: enemy.invited,
+        acceptedInvite: enemy.acceptedInvite,
+        invitedDrawCount: enemy.invitedDrawCount,
+        passiveTriggeredThisRound: enemy.passiveTriggeredThisRound,
+        defeated: enemy.defeated,
+        score: this.scoreFor(enemy.hand),
+      })),
+      aliveEnemyIds: this.aliveEnemies.map((enemy) => enemy.id),
+      results: this.results.map((result) => ({
+        enemyId: result.enemy.id,
+        enemyScore: result.enemyScore,
+        playerScore: result.playerScore,
+        outcome: result.outcome,
+        damage: result.damage,
+      })),
+      logs: [...this.log],
+    };
+  }
+
   get heatStage(): string {
     if (this.heat <= 2) {
       return t('battle.heatStage.stable');
@@ -346,7 +415,7 @@ export class Battle {
   }
 
   playerScore(): ScoreResult {
-    return scoreHand(this.player.hand);
+    return this.scoreFor(this.player.hand);
   }
 
   canUseResonanceShift(): boolean {
@@ -356,6 +425,13 @@ export class Battle {
 
     const candidates = this.player.hand.filter((card) => !isJoker(card) && card.suit);
     return this.chooseResonanceShift(candidates) !== undefined;
+  }
+
+  canUseResonanceSummon(): boolean {
+    return this.phase === 'player-turn'
+      && !this.player.resonanceSummonUsed
+      && this.player.resonanceSummonCooldown <= 0
+      && this.playerScore().resonance !== 'none';
   }
 
   healPlayer(amount: number): number {
@@ -418,7 +494,10 @@ export class Battle {
     this.player.resonanceSummonCooldown = Math.max(0, this.player.resonanceSummonCooldown - 1);
     this.player.drawLocked = false;
     this.player.incomingDamageBonus = 0;
-    this.player.hand = [this.deck.draw(), this.deck.draw()];
+    const fixedRound = this.currentFixedRound();
+    this.player.hand = fixedRound
+      ? fixedRound.playerCards.map(cardFromCode)
+      : [this.deck.draw(), this.deck.draw()];
     this.enemies.forEach((enemy) => {
       enemy.hand = [];
       enemy.revealed = false;
@@ -432,7 +511,10 @@ export class Battle {
         return;
       }
 
-      enemy.hand = [this.deck.draw(), this.deck.draw()];
+      const fixedEnemy = fixedRound?.enemies.find((config) => config.enemyId === enemy.id);
+      enemy.hand = fixedEnemy
+        ? fixedEnemy.cards.map(cardFromCode)
+        : [this.deck.draw(), this.deck.draw()];
     });
     this.logEvent(t('log.roundStart', { round: this.round }));
   }
@@ -513,6 +595,7 @@ export class Battle {
         outcome: describeOutcome(result),
       }));
     });
+    this.logFixedRoundReveal();
 
     if (this.markSoulRedeemPending()) {
       return;
@@ -541,7 +624,7 @@ export class Battle {
   }
 
   private applyPreComparePassive(enemy: EnemyState): void {
-    if (enemy.id !== 'gambler' || enemy.hp >= 3 || enemy.passiveTriggeredThisRound) {
+    if (!this.hasMechanic('enemy_passives') || enemy.id !== 'gambler' || enemy.hp >= 3 || enemy.passiveTriggeredThisRound) {
       return;
     }
 
@@ -557,7 +640,7 @@ export class Battle {
   }
 
   private applyPostDamagePassive(enemy: EnemyState, damage: number): void {
-    if (enemy.id !== 'werewolf' || enemy.hp >= 3 || damage <= 0) {
+    if (!this.hasMechanic('enemy_passives') || enemy.id !== 'werewolf' || enemy.hp >= 3 || damage <= 0) {
       return;
     }
 
@@ -615,6 +698,12 @@ export class Battle {
     } else {
       this.logEvent(t('log.compareDraw', { enemy: enemyName(result.enemy.id), resonance: resonanceText }));
     }
+  }
+
+  private logFixedRoundReveal(): void {
+    const fixedRound = this.currentFixedRound();
+    fixedRound?.revealSummaryKeys?.forEach((key) => this.logEvent(t(key)));
+    fixedRound?.afterRevealDialogueKeys?.forEach((key) => this.logEvent(t(key)));
   }
 
   private compareResonanceText(result: BattleResult): string {
@@ -682,10 +771,18 @@ export class Battle {
   }
 
   private addHeat(amount: number): void {
+    if (!this.hasMechanic('heat')) {
+      return;
+    }
+
     this.heat += amount;
   }
 
   private applyLowPointCompareHeat(): void {
+    if (!this.hasMechanic('heat')) {
+      return;
+    }
+
     const point = this.playerScore().point;
     if (point >= 8) {
       return;
@@ -696,7 +793,29 @@ export class Battle {
   }
 
   private scoreFor(hand: Card[]): ScoreResult {
-    return scoreHand(hand);
+    const score = scoreHand(hand);
+    if (this.hasMechanic('resonance')) {
+      return score;
+    }
+
+    return {
+      ...score,
+      resonance: 'none',
+      multiplier: 1,
+      reason: t('score.reason.none'),
+    };
+  }
+
+  hasMechanic(mechanic: BattleMechanicId): boolean {
+    if (!this.levelConfig) {
+      return true;
+    }
+
+    return this.levelConfig.unlockedMechanics.includes(mechanic);
+  }
+
+  private currentFixedRound(): FixedRoundConfig | undefined {
+    return this.levelConfig?.fixedRounds?.[this.round - 1];
   }
 
   private chooseResonanceShift(cards: Card[]): { card: Card; targetSuit: Suit } | undefined {

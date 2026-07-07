@@ -58,3 +58,37 @@ export function cardImageIndex(card: Card): number {
 export function isJoker(card: Card): boolean {
   return card.rank === '小王' || card.rank === '大王';
 }
+
+export function cardFromCode(code: string): Card {
+  const normalized = code.trim().toUpperCase();
+  if (normalized === 'BJ' || normalized === 'BLACK_JOKER' || normalized === 'JOKER_BLACK') {
+    return { rank: '小王' };
+  }
+
+  if (normalized === 'RJ' || normalized === 'RED_JOKER' || normalized === 'JOKER_RED') {
+    return { rank: '大王' };
+  }
+
+  const suitCode = normalized[0];
+  const rankCode = normalized.slice(1);
+  const suitMap: Record<string, Suit> = {
+    S: '♠',
+    H: '♥',
+    D: '♦',
+    C: '♣',
+  };
+  const rankMap: Record<string, Rank> = {
+    A: 'A',
+    J: 'J',
+    Q: 'Q',
+    K: 'K',
+  };
+  const suit = suitMap[suitCode];
+  const rank = rankMap[rankCode] ?? (RANKS.includes(rankCode as Rank) ? rankCode as Rank : undefined);
+
+  if (!suit || !rank) {
+    throw new Error(`Invalid card code: ${code}`);
+  }
+
+  return { suit, rank };
+}

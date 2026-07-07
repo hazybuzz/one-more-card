@@ -1,5 +1,5 @@
-export type EnemyId = 'goblin' | 'gambler' | 'werewolf';
-export type EnemyAIType = 'cautious' | 'aggressive' | 'resonance';
+export type EnemyId = 'bartender' | 'goblin' | 'gambler' | 'werewolf';
+export type EnemyAIType = 'silent' | 'cautious' | 'aggressive' | 'resonance';
 export type EnemyPassiveId = 'goblin_instinct' | 'gambler_blessing' | 'werewolf_lifesteal';
 
 export interface EnemyConfig {

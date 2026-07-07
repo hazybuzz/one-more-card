@@ -108,17 +108,20 @@ export class StartScene extends Phaser.Scene {
         this.showStatus(entry.amount > 0
           ? t('start.entryPaid', { cost: entry.amount, total: entry.total })
           : t('start.entryFree'));
-        this.time.delayedCall(320, () => this.scene.start('BattleScene'));
+        this.time.delayedCall(320, () => this.scene.start('BattleScene', {}));
       }),
-      this.menuButton(0, 78, 260, 58, t('start.shop'), () => {
+      this.menuButton(0, 78, 260, 58, t('start.story'), () => {
+        this.scene.start('StorySelectScene');
+      }),
+      this.menuButton(0, 156, 260, 58, t('start.shop'), () => {
         this.scene.start('ShopScene');
       }),
-      this.menuButton(0, 156, 260, 58, t('start.inventory'), () => {
+      this.menuButton(0, 234, 260, 58, t('start.inventory'), () => {
         this.scene.start('InventoryScene');
       }),
     ]);
 
-    this.statusText = this.add.text(640, 596, '', {
+    this.statusText = this.add.text(640, 664, '', {
       fontFamily: 'Arial',
       fontSize: '17px',
       color: COLORS.accentText,

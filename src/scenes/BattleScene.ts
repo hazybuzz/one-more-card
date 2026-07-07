@@ -10,6 +10,14 @@ import { useBattleItem } from '../game/itemEffects';
 import { ITEMS, ItemDefinition } from '../game/items';
 import { consumeItem, getProgress } from '../game/progress';
 import { ScoreResult, scoreHand } from '../game/scoring';
+import type { BattleState } from '../game/core/BattleState';
+import type { BattleMechanicId } from '../game/types/level';
+import { ActionPanel } from '../ui/components/ActionPanel';
+import { BlockingMessageModal } from '../ui/components/BlockingMessageModal';
+import { HeatMeter } from '../ui/components/HeatMeter';
+import { ItemBar } from '../ui/components/ItemBar';
+import { SkillBar } from '../ui/components/SkillBar';
+import { canUseBattleItemFromState, createBattleUIState, type BattleActionButtonState, type BattleUIState } from '../ui/state/UIState';
 
 const COLORS = {
   bg: 0x101114,
@@ -31,6 +39,7 @@ const COLORS = {
 
 const SKILL_COLORS = {
   player: 0xffb84d,
+  bartender: 0xe8cf73,
   goblin: 0x65d46e,
   gambler: 0xf25f9a,
   werewolf: 0x73c7ff,
@@ -68,6 +77,12 @@ export class BattleScene extends Phaser.Scene {
   private enemyHpTexts = new Map<string, Phaser.GameObjects.Text>();
   private ui: Phaser.GameObjects.Container[] = [];
   private seatContainers = new Map<string, Phaser.GameObjects.Container>();
+  private blockingMessage?: { title: string; body: string; buttonLabel: string; onClose?: () => void };
+  private shownLessonRoundIds = new Set<string>();
+  private shownCompareHintKeys = new Set<string>();
+  private shownRevealDialogueRoundIds = new Set<string>();
+  private shownResultStory = false;
+  private battleLevelId?: string;
 
   constructor() {
     super('BattleScene');
@@ -114,15 +129,24 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  create(data?: { levelId?: string }): void {
+  init(data?: { levelId?: string }): void {
+    this.battleLevelId = data?.levelId;
+  }
+
+  create(): void {
     stopLobbyMusic(this);
     playBattleMusic(this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => stopBattleMusic(this));
-    this.battle = new BattleEngine({ levelId: data?.levelId });
+    this.battle = new BattleEngine({ levelId: this.battleLevelId });
     this.battleEconomySettled = false;
     this.economyResult = undefined;
     this.resultModalReady = true;
     this.autoAdvancingRound = false;
+    this.blockingMessage = undefined;
+    this.shownLessonRoundIds.clear();
+    this.shownCompareHintKeys.clear();
+    this.shownRevealDialogueRoundIds.clear();
+    this.shownResultStory = false;
     this.playRoundStartBannerThenDeal();
   }
 
@@ -144,6 +168,7 @@ export class BattleScene extends Phaser.Scene {
     this.renderItemModal();
     this.renderItemFeedback();
     this.renderResultModal();
+    this.renderBlockingMessage();
   }
 
   private addBackground(): void {
@@ -155,7 +180,7 @@ export class BattleScene extends Phaser.Scene {
 
   private renderEnemies(): void {
     this.battle.enemies.forEach((enemy, index) => {
-      const seat = SEATS.enemy[index];
+      const seat = this.enemySeatForIndex(index);
       const container = this.add.container(seat.x, seat.y);
       this.ui.push(container);
       this.seatContainers.set(enemy.id, container);
@@ -171,43 +196,81 @@ export class BattleScene extends Phaser.Scene {
 
       if (this.shouldShowEnemyScore(enemy)) {
         this.renderScoreBadge(container, seat.width / 2 - 84, 34, this.scoreEnemy(enemy).point);
-        container.add(this.resonanceLabel(-seat.width / 2 + 20, seat.height / 2 - 26, this.scoreEnemy(enemy)));
+        if (this.hasMechanic('resonance')) {
+          container.add(this.resonanceLabel(-seat.width / 2 + 20, seat.height / 2 - 26, this.scoreEnemy(enemy)));
+        }
       }
 
       this.renderEnemySpeech(container, enemy, seat);
 
-      container.add(this.enemyPassiveIcon(enemy, index, seat));
+      if (this.hasMechanic('enemy_passives') && enemy.id !== 'bartender') {
+        container.add(this.enemyPassiveIcon(enemy, index, seat));
+      }
     });
   }
 
   private renderCenterInfo(): void {
+    const battleState = this.battle.getState();
+    const uiState = this.createUIState(battleState);
     const container = this.add.container(640, 342);
     this.ui.push(container);
 
-    container.add(this.add.text(0, -86, t('battle.title', { round: this.battle.round }), { fontFamily: 'Arial', fontSize: '28px', color: COLORS.text }).setOrigin(0.5));
-    container.add(this.add.text(0, -44, this.phaseText(), { fontFamily: 'Arial', fontSize: '17px', color: COLORS.muted, align: 'center', wordWrap: { width: 430 } }).setOrigin(0.5));
+    container.add(this.add.text(0, -86, t('battle.title', { round: battleState.round }), { fontFamily: 'Arial', fontSize: '28px', color: COLORS.text }).setOrigin(0.5));
+    container.add(this.add.text(0, -44, this.phaseText(uiState), { fontFamily: 'Arial', fontSize: '17px', color: COLORS.muted, align: 'center', wordWrap: { width: 430 } }).setOrigin(0.5));
 
-    const currentEnemy = this.battle.currentEnemy;
-    const targetText = t('battle.target', { target: currentEnemy && this.battle.phase === 'enemy-turn' ? enemyName(currentEnemy.id) : t('battle.targetNone') });
+    const targetText = t('battle.target', { target: battleState.currentEnemyId && battleState.phase === 'enemy-turn' ? enemyName(battleState.currentEnemyId) : t('battle.targetNone') });
     container.add(this.add.text(0, 18, targetText, { fontFamily: 'Arial', fontSize: '21px', color: '#e8cf73' }).setOrigin(0.5));
 
-    const playerRisk = this.battle.player.incomingDamageBonus > 0 ? t('battle.playerRisk') : '';
-    const heatColor = this.heatTextColor();
-    const heatText = this.add.text(0, 58, t('battle.heat', {
-      heat: this.battle.heat,
-      bonus: this.battle.heatDamageBonus,
-      stage: this.battle.heatStage,
-      playerRisk,
-    }), {
-      fontFamily: 'Arial',
-      fontSize: '20px',
-      color: heatColor,
-    }).setOrigin(0.5);
-    heatText.setShadow(0, 0, heatColor, this.battle.heat >= 3 ? 14 : 6, true, true);
-    container.add(heatText);
+    const tutorialText = this.currentTutorialText(battleState);
+    if (tutorialText) {
+      const tutorial = this.add.text(0, 82, tutorialText, {
+        fontFamily: 'Arial',
+        fontSize: '15px',
+        color: COLORS.text,
+        align: 'center',
+        lineSpacing: 5,
+        wordWrap: { width: 540 },
+      }).setOrigin(0.5);
+      tutorial.setShadow(0, 0, COLORS.accentText, 6, true, true);
+      container.add(tutorial);
+      return;
+    }
 
-    const aliveText = t('battle.aliveInfo', { alive: this.battle.aliveEnemies.length, total: this.battle.enemies.length });
-    container.add(this.add.text(0, 90, aliveText, { fontFamily: 'Arial', fontSize: '14px', color: COLORS.muted }).setOrigin(0.5));
+    if (this.hasMechanic('heat')) {
+      const playerRisk = uiState.center.playerRiskTextKey ? t(uiState.center.playerRiskTextKey) : '';
+      const heatColor = this.heatTextColor(uiState);
+      container.add(HeatMeter.render(this, {
+        x: 0,
+        y: 58,
+        text: t('battle.heat', {
+          heat: battleState.heat,
+          bonus: battleState.heatDamageBonus,
+          stage: battleState.heatStage,
+          playerRisk,
+        }),
+        color: heatColor,
+        glowStrong: battleState.heat >= 3,
+      }));
+    }
+
+    const aliveText = t('battle.aliveInfo', { alive: battleState.aliveEnemyIds.length, total: battleState.enemies.length });
+    container.add(this.add.text(0, this.hasMechanic('heat') ? 90 : 58, aliveText, { fontFamily: 'Arial', fontSize: '14px', color: COLORS.muted }).setOrigin(0.5));
+  }
+
+  private currentTutorialText(state: BattleState): string {
+    if (state.currentFixedRoundId) {
+      return '';
+    }
+
+    if (state.phase === 'choice' && state.currentLessonKey) {
+      return t(state.currentLessonKey);
+    }
+
+    if (state.phase === 'enemy-turn' && state.currentTutorialBeforeCompareKey) {
+      return t(state.currentTutorialBeforeCompareKey);
+    }
+
+    return '';
   }
 
   private renderPlayer(): void {
@@ -225,34 +288,101 @@ export class BattleScene extends Phaser.Scene {
     if (this.battle.phase !== 'choice' && !this.playerRedealing) {
       const score = this.battle.playerScore();
       this.renderScoreBadge(container, seat.width / 2 - 86, 28, score.point);
-      container.add(this.resonanceLabel(-seat.width / 2 + 22, seat.height / 2 - 28, score, '18px'));
+      if (this.hasMechanic('resonance')) {
+        container.add(this.resonanceLabel(-seat.width / 2 + 22, seat.height / 2 - 28, score, '18px'));
+      }
     } else if (this.battle.phase === 'choice') {
       container.add(this.add.text(-seat.width / 2 + 22, seat.height / 2 - 32, t('battle.handHidden'), { fontFamily: 'Arial', fontSize: '18px', color: COLORS.muted }));
     }
 
-    container.add(this.skillSlot('shift', seat.width / 2 + 54, -42));
-    container.add(this.skillSlot('summon', seat.width / 2 + 54, 42));
-    container.add(this.itemSlot(-seat.width / 2 - 42, 42));
-    container.add(this.playerPassiveIcon(seat));
+    const uiState = this.createUIState();
+    if (this.hasMechanic('skills')) {
+      container.add(SkillBar.render(this, {
+        x: seat.width / 2 + 54,
+        y: -42,
+        skills: uiState.skills,
+        colors: {
+          heat: COLORS.heat,
+          line: COLORS.line,
+          muted: COLORS.muted,
+          resonance: COLORS.resonance,
+          text: COLORS.text,
+        },
+        tooltipOrigin: { x: SEATS.player.x, y: SEATS.player.y },
+        onShowTooltip: (x, y, title, body) => this.showSkillTooltip(x, y, title, body),
+        onHideTooltip: () => this.hideSkillTooltip(),
+        onUse: (kind, title, tooltip, tooltipX, tooltipY) => {
+          this.playClickSound();
+          this.runAction(() => {
+            const result = this.battle.execute({
+              type: 'use-skill',
+              skill: kind === 'shift' ? 'resonance-shift' : 'resonance-summon',
+            });
+            if (!result?.used) {
+              this.showSkillTooltip(tooltipX, tooltipY, title, result?.message ?? tooltip);
+            }
+          });
+        },
+      }));
+      container.add(this.playerPassiveIcon(seat));
+    }
+    if (this.hasMechanic('items')) {
+      container.add(ItemBar.render(this, {
+        x: -seat.width / 2 - 42,
+        y: 42,
+        enabled: uiState.itemButton.enabled,
+        label: t('battle.itemButton'),
+        colors: {
+          accent: COLORS.accent,
+          accentText: COLORS.accentText,
+          line: COLORS.line,
+          muted: COLORS.muted,
+          panelEnabled: 0x2a2e38,
+          panelDisabled: 0x20232a,
+          text: COLORS.text,
+        },
+        onOpen: () => {
+          this.playClickSound();
+          this.itemModalOpen = true;
+          this.render();
+        },
+      }));
+    }
   }
 
-  private heatTextColor(): string {
-    if (this.battle.heat >= 6) {
+  private createUIState(state: BattleState = this.battle.getState()): BattleUIState {
+    const ownedItemCount = Object.values(getProgress().ownedItems).reduce((total, count) => total + count, 0);
+    return createBattleUIState(state, {
+      dealing: this.dealing,
+      playerRedealing: this.playerRedealing,
+      actionDealing: this.actionDealing,
+      stageBannerPlaying: this.stageBannerPlaying,
+      actionAnimationPlaying: this.actionAnimationPlaying,
+      ownedItemCount,
+    });
+  }
+
+  private heatTextColor(uiState: BattleUIState = this.createUIState()): string {
+    if (uiState.center.heatColorLevel === 'hot') {
       return COLORS.heat;
     }
 
-    if (this.battle.heat >= 3) {
+    if (uiState.center.heatColorLevel === 'warm') {
       return COLORS.resonance;
     }
 
     return COLORS.muted;
   }
 
+  private hasMechanic(mechanic: BattleMechanicId): boolean {
+    return this.battle.hasMechanic(mechanic);
+  }
+
   private startDealPresentation(): void {
     this.dealing = true;
     this.dealingRound = this.battle.round;
     this.dealtPlayerCards = 0;
-    this.dealtEnemyCards = [0, 0, 0];
+    this.dealtEnemyCards = this.battle.enemies.map(() => 0);
     this.itemModalOpen = false;
     this.itemFeedback = undefined;
     const dealEvents = this.battle.currentRoundDealEvents();
@@ -262,6 +392,7 @@ export class BattleScene extends Phaser.Scene {
       this.dealtPlayerCards = this.battle.player.hand.length;
       this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
       this.render();
+      this.showRoundLessonIfNeeded();
     });
   }
 
@@ -439,7 +570,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private dealTargetForEnemy(enemyIndex: number, cardIndex: number): Phaser.Math.Vector2 {
-    const seat = SEATS.enemy[enemyIndex];
+    const seat = this.enemySeatForIndex(enemyIndex);
     return new Phaser.Math.Vector2(
       seat.x - seat.width / 2 + 44 + cardIndex * 42,
       seat.y - seat.height / 2 + 94,
@@ -516,56 +647,52 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private renderActions(): void {
-    const container = this.add.container(448, 648);
-    this.ui.push(container);
-
-    if (this.dealing || this.playerRedealing || this.actionDealing || this.stageBannerPlaying || this.actionAnimationPlaying) {
+    if (this.blockingMessage) {
       return;
     }
 
-    if (this.battle.phase === 'choice') {
-      container.add(this.button(0, 0, 190, 48, t('battle.button.viewHand'), () => {
-        this.battle.execute({ type: 'choose-view-hand' });
-        this.playRoundResonanceEchoOnce();
-        this.render();
-      }, COLORS.button, '19px', 'card'));
+    const uiState = this.createUIState();
+
+    if (uiState.inputLocked) {
       return;
     }
 
-    if (this.battle.phase === 'enemy-turn') {
-      const currentEnemy = this.battle.currentEnemy;
-      if (currentEnemy?.invited === undefined) {
-        container.add(this.button(0, 0, 190, 48, t('battle.button.inviteOne'), () => {
-          this.battle.execute({ type: 'invite-current-enemy' });
-          const events = this.battle.consumePresentationEvents();
-          this.playImmediatePresentationEvents(events);
-          this.playActionDealEvents(events, () => this.render());
-        }, COLORS.button, '19px', 'card'));
-      }
-
-      container.add(this.button(currentEnemy?.invited === undefined ? 210 : 0, 0, 170, 48, t('battle.button.compare'), () => {
-        this.runAction(() => this.battle.execute({ type: 'compare-current-enemy' }));
-      }, COLORS.button, '19px', 'card'));
-      return;
-    }
-
-    if (this.battle.phase === 'player-turn') {
-      if (!this.battle.player.drawLocked && this.battle.player.drawCountThisRound < 2) {
-        const isSecondDraw = this.battle.player.drawCountThisRound === 1;
-        container.add(this.button(0, 0, isSecondDraw ? 236 : 200, 48, isSecondDraw ? t('battle.button.drawRisk') : t('battle.button.draw'), () => {
-          this.runAction(() => this.battle.execute({ type: 'player-draw' }));
-        }, isSecondDraw ? COLORS.danger : COLORS.button, '19px', 'card'));
-      }
-      container.add(this.button(256, 0, 180, 48, t('battle.button.stand'), () => {
-        this.runAction(() => this.battle.execute({ type: 'player-stand' }));
-      }, COLORS.button, '19px', 'card'));
-      return;
-    }
-
-    if (this.battle.phase === 'round-result') {
+    if (uiState.autoAdvanceRound) {
       this.scheduleNextRound();
       return;
     }
+
+    this.ui.push(ActionPanel.render(this, {
+      x: 448,
+      y: 648,
+      buttons: uiState.actionButtons,
+      colors: {
+        button: COLORS.button,
+        danger: COLORS.danger,
+      },
+      createButton: (x, y, width, height, label, onClick, fill, fontSize, sound) => this.button(x, y, width, height, label, onClick, fill, fontSize, sound),
+      onAction: (buttonState) => this.handleActionButton(buttonState),
+    }));
+  }
+
+  private handleActionButton(buttonState: BattleActionButtonState): void {
+    if (buttonState.id === 'view-hand') {
+      this.battle.execute(buttonState.action);
+      this.playRoundResonanceEchoOnce();
+      this.render();
+      this.showCompareHintIfNeeded();
+      return;
+    }
+
+    if (buttonState.id === 'invite-one') {
+      this.battle.execute(buttonState.action);
+      const events = this.battle.consumePresentationEvents();
+      this.playImmediatePresentationEvents(events);
+      this.playActionDealEvents(events, () => this.render());
+      return;
+    }
+
+    this.runAction(() => this.battle.execute(buttonState.action));
   }
 
   private scheduleNextRound(): void {
@@ -609,10 +736,12 @@ export class BattleScene extends Phaser.Scene {
     this.ui.push(container);
 
     container.add(this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.68));
-    container.add(this.add.rectangle(0, 0, 420, 282, COLORS.panel, 0.98).setStrokeStyle(2, isVictory ? 0x78d18a : 0xff4b5f));
+    const storyResultText = this.storyResultText(isVictory);
+    const modalHeight = storyResultText ? 390 : 282;
+    container.add(this.add.rectangle(0, 0, 520, modalHeight, COLORS.panel, 0.98).setStrokeStyle(2, isVictory ? 0x78d18a : 0xff4b5f));
 
     const titleColor = isVictory ? COLORS.green : COLORS.heat;
-    const title = this.add.text(0, -88, isVictory ? t('battle.result.victory') : t('battle.result.defeat'), {
+    const title = this.add.text(0, storyResultText ? -148 : -88, isVictory ? t('battle.result.victory') : t('battle.result.defeat'), {
       fontFamily: 'Arial',
       fontSize: '46px',
       color: titleColor,
@@ -620,25 +749,153 @@ export class BattleScene extends Phaser.Scene {
     }).setOrigin(0.5);
     title.setShadow(0, 0, titleColor, 12, true, true);
 
-    const goldText = this.add.text(0, -24, t('battle.result.goldGained', { amount: this.economyResult.amount }), {
+    const goldText = this.add.text(0, storyResultText ? -90 : -24, t('battle.result.goldGained', { amount: this.economyResult.amount }), {
       fontFamily: 'Arial',
       fontSize: '22px',
       color: '#e8cf73',
     }).setOrigin(0.5);
     goldText.setShadow(0, 0, '#e8cf73', 8, true, true);
 
-    container.add([
-      title,
-      goldText,
-      this.add.text(0, 18, t('battle.result.totalGold', { total: this.economyResult.total }), {
+    const totalText = this.add.text(0, storyResultText ? -56 : 18, t('battle.result.totalGold', { total: this.economyResult.total }), {
+      fontFamily: 'Arial',
+      fontSize: '18px',
+      color: COLORS.muted,
+    }).setOrigin(0.5);
+    const children: Phaser.GameObjects.GameObject[] = [title, goldText, totalText];
+    if (storyResultText) {
+      children.push(this.add.text(0, 42, storyResultText, {
         fontFamily: 'Arial',
-        fontSize: '18px',
-        color: COLORS.muted,
-      }).setOrigin(0.5),
-      this.button(-110, 68, 220, 50, t('battle.result.returnLobby'), () => {
-        this.scene.start('StartScene');
-      }),
-    ]);
+        fontSize: '16px',
+        color: COLORS.text,
+        align: 'center',
+        lineSpacing: 7,
+        wordWrap: { width: 430 },
+      }).setOrigin(0.5));
+    }
+    children.push(this.button(-110, storyResultText ? 134 : 68, 220, 50, t('battle.result.returnLobby'), () => {
+      this.scene.start('StartScene');
+    }));
+    container.add(children);
+  }
+
+  private renderBlockingMessage(): void {
+    if (!this.blockingMessage) {
+      return;
+    }
+
+    this.ui.push(BlockingMessageModal.render(this, {
+      title: this.blockingMessage.title,
+      body: this.blockingMessage.body,
+      buttonLabel: this.blockingMessage.buttonLabel,
+      colors: {
+        panel: COLORS.panel,
+        line: COLORS.line,
+        text: COLORS.text,
+        muted: COLORS.muted,
+        accent: COLORS.accent,
+        accentText: COLORS.accentText,
+        button: COLORS.button,
+        buttonHover: COLORS.buttonHover,
+      },
+      onClose: () => {
+        this.playClickSound();
+        const onClose = this.blockingMessage?.onClose;
+        this.blockingMessage = undefined;
+        if (onClose) {
+          onClose();
+          return;
+        }
+
+        this.render();
+      },
+    }));
+  }
+
+  private showBlockingMessage(title: string, body: string, buttonLabel = t('battle.modal.continue'), onClose?: () => void): void {
+    this.blockingMessage = { title, body, buttonLabel, onClose };
+    this.render();
+  }
+
+  private showBlockingMessageSequence(messages: Array<{ title: string; body: string }>, onComplete: () => void): void {
+    const showAt = (index: number) => {
+      const message = messages[index];
+      if (!message) {
+        onComplete();
+        return;
+      }
+
+      this.showBlockingMessage(message.title, message.body, t('battle.modal.continue'), () => showAt(index + 1));
+    };
+
+    showAt(0);
+  }
+
+  private showRoundLessonIfNeeded(): void {
+    const state = this.battle.getState();
+    if (!state.currentFixedRoundId || !state.currentLessonKey || this.shownLessonRoundIds.has(state.currentFixedRoundId)) {
+      return;
+    }
+
+    this.shownLessonRoundIds.add(state.currentFixedRoundId);
+    this.showBlockingMessage(t('battle.modal.tutorialTitle'), t(state.currentLessonKey), t('battle.modal.understood'));
+  }
+
+  private showCompareHintIfNeeded(): void {
+    const state = this.battle.getState();
+    if (!state.currentTutorialBeforeCompareKey || this.shownCompareHintKeys.has(state.currentTutorialBeforeCompareKey)) {
+      return;
+    }
+
+    this.shownCompareHintKeys.add(state.currentTutorialBeforeCompareKey);
+    this.showBlockingMessage(t('battle.modal.tutorialTitle'), t(state.currentTutorialBeforeCompareKey), t('battle.modal.understood'));
+  }
+
+  private showRevealDialogueIfNeeded(onClose: () => void): boolean {
+    const fixedRound = this.battle.levelConfig?.fixedRounds?.[this.battle.round - 1];
+    if (!fixedRound?.afterRevealDialogueKeys?.length || this.shownRevealDialogueRoundIds.has(fixedRound.id)) {
+      return false;
+    }
+
+    this.shownRevealDialogueRoundIds.add(fixedRound.id);
+    this.showBlockingMessage(
+      enemyName('bartender'),
+      fixedRound.afterRevealDialogueKeys.map((key) => t(key).replace(/^酒保：/, '').replace(/^Bartender: /, '')).join('\n'),
+      t('battle.modal.continue'),
+      onClose,
+    );
+    return true;
+  }
+
+  private storyResultText(isVictory: boolean): string {
+    if (this.battle.levelConfig?.id !== 'chapter1_1') {
+      return '';
+    }
+
+    const keys = isVictory
+      ? [
+        'tutorial.chapter1.unlockInvite',
+        'tutorial.chapter1.unlockHiddenCards',
+      ]
+      : [
+        'tutorial.chapter1.defeat1',
+        'tutorial.chapter1.defeat2',
+      ];
+    return keys.map((key) => t(key)).join('\n');
+  }
+
+  private showResultStoryIfNeeded(onComplete: () => void): boolean {
+    if (this.shownResultStory || this.battle.levelConfig?.id !== 'chapter1_1' || this.battle.battleOutcome !== 'victory') {
+      return false;
+    }
+
+    this.shownResultStory = true;
+    this.showBlockingMessageSequence([
+      { title: enemyName('bartender'), body: t('tutorial.chapter1.victory1') },
+      { title: enemyName('bartender'), body: t('tutorial.chapter1.victory2') },
+      { title: enemyName('bartender'), body: t('tutorial.chapter1.victory3') },
+      { title: enemyName('bartender'), body: t('tutorial.chapter1.victory4') },
+    ], onComplete);
+    return true;
   }
 
   private renderItemFeedback(): void {
@@ -718,116 +975,6 @@ export class BattleScene extends Phaser.Scene {
     }
 
     return this.battle.results.some((result) => result.playerScore.resonance !== 'none' || result.enemyScore.resonance !== 'none');
-  }
-
-  private skillSlot(kind: 'shift' | 'summon', x: number, y: number): Phaser.GameObjects.Container {
-    const isShift = kind === 'shift';
-    const cooldown = isShift ? this.battle.player.resonanceShiftCooldown : this.battle.player.resonanceSummonCooldown;
-    const available = !this.dealing
-      && !this.playerRedealing
-      && !this.actionDealing
-      && this.battle.phase === 'player-turn'
-      && cooldown === 0
-      && (isShift ? this.battle.canUseResonanceShift() : !this.battle.player.resonanceSummonUsed && this.battle.playerScore().resonance !== 'none');
-    const title = isShift ? t('skill.resonanceShift.name') : t('skill.resonanceSummon.name');
-    const iconGlyph = isShift ? '◇' : '✦';
-    const baseTooltip = isShift ? t('skill.resonanceShift.tooltip') : t('skill.resonanceSummon.tooltip');
-    const tooltip = cooldown > 0 ? t('skill.cooldown.tooltip', { rounds: cooldown }) : baseTooltip;
-    const slot = this.add.container(x, y);
-    const rect = this.add.rectangle(0, 0, 78, 64, available ? 0x2a2e38 : 0x20232a).setStrokeStyle(2, available ? 0xffd86b : COLORS.line);
-    const iconGlow = this.add.circle(0, -10, 19, 0xffd86b, available ? 0.22 : 0.08);
-    const icon = this.add.text(0, -12, iconGlyph, {
-      fontFamily: 'Arial',
-      fontSize: '30px',
-      color: available ? COLORS.resonance : COLORS.muted,
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    const label = this.add.text(0, 20, title, {
-      fontFamily: 'Arial',
-      fontSize: '12px',
-      color: available ? COLORS.text : COLORS.muted,
-    }).setOrigin(0.5);
-    const cooldownLabel = cooldown > 0
-      ? this.add.text(0, 33, `CD ${cooldown}`, {
-        fontFamily: 'Arial',
-        fontSize: '11px',
-        color: COLORS.heat,
-        fontStyle: 'bold',
-      }).setOrigin(0.5)
-      : undefined;
-
-    if (available) {
-      icon.setShadow(0, 0, COLORS.resonance, 10, true, true);
-    }
-
-    rect.setInteractive({ useHandCursor: available });
-    rect.on('pointerover', () => {
-      rect.setFillStyle(0x343947);
-      this.showSkillTooltip(SEATS.player.x + x + 70, SEATS.player.y + y - 98, title, tooltip);
-    });
-    rect.on('pointerout', () => {
-      rect.setFillStyle(available ? 0x2a2e38 : 0x20232a);
-      this.hideSkillTooltip();
-    });
-    rect.on('pointerdown', () => {
-      if (!available) {
-        return;
-      }
-
-      this.playClickSound();
-      this.runAction(() => {
-        const result = this.battle.execute({
-          type: 'use-skill',
-          skill: isShift ? 'resonance-shift' : 'resonance-summon',
-        });
-        if (!result?.used) {
-          // The log only records real skill attempts; surface invalid use in-place.
-          this.showSkillTooltip(SEATS.player.x + x + 70, SEATS.player.y + y - 98, title, result?.message ?? tooltip);
-        }
-      });
-    });
-
-    slot.add(cooldownLabel ? [rect, iconGlow, icon, label, cooldownLabel] : [rect, iconGlow, icon, label]);
-    return slot;
-  }
-
-  private itemSlot(x: number, y: number): Phaser.GameObjects.Container {
-    const ownedCount = Object.values(getProgress().ownedItems).reduce((total, count) => total + count, 0);
-    const available = ownedCount > 0 && !this.dealing && !this.playerRedealing && !this.actionDealing && !this.stageBannerPlaying && !this.actionAnimationPlaying;
-    const slot = this.add.container(x, y);
-    const rect = this.add.rectangle(0, 0, 78, 64, available ? 0x2a2e38 : 0x20232a).setStrokeStyle(2, available ? COLORS.accent : COLORS.line);
-    const iconGlow = this.add.circle(0, -10, 19, COLORS.accent, available ? 0.18 : 0.08);
-    const icon = this.add.text(0, -12, '□', {
-      fontFamily: 'Arial',
-      fontSize: '28px',
-      color: available ? COLORS.accentText : COLORS.muted,
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    const label = this.add.text(0, 20, t('battle.itemButton'), {
-      fontFamily: 'Arial',
-      fontSize: '12px',
-      color: available ? COLORS.text : COLORS.muted,
-    }).setOrigin(0.5);
-
-    if (available) {
-      icon.setShadow(0, 0, COLORS.accentText, 10, true, true);
-    }
-
-    rect.setInteractive({ useHandCursor: available });
-    rect.on('pointerover', () => rect.setFillStyle(0x343947));
-    rect.on('pointerout', () => rect.setFillStyle(available ? 0x2a2e38 : 0x20232a));
-    rect.on('pointerdown', () => {
-      if (!available) {
-        return;
-      }
-
-      this.playClickSound();
-      this.itemModalOpen = true;
-      this.render();
-    });
-
-    slot.add([rect, iconGlow, icon, label]);
-    return slot;
   }
 
   private renderItemModal(): void {
@@ -985,15 +1132,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private canUseItemNow(item: ItemDefinition): boolean {
-    if (item.id === 'heal_potion' || item.id === 'resonance_dust') {
-      return this.battle.phase === 'choice';
-    }
-
-    if (item.id === 'cooling_charm') {
-      return this.battle.phase === 'player-turn';
-    }
-
-    return false;
+    return canUseBattleItemFromState(item.id, this.battle.getState());
   }
 
   private playerPassiveIcon(seat: { width: number; height: number }): Phaser.GameObjects.Container {
@@ -1060,8 +1199,9 @@ export class BattleScene extends Phaser.Scene {
     rect.setInteractive({ useHandCursor: false });
     rect.on('pointerover', () => {
       rect.setFillStyle(0x343947);
-      const worldX = SEATS.enemy[index].x + x + (index === 1 ? -170 : 150);
-      const worldY = SEATS.enemy[index].y + y + (index === 1 ? 104 : -62);
+      const worldSeat = this.enemySeatForIndex(index);
+      const worldX = worldSeat.x + x + (index === 1 ? -170 : 150);
+      const worldY = worldSeat.y + y + (index === 1 ? 104 : -62);
       this.showSkillTooltip(worldX, worldY, passive.name, passive.description);
     });
     rect.on('pointerout', () => {
@@ -1417,21 +1557,37 @@ export class BattleScene extends Phaser.Scene {
           return;
         }
 
-        if (!shouldDelayResultModal) {
-          if (shouldDealNewRound) {
-            this.startDealPresentation();
-          } else {
-            this.render();
+        const continueAfterRevealDialogue = () => {
+          if (!shouldDelayResultModal) {
+            if (shouldDealNewRound) {
+              this.startDealPresentation();
+            } else {
+              this.render();
+            }
+            return;
           }
+
+          const showResult = () => {
+            this.resultModalReady = true;
+            if (shouldDealNewRound) {
+              this.startDealPresentation();
+            } else {
+              this.render();
+            }
+          };
+
+          if (this.showResultStoryIfNeeded(showResult)) {
+            return;
+          }
+
+          showResult();
+        };
+
+        if (this.hasRoundRevealEvent(events) && this.showRevealDialogueIfNeeded(continueAfterRevealDialogue)) {
           return;
         }
 
-        this.resultModalReady = true;
-        if (shouldDealNewRound) {
-          this.startDealPresentation();
-        } else {
-          this.render();
-        }
+        continueAfterRevealDialogue();
       });
     });
   }
@@ -1544,11 +1700,15 @@ export class BattleScene extends Phaser.Scene {
 
   private combatPositions(enemy: EnemyState): { player: Phaser.Math.Vector2; enemy: Phaser.Math.Vector2 } {
     const enemyIndex = this.battle.enemies.indexOf(enemy);
-    const enemySeat = SEATS.enemy[enemyIndex];
+    const enemySeat = this.enemySeatForIndex(enemyIndex);
     return {
       enemy: new Phaser.Math.Vector2(enemySeat.x, enemySeat.y),
       player: new Phaser.Math.Vector2(SEATS.player.x, SEATS.player.y),
     };
+  }
+
+  private enemySeatForIndex(index: number): { x: number; y: number; width: number; height: number } {
+    return this.battle.enemies.length === 1 ? SEATS.enemy[1] : SEATS.enemy[index];
   }
 
   private playProjectile(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, color: number, label: string, resonantAttack: boolean, onHit: () => void): void {
@@ -1757,28 +1917,13 @@ export class BattleScene extends Phaser.Scene {
     return this.battle.player.hand.map(formatCard).join(' ');
   }
 
-  private phaseText(): string {
-    if (this.battle.phase === 'choice') {
-      return t('battle.phase.choice');
+  private phaseText(uiState: BattleUIState = this.createUIState()): string {
+    const params = { ...(uiState.center.phaseTextParams ?? {}) };
+    if (uiState.center.phaseRiskTextKey) {
+      params.risk = t(uiState.center.phaseRiskTextKey);
     }
 
-    if (this.battle.phase === 'enemy-turn') {
-      return t('battle.phase.enemyTurn');
-    }
-
-    if (this.battle.phase === 'player-turn') {
-      const remainingDraws = 2 - this.battle.player.drawCountThisRound;
-      const risk = this.battle.player.incomingDamageBonus > 0 ? t('battle.phase.playerRiskActive') : t('battle.phase.playerRiskPending');
-      return t('battle.phase.playerTurn', { remaining: remainingDraws, risk });
-    }
-
-    if (this.battle.phase === 'round-result') {
-      return t('battle.phase.roundResult');
-    }
-
-    return this.battle.battleOutcome === 'victory'
-      ? t('battle.phase.victory')
-      : t('battle.phase.defeat');
+    return t(uiState.center.phaseTextKey, params);
   }
 
   private scoreEnemy(enemy: EnemyState) {
