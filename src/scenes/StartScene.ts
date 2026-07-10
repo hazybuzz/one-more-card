@@ -13,7 +13,7 @@ const COLORS = {
   muted: '#aeb4c0',
   accent: 0xe8cf73,
   accentText: '#e8cf73',
-  heat: '#ff4b5f',
+  dangerText: '#ff4b5f',
   button: 0x303542,
   buttonHover: 0x41495b,
 };
@@ -91,7 +91,7 @@ export class StartScene extends Phaser.Scene {
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5);
-    title.setShadow(0, 0, COLORS.heat, 14, true, true);
+    title.setShadow(0, 0, COLORS.dangerText, 14, true, true);
 
     const subtitle = this.add.text(640, 240, t('start.subtitle'), {
       fontFamily: 'Arial',

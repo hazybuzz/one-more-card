@@ -42,8 +42,6 @@ export interface BattleCenterUIState {
   phaseTextParams?: Record<string, string | number>;
   phaseRiskTextKey?: string;
   currentTargetId?: string;
-  heatColorLevel: 'muted' | 'warm' | 'hot';
-  playerRiskTextKey?: string;
 }
 
 export interface BattleUIState {
@@ -105,16 +103,12 @@ function createCenterState(state: BattleState): BattleCenterUIState {
       },
       phaseRiskTextKey: state.player.incomingDamageBonus > 0 ? 'battle.phase.playerRiskActive' : 'battle.phase.playerRiskPending',
       currentTargetId: state.currentEnemyId,
-      heatColorLevel: heatColorLevel(state.heat),
-      playerRiskTextKey: state.player.incomingDamageBonus > 0 ? 'battle.playerRisk' : undefined,
     };
   }
 
   return {
     phaseTextKey: phaseTextKey(state),
     currentTargetId: state.currentEnemyId,
-    heatColorLevel: heatColorLevel(state.heat),
-    playerRiskTextKey: state.player.incomingDamageBonus > 0 ? 'battle.playerRisk' : undefined,
   };
 }
 
@@ -234,7 +228,7 @@ function createSummonSkillState(state: BattleState, inputLocked: boolean): Skill
 
 function phaseTextKey(state: BattleState): string {
   if (state.phase === 'choice') {
-    if (!hasMechanic(state, 'invite') && !hasMechanic(state, 'heat')) {
+    if (!hasMechanic(state, 'invite')) {
       return 'battle.phase.tutorialChoice';
     }
 
@@ -242,7 +236,7 @@ function phaseTextKey(state: BattleState): string {
   }
 
   if (state.phase === 'enemy-turn') {
-    if (!hasMechanic(state, 'invite') && !hasMechanic(state, 'heat')) {
+    if (!hasMechanic(state, 'invite')) {
       return 'battle.phase.tutorialCompare';
     }
 
@@ -254,18 +248,6 @@ function phaseTextKey(state: BattleState): string {
   }
 
   return state.battleOutcome === 'victory' ? 'battle.phase.victory' : 'battle.phase.defeat';
-}
-
-function heatColorLevel(heat: number): BattleCenterUIState['heatColorLevel'] {
-  if (heat >= 6) {
-    return 'hot';
-  }
-
-  if (heat >= 3) {
-    return 'warm';
-  }
-
-  return 'muted';
 }
 
 function hasMechanic(state: BattleState, mechanic: BattleMechanicId): boolean {

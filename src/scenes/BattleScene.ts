@@ -16,7 +16,6 @@ import type { BattleState } from '../game/core/BattleState';
 import type { BattleMechanicId } from '../game/types/level';
 import { ActionPanel } from '../ui/components/ActionPanel';
 import { BlockingMessageModal } from '../ui/components/BlockingMessageModal';
-import { HeatMeter } from '../ui/components/HeatMeter';
 import { ItemBar } from '../ui/components/ItemBar';
 import { SkillBar } from '../ui/components/SkillBar';
 import { canUseBattleItemFromState, createBattleUIState, type BattleActionButtonState, type BattleUIState } from '../ui/state/UIState';
@@ -31,7 +30,7 @@ const COLORS = {
   accent: 0xe8cf73,
   accentText: '#e8cf73',
   red: '#ef6f6c',
-  heat: '#ff4b5f',
+  dangerText: '#ff4b5f',
   resonance: '#ffd86b',
   green: '#78d18a',
   button: 0x303542,
@@ -256,25 +255,8 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    if (this.hasMechanic('heat')) {
-      const playerRisk = uiState.center.playerRiskTextKey ? t(uiState.center.playerRiskTextKey) : '';
-      const heatColor = this.heatTextColor(uiState);
-      container.add(HeatMeter.render(this, {
-        x: 0,
-        y: 58,
-        text: t('battle.heat', {
-          heat: battleState.heat,
-          bonus: battleState.heatDamageBonus,
-          stage: battleState.heatStage,
-          playerRisk,
-        }),
-        color: heatColor,
-        glowStrong: battleState.heat >= 3,
-      }));
-    }
-
     const aliveText = t('battle.aliveInfo', { alive: battleState.aliveEnemyIds.length, total: battleState.enemies.length });
-    container.add(this.add.text(0, this.hasMechanic('heat') ? 90 : 58, aliveText, { fontFamily: 'Arial', fontSize: '14px', color: COLORS.muted }).setOrigin(0.5));
+    container.add(this.add.text(0, 58, aliveText, { fontFamily: 'Arial', fontSize: '14px', color: COLORS.muted }).setOrigin(0.5));
   }
 
   private currentTutorialText(state: BattleState): string {
@@ -322,7 +304,7 @@ export class BattleScene extends Phaser.Scene {
         y: -42,
         skills: uiState.skills,
         colors: {
-          heat: COLORS.heat,
+          cooldown: COLORS.dangerText,
           line: COLORS.line,
           muted: COLORS.muted,
           resonance: COLORS.resonance,
@@ -384,18 +366,6 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private heatTextColor(uiState: BattleUIState = this.createUIState()): string {
-    if (uiState.center.heatColorLevel === 'hot') {
-      return COLORS.heat;
-    }
-
-    if (uiState.center.heatColorLevel === 'warm') {
-      return COLORS.resonance;
-    }
-
-    return COLORS.muted;
-  }
-
   private hasMechanic(mechanic: BattleMechanicId): boolean {
     return this.battle.hasMechanic(mechanic);
   }
@@ -439,7 +409,7 @@ export class BattleScene extends Phaser.Scene {
     this.playStageBanner(t('battle.banner.soulRedeem'), onComplete, false, COLORS.resonance, '#4b3000');
   }
 
-  private playStageBanner(label: string, onComplete: () => void, renderBefore = true, color = COLORS.heat, stroke = '#3a070d'): void {
+  private playStageBanner(label: string, onComplete: () => void, renderBefore = true, color = COLORS.dangerText, stroke = '#3a070d'): void {
     this.stageBannerPlaying = true;
     this.itemModalOpen = false;
     if (renderBefore) {
@@ -846,7 +816,7 @@ export class BattleScene extends Phaser.Scene {
     const modalHeight = storyResultText ? 390 : 282;
     container.add(this.add.rectangle(0, 0, 520, modalHeight, COLORS.panel, 0.98).setStrokeStyle(2, isVictory ? 0x78d18a : 0xff4b5f));
 
-    const titleColor = isVictory ? COLORS.green : COLORS.heat;
+    const titleColor = isVictory ? COLORS.green : COLORS.dangerText;
     const title = this.add.text(0, storyResultText ? -148 : -88, isVictory ? t('battle.result.victory') : t('battle.result.defeat'), {
       fontFamily: 'Arial',
       fontSize: '46px',
@@ -1128,8 +1098,8 @@ export class BattleScene extends Phaser.Scene {
 
     if (levelId === 'chapter1_4') {
       return isVictory ? [
-        'tutorial.chapter1_4.unlockHeat',
-        'tutorial.chapter1_4.nextTableHeat',
+        'tutorial.chapter1_4.unlockSkills',
+        'tutorial.chapter1_4.nextGuestPaladin',
       ] : [
         'tutorial.chapter1_4.defeatHint1',
         'tutorial.chapter1_4.defeatHint2',
@@ -1224,7 +1194,7 @@ export class BattleScene extends Phaser.Scene {
     const container = this.add.container(640, 360).setDepth(90);
     this.ui.push(container);
     const stroke = this.itemFeedback.success ? 0x78d18a : 0xff4b5f;
-    const titleColor = this.itemFeedback.success ? COLORS.green : COLORS.heat;
+    const titleColor = this.itemFeedback.success ? COLORS.green : COLORS.dangerText;
 
     container.add(this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.62));
     container.add(this.add.rectangle(0, 0, 430, 260, COLORS.panel, 0.98).setStrokeStyle(2, stroke));
@@ -1314,7 +1284,7 @@ export class BattleScene extends Phaser.Scene {
     container.add(this.add.text(0, -132, t('battle.itemModal.phaseHint'), {
       fontFamily: 'Arial',
       fontSize: '15px',
-      color: this.battle.phase === 'player-turn' || this.battle.phase === 'choice' ? COLORS.muted : COLORS.heat,
+      color: this.battle.phase === 'player-turn' || this.battle.phase === 'choice' ? COLORS.muted : COLORS.dangerText,
     }).setOrigin(0.5));
 
     if (ownedItems.length === 0) {
@@ -1604,10 +1574,10 @@ export class BattleScene extends Phaser.Scene {
     const text = this.add.text(x, y, label, {
       fontFamily: 'Arial',
       fontSize: '21px',
-      color: muted ? COLORS.muted : COLORS.heat,
+      color: muted ? COLORS.muted : COLORS.dangerText,
     });
     if (!muted) {
-      text.setShadow(0, 0, COLORS.heat, 10, true, true);
+      text.setShadow(0, 0, COLORS.dangerText, 10, true, true);
     }
 
     return text;

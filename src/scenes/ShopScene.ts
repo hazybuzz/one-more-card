@@ -14,7 +14,7 @@ const COLORS = {
   accent: 0xe8cf73,
   accentText: '#e8cf73',
   green: '#78d18a',
-  heat: '#ff4b5f',
+  dangerText: '#ff4b5f',
   button: 0x303542,
   buttonHover: 0x41495b,
 };

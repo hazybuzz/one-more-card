@@ -7,7 +7,7 @@ interface SkillBarOptions {
   y: number;
   skills: Record<SkillSlotId, SkillSlotState>;
   colors: {
-    heat: string;
+    cooldown: string;
     line: number;
     muted: string;
     resonance: string;
@@ -56,7 +56,7 @@ export class SkillBar {
       children.push(scene.add.text(0, 33, `CD ${skill.cooldown}`, {
         fontFamily: 'Arial',
         fontSize: '11px',
-        color: options.colors.heat,
+        color: options.colors.cooldown,
         fontStyle: 'bold',
       }).setOrigin(0.5));
     }

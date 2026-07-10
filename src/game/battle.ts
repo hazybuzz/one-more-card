@@ -63,7 +63,6 @@ export class Battle {
   battleOutcome: BattleOutcome;
   currentEnemyIndex: number;
   round: number;
-  heat: number;
   roundRevealed: boolean;
   pendingSoulRedeem: boolean;
   results: BattleResult[];
@@ -95,7 +94,6 @@ export class Battle {
     this.battleOutcome = undefined;
     this.currentEnemyIndex = 0;
     this.round = 0;
-    this.heat = 0;
     this.roundRevealed = false;
     this.pendingSoulRedeem = false;
     this.results = [];
@@ -142,7 +140,7 @@ export class Battle {
         accepts: fixedEnemy.scriptedInviteResult === 'accept',
         reason: fixedEnemy.scriptedInviteReasonKey ? t(fixedEnemy.scriptedInviteReasonKey) : t('enemy.ai.goblin.mid'),
       }
-      : decideInvite(enemy, this.heat, this.playerScore().point);
+      : decideInvite(enemy, this.playerScore().point);
     enemy.invited = true;
     enemy.invitedDrawCount = drawCount;
     enemy.acceptedInvite = decision.accepts;
@@ -151,7 +149,6 @@ export class Battle {
         ? [cardFromCode(fixedEnemy.drawCardOnAccept)]
         : this.drawCards(drawCount);
       enemy.hand.push(...cards);
-      this.addHeat(drawCount);
       this.logEvent(t('log.enemyAcceptInvite', { enemy: enemyName(enemy.id), reason: decision.reason }));
     } else {
       this.logEvent(t('log.enemyRejectInvite', { enemy: enemyName(enemy.id), reason: decision.reason }));
@@ -167,7 +164,6 @@ export class Battle {
       return;
     }
 
-    this.applyLowPointCompareHeat();
     const result = this.compareEnemy(enemy);
     this.results.push(result);
     enemy.compared = true;
@@ -195,18 +191,16 @@ export class Battle {
       return;
     }
 
-    const heatGain = this.player.drawCountThisRound === 0 ? 1 : 2;
     const fixedCardCode = this.currentFixedRound()?.playerDrawCards?.[this.player.drawCountThisRound];
     const card = fixedCardCode ? cardFromCode(fixedCardCode) : this.deck.draw();
     this.player.hand.push(card);
     this.player.drawCountThisRound += 1;
-    this.addHeat(heatGain);
     if (this.player.drawCountThisRound >= 2) {
       this.player.incomingDamageBonus = 1;
     }
     this.logEvent(this.player.fateMode
-      ? t('log.playerDrawFate', { heatGain })
-      : t('log.playerDraw', { card: formatCard(card), heatGain }));
+      ? t('log.playerDrawFate')
+      : t('log.playerDraw', { card: formatCard(card) }));
 
     if (this.player.drawCountThisRound >= 2) {
       this.player.drawLocked = true;
@@ -302,7 +296,6 @@ export class Battle {
     this.player.drawLocked = true;
     this.player.incomingDamageBonus = 1;
     this.player.hand.push(card);
-    this.addHeat(1);
     this.logEvent(t('log.summon', { card: formatCard(card) }));
     this.logEvent(t('log.playerMustReveal'));
     return { used: true, success: true, message: t('log.summonShort', { card: formatCard(card) }) };
@@ -356,9 +349,6 @@ export class Battle {
       currentPlayerTurnLessonKey: this.currentFixedRound()?.playerTurnLessonKey,
       availableActions: this.currentFixedRound()?.availableActions,
       maxPlayerDrawsThisRound: this.maxPlayerDrawsThisRound(),
-      heat: this.heat,
-      heatStage: this.heatStage,
-      heatDamageBonus: this.heatDamageBonus,
       roundRevealed: this.roundRevealed,
       pendingSoulRedeem: this.pendingSoulRedeem,
       player: {
@@ -404,30 +394,6 @@ export class Battle {
     };
   }
 
-  get heatStage(): string {
-    if (this.heat <= 2) {
-      return t('battle.heatStage.stable');
-    }
-
-    if (this.heat <= 5) {
-      return t('battle.heatStage.warming');
-    }
-
-    return t('battle.heatStage.overheat');
-  }
-
-  get heatDamageBonus(): number {
-    if (this.heat >= 6) {
-      return 2;
-    }
-
-    if (this.heat >= 3) {
-      return 1;
-    }
-
-    return 0;
-  }
-
   playerScore(): ScoreResult {
     return this.scoreFor(this.player.hand);
   }
@@ -452,12 +418,6 @@ export class Battle {
     const beforeHp = this.player.hp;
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + Math.max(0, Math.floor(amount)));
     return this.player.hp - beforeHp;
-  }
-
-  reduceHeat(amount: number): number {
-    const beforeHeat = this.heat;
-    this.heat = Math.max(0, this.heat - Math.max(0, Math.floor(amount)));
-    return beforeHeat - this.heat;
   }
 
   addLog(message: string): void {
@@ -497,7 +457,6 @@ export class Battle {
     this.results = [];
     this.phase = 'choice';
     this.battleOutcome = undefined;
-    this.heat = 0;
     this.roundRevealed = false;
     this.currentEnemyIndex = this.firstAliveEnemyIndex();
     this.player.fateMode = false;
@@ -570,12 +529,12 @@ export class Battle {
 
     if (comparison > 0) {
       outcome = 'win';
-      damage = playerScore.multiplier * fateDamageMultiplier + this.heatDamageBonus;
+      damage = playerScore.multiplier * fateDamageMultiplier;
       enemy.hp = Math.max(0, enemy.hp - damage);
       this.damageEvents.push({ type: 'damage', attacker: 'player', enemyId: enemy.id, amount: damage, resonance: playerScore.resonance });
     } else if (comparison < 0) {
       outcome = 'lose';
-      damage = enemyScore.multiplier + this.heatDamageBonus + this.player.incomingDamageBonus;
+      damage = enemyScore.multiplier + this.player.incomingDamageBonus;
       this.player.hp = Math.max(0, this.player.hp - damage);
       this.applyPostDamagePassive(enemy, damage);
       this.damageEvents.push({ type: 'damage', attacker: 'enemy', enemyId: enemy.id, amount: damage, resonance: enemyScore.resonance });
@@ -782,28 +741,6 @@ export class Battle {
 
   private drawCards(count: number): Card[] {
     return Array.from({ length: count }, () => this.deck.draw());
-  }
-
-  private addHeat(amount: number): void {
-    if (!this.hasMechanic('heat')) {
-      return;
-    }
-
-    this.heat += amount;
-  }
-
-  private applyLowPointCompareHeat(): void {
-    if (!this.hasMechanic('heat')) {
-      return;
-    }
-
-    const point = this.playerScore().point;
-    if (point >= 8) {
-      return;
-    }
-
-    this.addHeat(1);
-    this.logEvent(t('log.lowPointCompare', { point }));
   }
 
   private scoreFor(hand: Card[]): ScoreResult {

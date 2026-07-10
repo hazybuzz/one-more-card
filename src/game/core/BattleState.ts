@@ -60,9 +60,6 @@ export interface BattleState {
   currentPlayerTurnLessonKey?: string;
   availableActions?: BattleActionId[];
   maxPlayerDrawsThisRound: number;
-  heat: number;
-  heatStage: string;
-  heatDamageBonus: number;
   roundRevealed: boolean;
   pendingSoulRedeem: boolean;
   player: BattlePlayerState;

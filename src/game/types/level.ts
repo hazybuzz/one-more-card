@@ -8,7 +8,6 @@ export type BattleMechanicId =
   | 'invite'
   | 'compare'
   | 'player_draw'
-  | 'heat'
   | 'resonance'
   | 'skills'
   | 'items'
