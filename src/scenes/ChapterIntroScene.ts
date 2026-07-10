@@ -23,7 +23,7 @@ interface ChapterIntroData {
   levelId?: string;
 }
 
-type IntroPhase = 'narration' | 'dialogue' | 'readyToFinish' | 'finished';
+type IntroPhase = 'title' | 'narration' | 'transition' | 'dialogue' | 'readyToFinish' | 'finished';
 
 const CARD_PACK_TAKE_OUT_KEY = 'cardPackTakeOut';
 
@@ -32,8 +32,9 @@ export class ChapterIntroScene extends Phaser.Scene {
   private levelId = 'chapter1_1';
   private timers: Phaser.Time.TimerEvent[] = [];
   private finished = false;
-  private phase: IntroPhase = 'narration';
+  private phase: IntroPhase = 'title';
   private stepIndex = 0;
+  private narrationIndex = 0;
   private titleText?: Phaser.GameObjects.Text;
   private centerText?: Phaser.GameObjects.Text;
 
@@ -44,8 +45,9 @@ export class ChapterIntroScene extends Phaser.Scene {
   init(data?: ChapterIntroData): void {
     this.levelId = data?.levelId ?? 'chapter1_1';
     this.intro = getIntroSequence(data?.introId ?? 'chapter1_opening');
-    this.phase = 'narration';
+    this.phase = 'title';
     this.stepIndex = 0;
+    this.narrationIndex = 0;
     this.finished = false;
     this.timers = [];
   }
@@ -81,7 +83,7 @@ export class ChapterIntroScene extends Phaser.Scene {
 
     this.renderSkipHint();
     this.renderTableau();
-    this.playTextSequence();
+    this.createTextObjects();
     this.bindSkipInput();
   }
 
@@ -134,7 +136,7 @@ export class ChapterIntroScene extends Phaser.Scene {
     });
   }
 
-  private playTextSequence(): void {
+  private createTextObjects(): void {
     if (!this.intro) {
       return;
     }
@@ -156,27 +158,34 @@ export class ChapterIntroScene extends Phaser.Scene {
       wordWrap: { width: 760 },
     }).setOrigin(0.5).setAlpha(0);
 
-    this.timers.push(this.time.delayedCall(1500, () => this.fadeText(this.titleText, t(this.intro?.titleKey ?? ''))));
-    this.timers.push(this.time.delayedCall(3100, () => {
-      this.fadeText(this.centerText, this.intro?.narrationKeys.map((key) => t(key)).join('\n') ?? '');
-    }));
-    this.timers.push(this.time.delayedCall(6100, () => this.fadeOutNarration()));
-    this.timers.push(this.time.delayedCall(7000, () => this.startDialogue()));
+    this.timers.push(this.time.delayedCall(650, () => this.showOpeningStep()));
   }
 
-  private fadeOutNarration(): void {
+  private fadeOutNarration(onComplete?: () => void): void {
+    let pending = 0;
     [this.titleText, this.centerText].forEach((text) => {
       if (!text) {
         return;
       }
+      pending += 1;
       this.tweens.killTweensOf(text);
       this.tweens.add({
         targets: text,
         alpha: 0,
         duration: 520,
         ease: 'Sine.easeIn',
+        onComplete: () => {
+          pending -= 1;
+          if (pending <= 0) {
+            onComplete?.();
+          }
+        },
       });
     });
+
+    if (pending === 0) {
+      onComplete?.();
+    }
   }
 
   private startDialogue(): void {
@@ -190,6 +199,23 @@ export class ChapterIntroScene extends Phaser.Scene {
   }
 
   private advance(): void {
+    if (this.phase === 'title') {
+      this.showOpeningStep();
+      return;
+    }
+
+    if (this.phase === 'narration') {
+      this.narrationIndex += 1;
+      if (this.narrationIndex < (this.intro?.narrationKeys.length ?? 0)) {
+        this.showNarrationStep();
+        return;
+      }
+
+      this.phase = 'transition';
+      this.fadeOutNarration(() => this.startDialogue());
+      return;
+    }
+
     if (this.phase === 'dialogue') {
       this.stepIndex += 1;
       this.showCurrentStep();
@@ -199,6 +225,54 @@ export class ChapterIntroScene extends Phaser.Scene {
     if (this.phase === 'readyToFinish') {
       this.finish();
     }
+  }
+
+  private showOpeningStep(): void {
+    if (!this.intro || this.finished || this.phase !== 'title') {
+      return;
+    }
+
+    if (this.intro.showTitle !== false) {
+      this.phase = 'narration';
+      this.narrationIndex = this.intro.narrationKeys.length;
+      this.fadeText(this.titleText, t(this.intro.titleKey));
+      this.centerText?.setStyle({
+        fontSize: '25px',
+        color: COLORS.text,
+        fontStyle: '',
+        lineSpacing: 14,
+      });
+      this.centerText?.setShadow(0, 0, '#000000', 6, true, true);
+      this.fadeText(this.centerText, this.intro.narrationKeys.map((key) => t(key)).join('\n'), 420);
+      return;
+    }
+
+    this.phase = 'narration';
+    this.narrationIndex = this.intro.narrationKeys.length;
+    this.centerText?.setStyle({
+      fontSize: '25px',
+      color: COLORS.text,
+      fontStyle: '',
+      lineSpacing: 14,
+    });
+    this.centerText?.setShadow(0, 0, '#000000', 6, true, true);
+    this.fadeText(this.centerText, this.intro.narrationKeys.map((key) => t(key)).join('\n'), 420);
+  }
+
+  private showNarrationStep(): void {
+    if (!this.intro || !this.centerText || this.finished) {
+      return;
+    }
+
+    this.phase = 'narration';
+    this.centerText.setStyle({
+      fontSize: '25px',
+      color: COLORS.text,
+      fontStyle: '',
+      lineSpacing: 14,
+    });
+    this.centerText.setShadow(0, 0, '#000000', 6, true, true);
+    this.fadeText(this.centerText, t(this.intro.narrationKeys[this.narrationIndex] ?? ''), 300);
   }
 
   private showCurrentStep(): void {

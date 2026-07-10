@@ -1,7 +1,7 @@
 import type { BattleAction } from '../../game/engine';
 import type { BattleState } from '../../game/engine';
 import type { ItemId } from '../../game/types/item';
-import type { BattleMechanicId } from '../../game/types/level';
+import type { BattleActionId, BattleMechanicId } from '../../game/types/level';
 
 export type SkillSlotId = 'shift' | 'summon';
 
@@ -101,7 +101,7 @@ function createCenterState(state: BattleState): BattleCenterUIState {
     return {
       phaseTextKey: 'battle.phase.playerTurn',
       phaseTextParams: {
-        remaining: Math.max(0, 2 - state.player.drawCountThisRound),
+        remaining: Math.max(0, state.maxPlayerDrawsThisRound - state.player.drawCountThisRound),
       },
       phaseRiskTextKey: state.player.incomingDamageBonus > 0 ? 'battle.phase.playerRiskActive' : 'battle.phase.playerRiskPending',
       currentTargetId: state.currentEnemyId,
@@ -120,6 +120,10 @@ function createCenterState(state: BattleState): BattleCenterUIState {
 
 function createActionButtons(state: BattleState, currentEnemyInvited?: boolean): BattleActionButtonState[] {
   if (state.phase === 'choice') {
+    if (!canUseAction(state, 'view_hand')) {
+      return [];
+    }
+
     return [{
       id: 'view-hand',
       action: { type: 'choose-view-hand' },
@@ -132,7 +136,8 @@ function createActionButtons(state: BattleState, currentEnemyInvited?: boolean):
 
   if (state.phase === 'enemy-turn') {
     const buttons: BattleActionButtonState[] = [];
-    if (hasMechanic(state, 'invite') && currentEnemyInvited === undefined) {
+    const showInvite = hasMechanic(state, 'invite') && canUseAction(state, 'invite') && currentEnemyInvited === undefined;
+    if (showInvite) {
       buttons.push({
         id: 'invite-one',
         action: { type: 'invite-current-enemy' },
@@ -143,20 +148,26 @@ function createActionButtons(state: BattleState, currentEnemyInvited?: boolean):
       });
     }
 
-    buttons.push({
-      id: 'compare',
-      action: { type: 'compare-current-enemy' },
-      enabled: true,
-      labelKey: 'battle.button.compare',
-      width: 170,
-      x: hasMechanic(state, 'invite') && currentEnemyInvited === undefined ? 210 : 0,
-    });
+    if (canUseAction(state, 'compare')) {
+      buttons.push({
+        id: 'compare',
+        action: { type: 'compare-current-enemy' },
+        enabled: true,
+        labelKey: 'battle.button.compare',
+        width: 170,
+        x: showInvite ? 210 : 0,
+      });
+    }
     return buttons;
   }
 
   if (state.phase === 'player-turn') {
     const buttons: BattleActionButtonState[] = [];
-    if (hasMechanic(state, 'player_draw') && !state.player.drawLocked && state.player.drawCountThisRound < 2) {
+    const showPlayerDraw = hasMechanic(state, 'player_draw')
+      && canUseAction(state, 'player_draw')
+      && !state.player.drawLocked
+      && state.player.drawCountThisRound < state.maxPlayerDrawsThisRound;
+    if (showPlayerDraw) {
       const isSecondDraw = state.player.drawCountThisRound === 1;
       buttons.push({
         id: 'player-draw',
@@ -169,18 +180,24 @@ function createActionButtons(state: BattleState, currentEnemyInvited?: boolean):
       });
     }
 
-    buttons.push({
-      id: 'player-stand',
-      action: { type: 'player-stand' },
-      enabled: true,
-      labelKey: 'battle.button.stand',
-      width: 180,
-      x: 256,
-    });
+    if (canUseAction(state, 'reveal')) {
+      buttons.push({
+        id: 'player-stand',
+        action: { type: 'player-stand' },
+        enabled: true,
+        labelKey: 'battle.button.stand',
+        width: 180,
+        x: showPlayerDraw ? 256 : 0,
+      });
+    }
     return buttons;
   }
 
   return [];
+}
+
+function canUseAction(state: BattleState, action: BattleActionId): boolean {
+  return !state.availableActions || state.availableActions.includes(action);
 }
 
 function createShiftSkillState(state: BattleState, inputLocked: boolean): SkillSlotState {

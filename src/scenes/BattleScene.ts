@@ -3,6 +3,7 @@ import { BattleEngine, type BattleCombatPresentationEvent, type BattlePresentati
 import { preloadCardImages } from '../game/assets';
 import { playBattleMusic, preloadBattleMusic, stopBattleMusic, stopLobbyMusic } from '../game/audio';
 import { Card, cardImageIndex, formatCard } from '../game/card';
+import { introIdForLevel } from '../game/data/levelIntros';
 import { EconomyChange, settleBattleEconomy } from '../game/economy';
 import { EnemyState } from '../game/enemy';
 import { enemyName, enemyPersonality, t } from '../game/i18n';
@@ -10,6 +11,7 @@ import { useBattleItem } from '../game/itemEffects';
 import { ITEMS, ItemDefinition } from '../game/items';
 import { consumeItem, getProgress } from '../game/progress';
 import { ScoreResult, scoreHand } from '../game/scoring';
+import { completeStoryLevelAndUnlockNext, getNextStoryLevel } from '../game/storyProgress';
 import type { BattleState } from '../game/core/BattleState';
 import type { BattleMechanicId } from '../game/types/level';
 import { ActionPanel } from '../ui/components/ActionPanel';
@@ -60,6 +62,7 @@ export class BattleScene extends Phaser.Scene {
   private economyResult?: EconomyChange;
   private resultModalReady = true;
   private itemModalOpen = false;
+  private confirmReturnToStorySelect = false;
   private itemFeedback?: { title: string; message: string; success: boolean };
   private dealing = false;
   private playerRedealing = false;
@@ -81,7 +84,14 @@ export class BattleScene extends Phaser.Scene {
   private shownLessonRoundIds = new Set<string>();
   private shownCompareHintKeys = new Set<string>();
   private shownRevealDialogueRoundIds = new Set<string>();
+  private shownInviteDialogueIds = new Set<string>();
+  private shownPlayerTurnLessonRoundIds = new Set<string>();
+  private shownLevelIntroLesson = false;
   private shownResultStory = false;
+  private chapter3TauntIndex = 0;
+  private chapter3ConsecutiveLosses = 0;
+  private chapter3LossHintShown = false;
+  private shownChapter4ResonanceFeedbackIds = new Set<string>();
   private battleLevelId?: string;
 
   constructor() {
@@ -142,11 +152,19 @@ export class BattleScene extends Phaser.Scene {
     this.economyResult = undefined;
     this.resultModalReady = true;
     this.autoAdvancingRound = false;
+    this.confirmReturnToStorySelect = false;
     this.blockingMessage = undefined;
     this.shownLessonRoundIds.clear();
     this.shownCompareHintKeys.clear();
     this.shownRevealDialogueRoundIds.clear();
+    this.shownInviteDialogueIds.clear();
+    this.shownPlayerTurnLessonRoundIds.clear();
+    this.shownLevelIntroLesson = false;
     this.shownResultStory = false;
+    this.chapter3TauntIndex = 0;
+    this.chapter3ConsecutiveLosses = 0;
+    this.chapter3LossHintShown = false;
+    this.shownChapter4ResonanceFeedbackIds.clear();
     this.playRoundStartBannerThenDeal();
   }
 
@@ -164,10 +182,12 @@ export class BattleScene extends Phaser.Scene {
     this.renderCenterInfo();
     this.renderPlayer();
     this.renderLog();
+    this.renderStoryReturnButton();
     this.renderActions();
     this.renderItemModal();
     this.renderItemFeedback();
     this.renderResultModal();
+    this.renderStoryReturnConfirmModal();
     this.renderBlockingMessage();
   }
 
@@ -324,6 +344,8 @@ export class BattleScene extends Phaser.Scene {
           });
         },
       }));
+    }
+    if (this.hasMechanic('soul_redeem')) {
       container.add(this.playerPassiveIcon(seat));
     }
     if (this.hasMechanic('items')) {
@@ -392,6 +414,13 @@ export class BattleScene extends Phaser.Scene {
       this.dealtPlayerCards = this.battle.player.hand.length;
       this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
       this.render();
+      if (this.showLevelIntroLessonIfNeeded(() => {
+        if (!this.showRoundLessonIfNeeded()) {
+          this.render();
+        }
+      })) {
+        return;
+      }
       this.showRoundLessonIfNeeded();
     });
   }
@@ -647,7 +676,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private renderActions(): void {
-    if (this.blockingMessage) {
+    if (this.blockingMessage || this.confirmReturnToStorySelect) {
       return;
     }
 
@@ -675,6 +704,65 @@ export class BattleScene extends Phaser.Scene {
     }));
   }
 
+  private renderStoryReturnButton(): void {
+    if (!this.battle.levelConfig?.id || this.battle.phase === 'battle-result') {
+      return;
+    }
+
+    const container = this.add.container(1128, 116).setDepth(40);
+    this.ui.push(container);
+    container.add(this.button(0, 0, 118, 40, t('battle.storyReturn.button'), () => {
+      if (this.blockingMessage || this.itemModalOpen || this.itemFeedback || this.actionAnimationPlaying || this.dealing || this.actionDealing || this.playerRedealing) {
+        return;
+      }
+
+      this.confirmReturnToStorySelect = true;
+      this.render();
+    }, COLORS.danger, '16px'));
+  }
+
+  private renderStoryReturnConfirmModal(): void {
+    if (!this.confirmReturnToStorySelect) {
+      return;
+    }
+
+    const container = this.add.container(640, 360).setDepth(105);
+    this.ui.push(container);
+
+    const blocker = this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.68);
+    blocker.setInteractive();
+    container.add(blocker);
+    container.add(this.add.rectangle(0, 0, 500, 258, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.danger));
+
+    const title = this.add.text(0, -82, t('battle.storyReturn.title'), {
+      fontFamily: 'Arial',
+      fontSize: '28px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    const body = this.add.text(0, -22, t('battle.storyReturn.body'), {
+      fontFamily: 'Arial',
+      fontSize: '18px',
+      color: COLORS.muted,
+      align: 'center',
+      lineSpacing: 8,
+      wordWrap: { width: 390 },
+    }).setOrigin(0.5);
+
+    container.add([
+      title,
+      body,
+      this.button(-172, 58, 150, 46, t('battle.storyReturn.cancel'), () => {
+        this.confirmReturnToStorySelect = false;
+        this.render();
+      }),
+      this.button(22, 58, 184, 46, t('battle.storyReturn.confirm'), () => {
+        this.confirmReturnToStorySelect = false;
+        this.scene.start('StorySelectScene');
+      }, COLORS.danger, '17px'),
+    ]);
+  }
+
   private handleActionButton(buttonState: BattleActionButtonState): void {
     if (buttonState.id === 'view-hand') {
       this.battle.execute(buttonState.action);
@@ -685,10 +773,25 @@ export class BattleScene extends Phaser.Scene {
     }
 
     if (buttonState.id === 'invite-one') {
+      const invitedEnemyId = this.battle.currentEnemy?.id;
       this.battle.execute(buttonState.action);
       const events = this.battle.consumePresentationEvents();
       this.playImmediatePresentationEvents(events);
-      this.playActionDealEvents(events, () => this.render());
+      this.playActionDealEvents(events, () => {
+        const continueAfterInviteDialogue = () => {
+          if (this.showPlayerTurnLessonIfNeeded()) {
+            return;
+          }
+
+          this.render();
+        };
+
+        if (invitedEnemyId && this.showInviteDialogueIfNeeded(invitedEnemyId, continueAfterInviteDialogue)) {
+          return;
+        }
+
+        continueAfterInviteDialogue();
+      });
       return;
     }
 
@@ -720,6 +823,9 @@ export class BattleScene extends Phaser.Scene {
 
     this.battleEconomySettled = true;
     const economy = settleBattleEconomy(this.battle.battleOutcome, this.battle.player.hp);
+    if (this.battle.battleOutcome === 'victory' && this.battle.levelConfig?.id) {
+      completeStoryLevelAndUnlockNext(this.battle.levelConfig.id);
+    }
     this.economyResult = economy;
     this.battle.log.unshift(this.battle.battleOutcome === 'victory'
       ? t('log.economyVictory', { amount: economy.amount, total: economy.total })
@@ -772,10 +878,38 @@ export class BattleScene extends Phaser.Scene {
         wordWrap: { width: 430 },
       }).setOrigin(0.5));
     }
-    children.push(this.button(-110, storyResultText ? 134 : 68, 220, 50, t('battle.result.returnLobby'), () => {
+    const buttonY = storyResultText ? 134 : 68;
+    children.push(this.button(-230, buttonY, 200, 50, t('battle.result.continue'), () => {
+      this.continueAfterResult();
+    }));
+    children.push(this.button(30, buttonY, 200, 50, t('battle.result.returnLobby'), () => {
       this.scene.start('StartScene');
     }));
     container.add(children);
+  }
+
+  private continueAfterResult(): void {
+    const levelId = this.battle.levelConfig?.id;
+    if (!levelId) {
+      this.scene.start('BattleScene', {});
+      return;
+    }
+
+    if (this.battle.battleOutcome === 'defeat') {
+      this.scene.start('BattleScene', { levelId });
+      return;
+    }
+
+    const nextLevel = getNextStoryLevel(levelId);
+    if (!nextLevel) {
+      this.scene.start('StorySelectScene');
+      return;
+    }
+
+    this.scene.start('ChapterIntroScene', {
+      introId: introIdForLevel(nextLevel.id),
+      levelId: nextLevel.id,
+    });
   }
 
   private renderBlockingMessage(): void {
@@ -830,14 +964,26 @@ export class BattleScene extends Phaser.Scene {
     showAt(0);
   }
 
-  private showRoundLessonIfNeeded(): void {
+  private showLevelIntroLessonIfNeeded(onClose?: () => void): boolean {
+    const state = this.battle.getState();
+    if (this.shownLevelIntroLesson || state.round !== 1 || !state.levelIntroLessonKey) {
+      return false;
+    }
+
+    this.shownLevelIntroLesson = true;
+    this.showBlockingMessage(t(this.battle.levelConfig?.titleKey ?? 'battle.modal.tutorialTitle'), t(state.levelIntroLessonKey), t('battle.modal.understood'), onClose);
+    return true;
+  }
+
+  private showRoundLessonIfNeeded(): boolean {
     const state = this.battle.getState();
     if (!state.currentFixedRoundId || !state.currentLessonKey || this.shownLessonRoundIds.has(state.currentFixedRoundId)) {
-      return;
+      return false;
     }
 
     this.shownLessonRoundIds.add(state.currentFixedRoundId);
     this.showBlockingMessage(t('battle.modal.tutorialTitle'), t(state.currentLessonKey), t('battle.modal.understood'));
+    return true;
   }
 
   private showCompareHintIfNeeded(): void {
@@ -850,52 +996,224 @@ export class BattleScene extends Phaser.Scene {
     this.showBlockingMessage(t('battle.modal.tutorialTitle'), t(state.currentTutorialBeforeCompareKey), t('battle.modal.understood'));
   }
 
+  private showPlayerTurnLessonIfNeeded(): boolean {
+    const state = this.battle.getState();
+    if (
+      state.phase !== 'player-turn'
+      || !state.currentFixedRoundId
+      || !state.currentPlayerTurnLessonKey
+      || this.shownPlayerTurnLessonRoundIds.has(state.currentFixedRoundId)
+    ) {
+      return false;
+    }
+
+    this.shownPlayerTurnLessonRoundIds.add(state.currentFixedRoundId);
+    this.showBlockingMessage(t('battle.modal.tutorialTitle'), t(state.currentPlayerTurnLessonKey), t('battle.modal.understood'));
+    return true;
+  }
+
+  private showInviteDialogueIfNeeded(enemyId: string, onComplete: () => void): boolean {
+    const fixedRound = this.battle.levelConfig?.fixedRounds?.[this.battle.round - 1];
+    const fixedEnemy = fixedRound?.enemies.find((enemy) => enemy.enemyId === enemyId);
+    if (!fixedRound || !fixedEnemy?.inviteDialogueKeys?.length) {
+      return false;
+    }
+
+    const dialogueId = `${fixedRound.id}:${enemyId}:invite`;
+    if (this.shownInviteDialogueIds.has(dialogueId)) {
+      return false;
+    }
+
+    this.shownInviteDialogueIds.add(dialogueId);
+    this.showBlockingMessageSequence(
+      fixedEnemy.inviteDialogueKeys.map((key) => this.dialogueMessageFromKey(key)),
+      onComplete,
+    );
+    return true;
+  }
+
   private showRevealDialogueIfNeeded(onClose: () => void): boolean {
     const fixedRound = this.battle.levelConfig?.fixedRounds?.[this.battle.round - 1];
-    if (!fixedRound?.afterRevealDialogueKeys?.length || this.shownRevealDialogueRoundIds.has(fixedRound.id)) {
+    if (!fixedRound || this.shownRevealDialogueRoundIds.has(fixedRound.id)) {
+      return false;
+    }
+
+    const dialogueKeys = [
+      ...(fixedRound.afterRevealDialogueKeys ?? []),
+      ...fixedRound.enemies.flatMap((fixedEnemy) => {
+        const enemy = this.battle.enemies.find((candidate) => candidate.id === fixedEnemy.enemyId);
+        return enemy?.invited === undefined ? fixedEnemy.compareWithoutInviteDialogueKeys ?? [] : [];
+      }),
+    ];
+    if (dialogueKeys.length === 0) {
       return false;
     }
 
     this.shownRevealDialogueRoundIds.add(fixedRound.id);
     this.showBlockingMessage(
       enemyName('bartender'),
-      fixedRound.afterRevealDialogueKeys.map((key) => t(key).replace(/^酒保：/, '').replace(/^Bartender: /, '')).join('\n'),
+      dialogueKeys.map((key) => t(key).replace(/^酒保：/, '').replace(/^Bartender: /, '')).join('\n'),
       t('battle.modal.continue'),
       onClose,
     );
     return true;
   }
 
-  private storyResultText(isVictory: boolean): string {
-    if (this.battle.levelConfig?.id !== 'chapter1_1') {
-      return '';
+  private dialogueMessageFromKey(key: string): { title: string; body: string } {
+    const raw = t(key);
+    const goblinPrefixes = ['哥布林：', 'Goblin: '];
+    const gamblerPrefixes = ['赌徒：', 'Gambler: '];
+    const werewolfPrefixes = ['狼人：', 'Werewolf: '];
+    const bartenderPrefixes = ['酒保：', 'Bartender: '];
+    const goblinPrefix = goblinPrefixes.find((prefix) => raw.startsWith(prefix));
+    if (goblinPrefix) {
+      return { title: enemyName('goblin'), body: raw.slice(goblinPrefix.length) };
     }
 
-    const keys = isVictory
-      ? [
-        'tutorial.chapter1.unlockInvite',
-        'tutorial.chapter1.unlockHiddenCards',
-      ]
-      : [
-        'tutorial.chapter1.defeat1',
-        'tutorial.chapter1.defeat2',
-      ];
+    const gamblerPrefix = gamblerPrefixes.find((prefix) => raw.startsWith(prefix));
+    if (gamblerPrefix) {
+      return { title: enemyName('gambler'), body: raw.slice(gamblerPrefix.length) };
+    }
+
+    const werewolfPrefix = werewolfPrefixes.find((prefix) => raw.startsWith(prefix));
+    if (werewolfPrefix) {
+      return { title: enemyName('werewolf'), body: raw.slice(werewolfPrefix.length) };
+    }
+
+    const bartenderPrefix = bartenderPrefixes.find((prefix) => raw.startsWith(prefix));
+    if (bartenderPrefix) {
+      return { title: enemyName('bartender'), body: raw.slice(bartenderPrefix.length) };
+    }
+
+    return { title: t('battle.modal.tutorialTitle'), body: raw };
+  }
+
+  private storyResultText(isVictory: boolean): string {
+    const levelId = this.battle.levelConfig?.id;
+    const keys = this.resultSummaryKeys(levelId, isVictory);
     return keys.map((key) => t(key)).join('\n');
   }
 
+  private resultSummaryKeys(levelId: string | undefined, isVictory: boolean): string[] {
+    if (levelId === 'chapter1_1') {
+      return isVictory ? [
+        'tutorial.chapter1.unlockInvite',
+        'tutorial.chapter1.unlockHiddenCards',
+      ] : [
+        'tutorial.chapter1.defeat1',
+        'tutorial.chapter1.defeat2',
+      ];
+    }
+
+    if (levelId === 'chapter1_2') {
+      return isVictory ? [
+        'tutorial.chapter1_2.unlockAggressiveEnemy',
+        'tutorial.chapter1_2.nextGuestGambler',
+      ] : [
+        'tutorial.chapter1_2.defeatHint1',
+        'tutorial.chapter1_2.defeatHint2',
+      ];
+    }
+
+    if (levelId === 'chapter1_3') {
+      return isVictory ? [
+        'tutorial.chapter1_3.unlockResonance',
+        'tutorial.chapter1_3.nextGuestWerewolf',
+      ] : [
+        'tutorial.chapter1_3.defeatHint1',
+        'tutorial.chapter1_3.defeatHint2',
+        'tutorial.chapter1_3.defeatHint3',
+      ];
+    }
+
+    if (levelId === 'chapter1_4') {
+      return isVictory ? [
+        'tutorial.chapter1_4.unlockHeat',
+        'tutorial.chapter1_4.nextTableHeat',
+      ] : [
+        'tutorial.chapter1_4.defeatHint1',
+        'tutorial.chapter1_4.defeatHint2',
+        'tutorial.chapter1_4.defeatHint3',
+      ];
+    }
+
+    return [];
+  }
+
   private showResultStoryIfNeeded(onComplete: () => void): boolean {
-    if (this.shownResultStory || this.battle.levelConfig?.id !== 'chapter1_1' || this.battle.battleOutcome !== 'victory') {
+    if (this.shownResultStory || !this.battle.battleOutcome) {
+      return false;
+    }
+
+    const keys = this.resultStoryKeys(this.battle.levelConfig?.id, this.battle.battleOutcome);
+    if (keys.length === 0) {
       return false;
     }
 
     this.shownResultStory = true;
-    this.showBlockingMessageSequence([
-      { title: enemyName('bartender'), body: t('tutorial.chapter1.victory1') },
-      { title: enemyName('bartender'), body: t('tutorial.chapter1.victory2') },
-      { title: enemyName('bartender'), body: t('tutorial.chapter1.victory3') },
-      { title: enemyName('bartender'), body: t('tutorial.chapter1.victory4') },
-    ], onComplete);
+    this.showBlockingMessageSequence(keys.map((key) => this.dialogueMessageFromKey(key)), onComplete);
     return true;
+  }
+
+  private resultStoryKeys(levelId: string | undefined, outcome: 'victory' | 'defeat'): string[] {
+    if (levelId === 'chapter1_1' && outcome === 'victory') {
+      return [
+        'tutorial.chapter1.victory1',
+        'tutorial.chapter1.victory2',
+        'tutorial.chapter1.victory3',
+        'tutorial.chapter1.victory4',
+      ];
+    }
+
+    if (levelId === 'chapter1_2') {
+      return outcome === 'victory' ? [
+        'tutorial.chapter1_2.victory1',
+        'tutorial.chapter1_2.victory2',
+        'tutorial.chapter1_2.victory3',
+        'tutorial.chapter1_2.victory4',
+      ] : [
+        'tutorial.chapter1_2.defeat1',
+        'tutorial.chapter1_2.defeat2',
+        'tutorial.chapter1_2.defeat3',
+        'tutorial.chapter1_2.defeat4',
+        'tutorial.chapter1_2.defeat5',
+      ];
+    }
+
+    if (levelId === 'chapter1_3') {
+      return outcome === 'victory' ? [
+        'tutorial.chapter1_3.victory1',
+        'tutorial.chapter1_3.victory2',
+        'tutorial.chapter1_3.victory3',
+        'tutorial.chapter1_3.victory4',
+        'tutorial.chapter1_3.victory5',
+        'tutorial.chapter1_3.victory6',
+        'tutorial.chapter1_3.victory7',
+      ] : [
+        'tutorial.chapter1_3.defeat1',
+        'tutorial.chapter1_3.defeat2',
+        'tutorial.chapter1_3.defeat3',
+        'tutorial.chapter1_3.defeat4',
+      ];
+    }
+
+    if (levelId === 'chapter1_4') {
+      return outcome === 'victory' ? [
+        'tutorial.chapter1_4.victory1',
+        'tutorial.chapter1_4.victory2',
+        'tutorial.chapter1_4.victory3',
+        'tutorial.chapter1_4.victory4',
+        'tutorial.chapter1_4.victory5',
+        'tutorial.chapter1_4.victory6',
+      ] : [
+        'tutorial.chapter1_4.defeat1',
+        'tutorial.chapter1_4.defeat2',
+        'tutorial.chapter1_4.defeat3',
+        'tutorial.chapter1_4.defeat4',
+      ];
+    }
+
+    return [];
   }
 
   private renderItemFeedback(): void {
@@ -1561,6 +1879,8 @@ export class BattleScene extends Phaser.Scene {
           if (!shouldDelayResultModal) {
             if (shouldDealNewRound) {
               this.startDealPresentation();
+            } else if (this.showPlayerTurnLessonIfNeeded()) {
+              return;
             } else {
               this.render();
             }
@@ -1571,6 +1891,8 @@ export class BattleScene extends Phaser.Scene {
             this.resultModalReady = true;
             if (shouldDealNewRound) {
               this.startDealPresentation();
+            } else if (this.showPlayerTurnLessonIfNeeded()) {
+              return;
             } else {
               this.render();
             }
@@ -1583,11 +1905,23 @@ export class BattleScene extends Phaser.Scene {
           showResult();
         };
 
-        if (this.hasRoundRevealEvent(events) && this.showRevealDialogueIfNeeded(continueAfterRevealDialogue)) {
+        const continueAfterDamageFeedback = () => {
+          if (this.hasRoundRevealEvent(events) && this.showRevealDialogueIfNeeded(continueAfterRevealDialogue)) {
+            return;
+          }
+
+          continueAfterRevealDialogue();
+        };
+
+        if (this.showChapter3DamageFeedbackIfNeeded(events, continueAfterDamageFeedback)) {
           return;
         }
 
-        continueAfterRevealDialogue();
+        if (this.showChapter4ResonanceFeedbackIfNeeded(events, continueAfterDamageFeedback)) {
+          return;
+        }
+
+        continueAfterDamageFeedback();
       });
     });
   }
@@ -1628,6 +1962,170 @@ export class BattleScene extends Phaser.Scene {
 
   private hasBattleEndedEvent(events: BattlePresentationEvent[]): boolean {
     return events.some((event) => event.type === 'battle-ended');
+  }
+
+  private showChapter3DamageFeedbackIfNeeded(events: BattlePresentationEvent[], onComplete: () => void): boolean {
+    if (this.battle.levelConfig?.id !== 'chapter1_3') {
+      return false;
+    }
+
+    const combatEvents = this.combatEvents(events);
+    const playerDamaged = combatEvents.some((event) => event.type === 'damage' && event.attacker === 'enemy' && event.amount > 0);
+    const playerDealtDamage = combatEvents.some((event) => event.type === 'damage' && event.attacker === 'player' && event.amount > 0);
+    const hadClash = combatEvents.some((event) => event.type === 'clash');
+
+    if (playerDamaged) {
+      this.chapter3ConsecutiveLosses += 1;
+    } else if (playerDealtDamage || hadClash) {
+      this.chapter3ConsecutiveLosses = 0;
+    }
+
+    if (!playerDamaged) {
+      return false;
+    }
+
+    const messages = [this.dialogueMessageFromKey(this.nextChapter3TauntKey(this.chapter3LossCause()))];
+    if (this.chapter3ConsecutiveLosses >= 2 && !this.chapter3LossHintShown) {
+      this.chapter3LossHintShown = true;
+      messages.push(this.dialogueMessageFromKey('tutorial.chapter1_3.lossHint'));
+    }
+
+    this.showBlockingMessageSequence(messages, onComplete);
+    return true;
+  }
+
+  private chapter3LossCause(): 'compare' | 'invite' | 'playerDraw' | 'overpush' | 'generic' {
+    const state = this.battle.getState();
+    const playerDrew = state.player.drawCountThisRound > 0;
+    const enemyWasInvited = state.enemies.some((enemy) => enemy.id === 'gambler' && enemy.invited !== undefined);
+
+    if (playerDrew && enemyWasInvited) {
+      return 'overpush';
+    }
+
+    if (playerDrew) {
+      return 'playerDraw';
+    }
+
+    if (enemyWasInvited) {
+      return 'invite';
+    }
+
+    if (state.currentFixedRoundId?.startsWith('chapter1_3')) {
+      return 'compare';
+    }
+
+    return 'generic';
+  }
+
+  private nextChapter3TauntKey(cause: 'compare' | 'invite' | 'playerDraw' | 'overpush' | 'generic'): string {
+    const keyGroups: Record<typeof cause, string[]> = {
+      compare: [
+        'tutorial.chapter1_3.tauntCompare1',
+        'tutorial.chapter1_3.tauntCompare2',
+      ],
+      invite: [
+        'tutorial.chapter1_3.tauntInvite1',
+        'tutorial.chapter1_3.tauntInvite2',
+      ],
+      playerDraw: [
+        'tutorial.chapter1_3.tauntPlayerDraw1',
+        'tutorial.chapter1_3.tauntPlayerDraw2',
+      ],
+      overpush: [
+        'tutorial.chapter1_3.tauntOverpush1',
+        'tutorial.chapter1_3.tauntOverpush2',
+      ],
+      generic: [
+        'tutorial.chapter1_3.tauntGeneric1',
+        'tutorial.chapter1_3.tauntGeneric2',
+      ],
+    };
+    const keys = keyGroups[cause];
+    const key = keys[this.chapter3TauntIndex % keys.length];
+    this.chapter3TauntIndex += 1;
+    return key;
+  }
+
+  private showChapter4ResonanceFeedbackIfNeeded(events: BattlePresentationEvent[], onComplete: () => void): boolean {
+    if (this.battle.levelConfig?.id !== 'chapter1_4') {
+      return false;
+    }
+
+    const resonantDamage = this.combatEvents(events).find((event) => (
+      event.type === 'damage'
+      && event.amount > 0
+      && (event.resonance === 'resonance' || event.resonance === 'strong')
+    ));
+    if (!resonantDamage || resonantDamage.type !== 'damage') {
+      return false;
+    }
+
+    const feedbackId = this.chapter4ResonanceFeedbackId(resonantDamage.attacker, resonantDamage.resonance);
+    if (!feedbackId || this.shownChapter4ResonanceFeedbackIds.has(feedbackId)) {
+      return false;
+    }
+
+    const keys = this.chapter4ResonanceFeedbackKeys(feedbackId);
+    if (keys.length === 0) {
+      return false;
+    }
+
+    this.shownChapter4ResonanceFeedbackIds.add(feedbackId);
+    this.showBlockingMessageSequence(keys.map((key) => this.dialogueMessageFromKey(key)), onComplete);
+    return true;
+  }
+
+  private chapter4ResonanceFeedbackId(attacker: 'player' | 'enemy', resonance?: 'none' | 'resonance' | 'strong'): 'player-resonance' | 'player-strong' | 'enemy-resonance' | 'enemy-strong' | undefined {
+    if (attacker === 'player' && resonance === 'strong') {
+      return 'player-strong';
+    }
+
+    if (attacker === 'player' && resonance === 'resonance') {
+      return 'player-resonance';
+    }
+
+    if (attacker === 'enemy' && resonance === 'strong') {
+      return 'enemy-strong';
+    }
+
+    if (attacker === 'enemy' && resonance === 'resonance') {
+      return 'enemy-resonance';
+    }
+
+    return undefined;
+  }
+
+  private chapter4ResonanceFeedbackKeys(feedbackId: 'player-resonance' | 'player-strong' | 'enemy-resonance' | 'enemy-strong'): string[] {
+    if (feedbackId === 'player-strong') {
+      return [
+        'tutorial.chapter1_4.feedback.playerStrong1',
+        'tutorial.chapter1_4.feedback.playerStrong2',
+      ];
+    }
+
+    if (feedbackId === 'player-resonance') {
+      return [
+        'tutorial.chapter1_4.feedback.playerResonance1',
+        'tutorial.chapter1_4.feedback.playerResonance2',
+      ];
+    }
+
+    if (feedbackId === 'enemy-strong') {
+      return [
+        'tutorial.chapter1_4.feedback.enemyStrong1',
+        'tutorial.chapter1_4.feedback.enemyStrong2',
+      ];
+    }
+
+    if (feedbackId === 'enemy-resonance') {
+      return [
+        'tutorial.chapter1_4.feedback.enemyResonance1',
+        'tutorial.chapter1_4.feedback.enemyResonance2',
+      ];
+    }
+
+    return [];
   }
 
   private combatEvents(events: BattlePresentationEvent[]): BattleCombatPresentationEvent[] {

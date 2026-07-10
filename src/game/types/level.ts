@@ -12,6 +12,7 @@ export type BattleMechanicId =
   | 'resonance'
   | 'skills'
   | 'items'
+  | 'soul_redeem'
   | 'enemy_passives'
   | 'boss';
 
@@ -41,12 +42,18 @@ export interface FixedRoundEnemyConfig {
   cards: CardCode[];
   visibleCards?: CardCode[];
   scriptedInviteResult?: 'accept' | 'reject';
+  scriptedInviteReasonKey?: string;
   drawCardOnAccept?: CardCode;
+  inviteDialogueKeys?: string[];
+  compareWithoutInviteDialogueKeys?: string[];
 }
 
 export interface FixedRoundConfig {
   id: string;
   playerCards: CardCode[];
+  playerDrawCards?: CardCode[];
+  maxPlayerDraws?: number;
+  playerTurnLessonKey?: string;
   enemies: FixedRoundEnemyConfig[];
   availableActions?: BattleActionId[];
   preferredAction?: BattleActionId;
@@ -66,7 +73,9 @@ export interface LevelConfig {
   enemyIds: EnemyId[];
   playerHp: number;
   enemyHpOverrides?: Partial<Record<EnemyId, number>>;
+  maxPlayerDrawsPerRound?: number;
   unlockedMechanics: BattleMechanicId[];
+  levelIntroLessonKey?: string;
   fixedRounds?: FixedRoundConfig[];
   useRandomAfterFixedRounds?: boolean;
   introDialogue?: DialogueLine[];

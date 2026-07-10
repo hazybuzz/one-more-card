@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
 import { CHAPTER_ONE } from '../game/data/chapterOne';
+import { introIdForLevel } from '../game/data/levelIntros';
 import { t, toggleLanguage } from '../game/i18n';
-import { getProgress } from '../game/progress';
+import { getProgress, isStoryLevelCompleted, isStoryLevelUnlocked } from '../game/progress';
 import type { LevelConfig } from '../game/types/level';
 
 const COLORS = {
@@ -15,6 +16,9 @@ const COLORS = {
   accent: 0xe8cf73,
   accentText: '#e8cf73',
   green: '#78d18a',
+  greenFill: 0x1d3326,
+  current: 0xff4b5f,
+  currentText: '#ff6b7a',
   button: 0x303542,
   buttonHover: 0x41495b,
   disabled: 0x20232a,
@@ -71,6 +75,14 @@ export class StorySelectScene extends Phaser.Scene {
       }).setOrigin(0.5);
     }
 
+    const completedCount = CHAPTER_ONE.levels.filter((level) => isStoryLevelCompleted(level.id)).length;
+    this.add.text(640, 178, t('story.progress', { completed: completedCount, total: CHAPTER_ONE.levels.length }), {
+      fontFamily: 'Arial',
+      fontSize: '16px',
+      color: COLORS.green,
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setShadow(0, 0, COLORS.green, 8, true, true);
+
     this.add.container(110, 50).add([
       this.button(0, 0, 178, 44, t('story.returnLobby'), () => {
         this.scene.start('StartScene');
@@ -106,58 +118,85 @@ export class StorySelectScene extends Phaser.Scene {
   }
 
   private renderLevels(): void {
-    const startX = 304;
-    const startY = 236;
-    const colGap = 672;
-    const rowGap = 98;
+    const startX = 344;
+    const startY = 244;
+    const colGap = 592;
+    const rowGap = 102;
+    const currentLevelId = this.currentLevelId();
 
     CHAPTER_ONE.levels.forEach((level, index) => {
-      const col = index % 2;
-      const row = Math.floor(index / 2);
-      this.renderLevelCard(startX + col * colGap, startY + row * rowGap, level, index);
+      const col = index < 4 ? 0 : 1;
+      const row = index % 4;
+      this.renderLevelCard(startX + col * colGap, startY + row * rowGap, level, index, level.id === currentLevelId);
     });
   }
 
-  private renderLevelCard(x: number, y: number, level: LevelConfig, index: number): void {
-    const unlocked = index === 0;
-    const card = this.add.container(x, y);
-    const fill = unlocked ? COLORS.panel : COLORS.disabled;
-    const stroke = unlocked ? COLORS.accent : COLORS.line;
-    const titleColor = unlocked ? COLORS.text : COLORS.muted;
-    const subtitleColor = unlocked ? COLORS.accentText : COLORS.muted;
+  private currentLevelId(): string | undefined {
+    return CHAPTER_ONE.levels.find((level) => isStoryLevelUnlocked(level.id) && !isStoryLevelCompleted(level.id))?.id;
+  }
 
-    const rect = this.add.rectangle(0, 0, 560, 74, fill, 0.96).setStrokeStyle(2, stroke);
+  private renderLevelCard(x: number, y: number, level: LevelConfig, _index: number, current: boolean): void {
+    const unlocked = isStoryLevelUnlocked(level.id);
+    const completed = isStoryLevelCompleted(level.id);
+    const card = this.add.container(x, y);
+    const fill = completed ? COLORS.greenFill : unlocked ? COLORS.panel : COLORS.disabled;
+    const stroke = completed ? 0x78d18a : current ? COLORS.current : unlocked ? COLORS.accent : COLORS.line;
+    const titleColor = unlocked ? COLORS.text : COLORS.muted;
+    const subtitleColor = current ? COLORS.currentText : unlocked ? COLORS.accentText : COLORS.muted;
+    const statusColor = completed ? COLORS.green : current ? COLORS.currentText : unlocked ? COLORS.accentText : COLORS.muted;
+    const statusGlow = completed ? COLORS.green : current ? COLORS.currentText : COLORS.accentText;
+
+    const rect = this.add.rectangle(0, 0, 520, 82, fill, unlocked ? 0.96 : 0.72).setStrokeStyle(current ? 3 : 2, stroke);
     card.add(rect);
-    card.add(this.add.text(-248, -20, t(level.titleKey), {
+    card.add(this.add.text(-230, -24, t(level.titleKey), {
       fontFamily: 'Arial',
       fontSize: '22px',
       color: titleColor,
       fontStyle: 'bold',
     }));
-    card.add(this.add.text(-248, 12, level.subtitleKey ? t(level.subtitleKey) : '', {
+    card.add(this.add.text(-230, 8, level.subtitleKey ? t(level.subtitleKey) : '', {
       fontFamily: 'Arial',
       fontSize: '15px',
       color: subtitleColor,
     }));
 
-    const status = this.add.text(238, 0, unlocked ? t('story.level.enter') : t('story.level.locked'), {
+    const status = this.add.text(66, -18, this.levelStatusLabel(unlocked, completed, current), {
       fontFamily: 'Arial',
       fontSize: '16px',
-      color: unlocked ? COLORS.green : COLORS.muted,
+      color: statusColor,
       fontStyle: 'bold',
-    }).setOrigin(1, 0.5);
+    });
     if (unlocked) {
-      status.setShadow(0, 0, COLORS.green, 8, true, true);
+      status.setShadow(0, 0, statusGlow, 8, true, true);
     }
     card.add(status);
+
+    const buttonFill = completed ? 0x254631 : current ? 0x54252d : unlocked ? COLORS.button : 0x262932;
+    const buttonStroke = completed ? 0x78d18a : current ? COLORS.current : unlocked ? COLORS.accent : COLORS.line;
+    const buttonRect = this.add.rectangle(178, 12, 136, 36, buttonFill, unlocked ? 0.95 : 0.55).setStrokeStyle(2, buttonStroke);
+    const buttonText = this.add.text(178, 12, this.levelButtonLabel(unlocked, completed), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: unlocked ? COLORS.text : COLORS.muted,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    card.add([buttonRect, buttonText]);
+
+    if (!unlocked) {
+      card.setAlpha(0.72);
+    }
 
     rect.setInteractive({ useHandCursor: unlocked });
     rect.on('pointerover', () => {
       if (unlocked) {
         rect.setFillStyle(COLORS.panelAlt);
+        buttonRect.setFillStyle(COLORS.buttonHover);
       }
     });
-    rect.on('pointerout', () => rect.setFillStyle(fill));
+    rect.on('pointerout', () => {
+      rect.setFillStyle(fill, unlocked ? 0.96 : 0.72);
+      buttonRect.setFillStyle(buttonFill, unlocked ? 0.95 : 0.55);
+    });
     rect.on('pointerdown', () => {
       if (!unlocked) {
         return;
@@ -165,10 +204,30 @@ export class StorySelectScene extends Phaser.Scene {
 
       this.playButtonClick();
       this.scene.start('ChapterIntroScene', {
-        introId: 'chapter1_opening',
+        introId: introIdForLevel(level.id),
         levelId: level.id,
       });
     });
+  }
+
+  private levelStatusLabel(unlocked: boolean, completed: boolean, current: boolean): string {
+    if (completed) {
+      return t('story.level.completed');
+    }
+
+    if (current) {
+      return t('story.level.current');
+    }
+
+    return unlocked ? t('story.level.unlocked') : t('story.level.locked');
+  }
+
+  private levelButtonLabel(unlocked: boolean, completed: boolean): string {
+    if (completed) {
+      return t('story.level.replay');
+    }
+
+    return unlocked ? t('story.level.enter') : t('story.level.locked');
   }
 
   private button(

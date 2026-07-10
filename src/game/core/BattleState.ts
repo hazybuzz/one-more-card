@@ -1,7 +1,7 @@
 import type { Card } from '../card';
 import type { EnemyType } from '../enemy';
 import type { BattleOutcome, BattlePhase } from '../types/battle';
-import type { LevelConfig } from '../types/level';
+import type { BattleActionId, LevelConfig } from '../types/level';
 import type { ResonanceKind, ScoreResult } from '../scoring';
 
 export interface BattlePlayerState {
@@ -48,6 +48,7 @@ export interface BattleResultState {
 export interface BattleState {
   levelId?: string;
   levelConfig?: LevelConfig;
+  levelIntroLessonKey?: string;
   phase: BattlePhase;
   battleOutcome: BattleOutcome;
   currentEnemyIndex: number;
@@ -56,6 +57,9 @@ export interface BattleState {
   currentFixedRoundId?: string;
   currentLessonKey?: string;
   currentTutorialBeforeCompareKey?: string;
+  currentPlayerTurnLessonKey?: string;
+  availableActions?: BattleActionId[];
+  maxPlayerDrawsThisRound: number;
   heat: number;
   heatStage: string;
   heatDamageBonus: number;

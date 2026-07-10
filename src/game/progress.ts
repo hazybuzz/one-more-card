@@ -4,10 +4,16 @@ export interface BattleStats {
   battlesPlayed: number;
 }
 
+export interface StoryProgress {
+  unlockedLevelIds: string[];
+  completedLevelIds: string[];
+}
+
 export interface GameProgress {
   soulCoins: number;
   ownedItems: Record<string, number>;
   stats: BattleStats;
+  story: StoryProgress;
 }
 
 const STORAGE_KEY = 'one-more-card-progress';
@@ -21,6 +27,10 @@ const DEFAULT_PROGRESS: GameProgress = {
     wins: 0,
     losses: 0,
     battlesPlayed: 0,
+  },
+  story: {
+    unlockedLevelIds: ['chapter1_1'],
+    completedLevelIds: [],
   },
 };
 
@@ -92,6 +102,32 @@ export function recordBattleResult(outcome: 'victory' | 'defeat'): void {
   saveProgress();
 }
 
+export function isStoryLevelUnlocked(levelId: string): boolean {
+  return progress.story.unlockedLevelIds.includes(levelId);
+}
+
+export function isStoryLevelCompleted(levelId: string): boolean {
+  return progress.story.completedLevelIds.includes(levelId);
+}
+
+export function unlockStoryLevel(levelId: string): void {
+  if (progress.story.unlockedLevelIds.includes(levelId)) {
+    return;
+  }
+
+  progress.story.unlockedLevelIds.push(levelId);
+  saveProgress();
+}
+
+export function completeStoryLevel(levelId: string): void {
+  if (progress.story.completedLevelIds.includes(levelId)) {
+    return;
+  }
+
+  progress.story.completedLevelIds.push(levelId);
+  saveProgress();
+}
+
 export function resetProgress(): void {
   progress = cloneProgress(DEFAULT_PROGRESS);
   saveProgress();
@@ -129,6 +165,7 @@ function normalizeProgress(value: Partial<GameProgress>): GameProgress {
       losses: normalizeNumber(value.stats?.losses, defaultProgress.stats.losses),
       battlesPlayed: normalizeNumber(value.stats?.battlesPlayed, defaultProgress.stats.battlesPlayed),
     },
+    story: normalizeStoryProgress(value.story),
   };
 }
 
@@ -151,10 +188,46 @@ function normalizeNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
 }
 
+function normalizeStoryProgress(story: unknown): StoryProgress {
+  const defaultStory = cloneStoryProgress(DEFAULT_PROGRESS.story);
+  if (!story || typeof story !== 'object' || Array.isArray(story)) {
+    return defaultStory;
+  }
+
+  const value = story as Partial<StoryProgress>;
+  const unlockedLevelIds = normalizeStringList(value.unlockedLevelIds);
+  const completedLevelIds = normalizeStringList(value.completedLevelIds);
+
+  return {
+    unlockedLevelIds: uniqueStrings([...defaultStory.unlockedLevelIds, ...unlockedLevelIds]),
+    completedLevelIds: uniqueStrings(completedLevelIds),
+  };
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return uniqueStrings(value.filter((item): item is string => typeof item === 'string' && item.length > 0));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 function cloneProgress(value: GameProgress): GameProgress {
   return {
     soulCoins: value.soulCoins,
     ownedItems: { ...value.ownedItems },
     stats: { ...value.stats },
+    story: cloneStoryProgress(value.story),
+  };
+}
+
+function cloneStoryProgress(value: StoryProgress): StoryProgress {
+  return {
+    unlockedLevelIds: [...value.unlockedLevelIds],
+    completedLevelIds: [...value.completedLevelIds],
   };
 }

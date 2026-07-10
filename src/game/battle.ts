@@ -6,7 +6,7 @@ import { Deck } from './deck';
 import { EnemyState, createEnemiesForLevel, decideInvite } from './enemy';
 import { EnemyType } from './enemy';
 import { ResonanceKind, ScoreResult, scoreHand } from './scoring';
-import type { BattleMechanicId, FixedRoundConfig, LevelConfig } from './types/level';
+import type { BattleMechanicId, FixedRoundConfig, FixedRoundEnemyConfig, LevelConfig } from './types/level';
 
 export type BattlePhase = 'choice' | 'enemy-turn' | 'player-turn' | 'round-result' | 'battle-result';
 export type BattleOutcome = 'victory' | 'defeat' | undefined;
@@ -136,12 +136,20 @@ export class Battle {
       this.logEvent(t('log.goblinInstinct'));
     }
 
-    const decision = decideInvite(enemy, this.heat, this.playerScore().point);
+    const fixedEnemy = this.currentFixedEnemyConfig(enemy.id);
+    const decision = fixedEnemy?.scriptedInviteResult
+      ? {
+        accepts: fixedEnemy.scriptedInviteResult === 'accept',
+        reason: fixedEnemy.scriptedInviteReasonKey ? t(fixedEnemy.scriptedInviteReasonKey) : t('enemy.ai.goblin.mid'),
+      }
+      : decideInvite(enemy, this.heat, this.playerScore().point);
     enemy.invited = true;
     enemy.invitedDrawCount = drawCount;
     enemy.acceptedInvite = decision.accepts;
     if (decision.accepts) {
-      const cards = this.drawCards(drawCount);
+      const cards = fixedEnemy?.drawCardOnAccept
+        ? [cardFromCode(fixedEnemy.drawCardOnAccept)]
+        : this.drawCards(drawCount);
       enemy.hand.push(...cards);
       this.addHeat(drawCount);
       this.logEvent(t('log.enemyAcceptInvite', { enemy: enemyName(enemy.id), reason: decision.reason }));
@@ -182,12 +190,14 @@ export class Battle {
 
   playerDraw(): void {
     this.clearDamageEvents();
-    if (!this.hasMechanic('player_draw') || this.phase !== 'player-turn' || this.player.drawLocked || this.player.drawCountThisRound >= 2) {
+    const maxPlayerDraws = this.maxPlayerDrawsThisRound();
+    if (!this.hasMechanic('player_draw') || this.phase !== 'player-turn' || this.player.drawLocked || this.player.drawCountThisRound >= maxPlayerDraws) {
       return;
     }
 
     const heatGain = this.player.drawCountThisRound === 0 ? 1 : 2;
-    const card = this.deck.draw();
+    const fixedCardCode = this.currentFixedRound()?.playerDrawCards?.[this.player.drawCountThisRound];
+    const card = fixedCardCode ? cardFromCode(fixedCardCode) : this.deck.draw();
     this.player.hand.push(card);
     this.player.drawCountThisRound += 1;
     this.addHeat(heatGain);
@@ -334,6 +344,7 @@ export class Battle {
     return {
       levelId: this.levelConfig?.id,
       levelConfig: this.levelConfig,
+      levelIntroLessonKey: this.levelConfig?.levelIntroLessonKey,
       phase: this.phase,
       battleOutcome: this.battleOutcome,
       currentEnemyIndex: this.currentEnemyIndex,
@@ -342,6 +353,9 @@ export class Battle {
       currentFixedRoundId: this.currentFixedRound()?.id,
       currentLessonKey: this.currentFixedRound()?.lessonKey,
       currentTutorialBeforeCompareKey: this.currentFixedRound()?.tutorialBeforeCompareKey,
+      currentPlayerTurnLessonKey: this.currentFixedRound()?.playerTurnLessonKey,
+      availableActions: this.currentFixedRound()?.availableActions,
+      maxPlayerDrawsThisRound: this.maxPlayerDrawsThisRound(),
       heat: this.heat,
       heatStage: this.heatStage,
       heatDamageBonus: this.heatDamageBonus,
@@ -511,7 +525,7 @@ export class Battle {
         return;
       }
 
-      const fixedEnemy = fixedRound?.enemies.find((config) => config.enemyId === enemy.id);
+      const fixedEnemy = this.currentFixedEnemyConfig(enemy.id);
       enemy.hand = fixedEnemy
         ? fixedEnemy.cards.map(cardFromCode)
         : [this.deck.draw(), this.deck.draw()];
@@ -675,7 +689,7 @@ export class Battle {
   }
 
   private markSoulRedeemPending(): boolean {
-    if (this.player.hp > 0 || this.player.soulRedeemUsed || this.enemies.every((enemy) => enemy.defeated)) {
+    if (!this.hasMechanic('soul_redeem') || this.player.hp > 0 || this.player.soulRedeemUsed || this.enemies.every((enemy) => enemy.defeated)) {
       return false;
     }
 
@@ -816,6 +830,16 @@ export class Battle {
 
   private currentFixedRound(): FixedRoundConfig | undefined {
     return this.levelConfig?.fixedRounds?.[this.round - 1];
+  }
+
+  private maxPlayerDrawsThisRound(): number {
+    return this.currentFixedRound()?.maxPlayerDraws
+      ?? this.levelConfig?.maxPlayerDrawsPerRound
+      ?? 2;
+  }
+
+  private currentFixedEnemyConfig(enemyId: EnemyType): FixedRoundEnemyConfig | undefined {
+    return this.currentFixedRound()?.enemies.find((config) => config.enemyId === enemyId);
   }
 
   private chooseResonanceShift(cards: Card[]): { card: Card; targetSuit: Suit } | undefined {
