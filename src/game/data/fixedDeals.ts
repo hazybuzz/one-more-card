@@ -432,4 +432,156 @@ export const FIXED_DEALS: Record<string, FixedRoundConfig[]> = {
       ],
     },
   ],
+  chapter1_6: [
+    {
+      id: 'chapter1_6_round1',
+      playerCards: ['H5', 'D4'],
+      maxPlayerDraws: 2,
+      enemies: [
+        {
+          enemyId: 'paladin',
+          cards: ['S9', 'CK'],
+          visibleCards: ['S9'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_6.round1.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'compare', 'player_draw', 'reveal', 'use_skill'],
+      preferredAction: 'use_skill',
+      playerTurnLessonKey: 'tutorial.chapter1_6.round1.skillHint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_6.round1.result',
+      ],
+    },
+    {
+      id: 'chapter1_6_round2',
+      playerCards: ['S2', 'D3'],
+      playerDrawCards: ['HA', 'C3'],
+      maxPlayerDraws: 2,
+      enemies: [
+        {
+          enemyId: 'paladin',
+          cards: ['S8', 'HQ'],
+          visibleCards: ['S8'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_6.round2.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'compare', 'player_draw', 'reveal', 'use_skill'],
+      preferredAction: 'player_draw',
+      playerTurnLessonKey: 'tutorial.chapter1_6.round2.secondDrawHint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_6.round2.result',
+      ],
+    },
+    {
+      id: 'chapter1_6_round3',
+      playerCards: ['H3', 'H4'],
+      resonanceSummonCard: 'H2',
+      maxPlayerDraws: 2,
+      enemies: [
+        {
+          enemyId: 'paladin',
+          cards: ['S8', 'DK'],
+          visibleCards: ['S8'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_6.round3.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'compare', 'player_draw', 'reveal', 'use_skill'],
+      preferredAction: 'use_skill',
+      playerTurnLessonKey: 'tutorial.chapter1_6.round3.summonHint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_6.round3.result',
+      ],
+    },
+    {
+      id: 'chapter1_6_round4',
+      playerCards: ['C6', 'D2'],
+      playerDrawCards: ['S9', 'H2'],
+      maxPlayerDraws: 2,
+      enemies: [
+        {
+          enemyId: 'paladin',
+          cards: ['H8', 'SQ'],
+          visibleCards: ['H8'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_6.round4.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'compare', 'player_draw', 'reveal', 'use_skill'],
+      preferredAction: 'use_skill',
+      playerTurnLessonKey: 'tutorial.chapter1_6.round4.finalHint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_6.round4.result',
+      ],
+    },
+  ],
+  chapter1_7: [
+    {
+      id: 'chapter1_7_round1',
+      playerCards: ['H8', 'CA'],
+      playerHp: 1,
+      grantItems: { heal_potion: 1 },
+      enemies: [
+        {
+          enemyId: 'merchant',
+          cards: ['S9', 'SK'],
+          visibleCards: ['S9'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_7.round1.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'compare', 'reveal', 'use_item'],
+      preferredAction: 'use_item',
+      lessonKey: 'tutorial.chapter1_7.round1.itemHint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_7.round1.result',
+      ],
+    },
+    {
+      id: 'chapter1_7_round2',
+      playerCards: ['C2', 'DK'],
+      playerDrawCards: ['HQ'],
+      fateRerollCards: ['H9', 'CQ', 'DQ'],
+      grantItems: { cooling_charm: 1 },
+      maxPlayerDraws: 1,
+      enemies: [
+        {
+          enemyId: 'merchant',
+          cards: ['S5', 'DA'],
+          visibleCards: ['S5'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_7.round2.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'compare', 'player_draw', 'reveal', 'use_item'],
+      preferredAction: 'use_item',
+      playerTurnLessonKey: 'tutorial.chapter1_7.round2.itemHint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_7.round2.result',
+      ],
+    },
+    {
+      id: 'chapter1_7_round3',
+      playerCards: ['C4', 'D2'],
+      resonanceHornCards: ['H6', 'H3'],
+      grantItems: { resonance_dust: 1 },
+      enemies: [
+        {
+          enemyId: 'merchant',
+          cards: ['S8', 'DA'],
+          visibleCards: ['S8'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_7.round3.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'compare', 'reveal', 'use_item'],
+      preferredAction: 'use_item',
+      lessonKey: 'tutorial.chapter1_7.round3.itemHint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_7.round3.result',
+      ],
+    },
+  ],
 };

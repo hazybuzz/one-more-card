@@ -137,6 +137,63 @@ export const INTRO_SEQUENCES: Record<string, IntroSequenceConfig> = {
       { type: 'levelTitle', titleKey: 'level.chapter1_4.title', subtitleKey: 'level.chapter1_4.subtitle' },
     ],
   },
+  chapter1_6_opening: {
+    id: 'chapter1_6_opening',
+    bgm: {
+      key: 'chapter1IntroBgm',
+      path: '/audio/chapter1-in-ngm.ogg',
+      volume: 0.52,
+    },
+    shuffleSfx: {
+      key: 'cardShuffle',
+      path: '/audio/card-shuffle.ogg',
+      volume: 0.52,
+      delayMs: 680,
+    },
+    titleKey: 'intro.chapter1.title',
+    showTitle: false,
+    narrationKeys: [
+      'intro.chapter1_6.scene1',
+      'intro.chapter1_6.scene2',
+      'intro.chapter1_6.scene3',
+    ],
+    steps: [
+      { type: 'dialogue', textKey: 'intro.chapter1_6.paladin1' },
+      { type: 'dialogue', textKey: 'intro.chapter1_6.paladin2' },
+      { type: 'dialogue', textKey: 'intro.chapter1_6.bartender1' },
+      { type: 'dialogue', textKey: 'intro.chapter1_6.bartender2' },
+      { type: 'dialogue', textKey: 'intro.chapter1_6.bartender3' },
+      { type: 'levelTitle', titleKey: 'level.chapter1_6.title', subtitleKey: 'level.chapter1_6.subtitle' },
+    ],
+  },
+  chapter1_7_opening: {
+    id: 'chapter1_7_opening',
+    bgm: {
+      key: 'chapter1IntroBgm',
+      path: '/audio/chapter1-in-ngm.ogg',
+      volume: 0.52,
+    },
+    shuffleSfx: {
+      key: 'cardShuffle',
+      path: '/audio/card-shuffle.ogg',
+      volume: 0.5,
+      delayMs: 560,
+    },
+    titleKey: 'intro.chapter1.title',
+    showTitle: false,
+    narrationKeys: [
+      'intro.chapter1_7.scene1',
+      'intro.chapter1_7.scene2',
+      'intro.chapter1_7.scene3',
+    ],
+    steps: [
+      { type: 'dialogue', textKey: 'intro.chapter1_7.merchant1' },
+      { type: 'dialogue', textKey: 'intro.chapter1_7.merchant2' },
+      { type: 'dialogue', textKey: 'intro.chapter1_7.bartender1' },
+      { type: 'dialogue', textKey: 'intro.chapter1_7.bartender2' },
+      { type: 'levelTitle', titleKey: 'level.chapter1_7.title', subtitleKey: 'level.chapter1_7.subtitle' },
+    ],
+  },
 };
 
 export function getIntroSequence(introId: string): IntroSequenceConfig | undefined {

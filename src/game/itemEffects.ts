@@ -41,10 +41,10 @@ export function useBattleItem(itemId: ItemId, battle: Battle): ItemUseResult {
     const result = battle.useResonanceHorn();
     return {
       used: true,
-      message: result.success ? t('itemEffect.resonanceHorn.usedSuccess') : t('itemEffect.resonanceHorn.usedFail'),
+      message: t('itemEffect.resonanceHorn.usedSuccess'),
       feedback: {
         title: t('itemEffect.resonanceHorn.feedbackTitle'),
-        message: result.success ? t('itemEffect.resonanceHorn.feedbackSuccess') : t('itemEffect.resonanceHorn.feedbackFail'),
+        message: t('itemEffect.resonanceHorn.feedbackSuccess'),
         success: result.success,
       },
     };

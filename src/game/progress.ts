@@ -1,3 +1,5 @@
+import { CHAPTERS } from './data/chapters';
+
 export interface BattleStats {
   wins: number;
   losses: number;
@@ -197,11 +199,37 @@ function normalizeStoryProgress(story: unknown): StoryProgress {
   const value = story as Partial<StoryProgress>;
   const unlockedLevelIds = normalizeStringList(value.unlockedLevelIds);
   const completedLevelIds = normalizeStringList(value.completedLevelIds);
+  const migratedUnlockedLevelIds = migrateStoryUnlocks(unlockedLevelIds, completedLevelIds);
 
   return {
-    unlockedLevelIds: uniqueStrings([...defaultStory.unlockedLevelIds, ...unlockedLevelIds]),
+    unlockedLevelIds: uniqueStrings([...defaultStory.unlockedLevelIds, ...migratedUnlockedLevelIds]),
     completedLevelIds: uniqueStrings(completedLevelIds),
   };
+}
+
+function migrateStoryUnlocks(unlockedLevelIds: string[], completedLevelIds: string[]): string[] {
+  const unlocked = new Set(unlockedLevelIds);
+
+  // The removed "Heating Table" used chapter1_5. Players who had reached it
+  // should now land on the new fifth level, internally still chapter1_6.
+  if (unlocked.has('chapter1_5')) {
+    unlocked.add('chapter1_6');
+  }
+
+  CHAPTERS.forEach((chapter) => {
+    chapter.levels.forEach((level, index) => {
+      if (!completedLevelIds.includes(level.id)) {
+        return;
+      }
+
+      const nextLevel = chapter.levels[index + 1];
+      if (nextLevel) {
+        unlocked.add(nextLevel.id);
+      }
+    });
+  });
+
+  return [...unlocked];
 }
 
 function normalizeStringList(value: unknown): string[] {

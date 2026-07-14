@@ -90,6 +90,30 @@ export function decideInvite(enemy: EnemyState, playerPoint?: number): EnemyDeci
     return chance(0.84, t('enemy.ai.gambler.low'));
   }
 
+  if (enemy.id === 'paladin') {
+    if (point >= 8) {
+      return chance(0.18, t('enemy.ai.paladin.high'));
+    }
+
+    if (point >= 5) {
+      return chance(0.42, t('enemy.ai.paladin.mid'));
+    }
+
+    return chance(0.64, t('enemy.ai.paladin.low'));
+  }
+
+  if (enemy.id === 'merchant') {
+    if (point >= 8) {
+      return chance(0.22, t('enemy.ai.merchant.high'));
+    }
+
+    if (point >= 5) {
+      return chance(0.5, t('enemy.ai.merchant.mid'));
+    }
+
+    return chance(0.66, t('enemy.ai.merchant.low'));
+  }
+
   const resonanceChance = hasResonanceOpportunity(enemy);
   if (resonanceChance) {
     return chance(0.7, t('enemy.ai.werewolf.resonance'));

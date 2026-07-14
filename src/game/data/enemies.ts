@@ -40,6 +40,24 @@ export const ENEMY_CONFIGS: Record<EnemyId, EnemyConfig> = {
     portraitKey: 'enemy_werewolf',
     colorKey: 'werewolf',
   },
+  paladin: {
+    id: 'paladin',
+    maxHp: 6,
+    aiType: 'fated',
+    nameKey: 'enemy.paladin.name',
+    personalityKey: 'enemy.paladin.personality',
+    portraitKey: 'enemy_paladin',
+    colorKey: 'paladin',
+  },
+  merchant: {
+    id: 'merchant',
+    maxHp: 3,
+    aiType: 'merchant',
+    nameKey: 'enemy.merchant.name',
+    personalityKey: 'enemy.merchant.personality',
+    portraitKey: 'enemy_merchant',
+    colorKey: 'merchant',
+  },
 };
 
 export const DEFAULT_ENEMY_IDS: EnemyId[] = ['goblin', 'gambler', 'werewolf'];

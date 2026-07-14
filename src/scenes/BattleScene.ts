@@ -14,6 +14,7 @@ import { ScoreResult, scoreHand } from '../game/scoring';
 import { completeStoryLevelAndUnlockNext, getNextStoryLevel } from '../game/storyProgress';
 import type { BattleState } from '../game/core/BattleState';
 import type { BattleMechanicId } from '../game/types/level';
+import type { ItemId } from '../game/types/item';
 import { ActionPanel } from '../ui/components/ActionPanel';
 import { BlockingMessageModal } from '../ui/components/BlockingMessageModal';
 import { ItemBar } from '../ui/components/ItemBar';
@@ -44,6 +45,8 @@ const SKILL_COLORS = {
   goblin: 0x65d46e,
   gambler: 0xf25f9a,
   werewolf: 0x73c7ff,
+  paladin: 0xf4e7b0,
+  merchant: 0xe2c16b,
 };
 
 const SEATS = {
@@ -63,6 +66,8 @@ export class BattleScene extends Phaser.Scene {
   private itemModalOpen = false;
   private confirmReturnToStorySelect = false;
   private itemFeedback?: { title: string; message: string; success: boolean };
+  private temporaryItems: Partial<Record<ItemId, number>> = {};
+  private grantedItemRoundIds = new Set<string>();
   private dealing = false;
   private playerRedealing = false;
   private actionDealing = false;
@@ -153,6 +158,8 @@ export class BattleScene extends Phaser.Scene {
     this.autoAdvancingRound = false;
     this.confirmReturnToStorySelect = false;
     this.blockingMessage = undefined;
+    this.temporaryItems = {};
+    this.grantedItemRoundIds.clear();
     this.shownLessonRoundIds.clear();
     this.shownCompareHintKeys.clear();
     this.shownRevealDialogueRoundIds.clear();
@@ -169,6 +176,7 @@ export class BattleScene extends Phaser.Scene {
 
   private render(): void {
     this.settleEconomyIfNeeded();
+    this.grantFixedRoundItemsIfNeeded();
     this.children.removeAll(true);
     this.ui.forEach((item) => item.destroy(true));
     this.ui = [];
@@ -355,7 +363,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private createUIState(state: BattleState = this.battle.getState()): BattleUIState {
-    const ownedItemCount = Object.values(getProgress().ownedItems).reduce((total, count) => total + count, 0);
+    const ownedItemCount = this.totalBattleItemCount();
     return createBattleUIState(state, {
       dealing: this.dealing,
       playerRedealing: this.playerRedealing,
@@ -364,6 +372,66 @@ export class BattleScene extends Phaser.Scene {
       actionAnimationPlaying: this.actionAnimationPlaying,
       ownedItemCount,
     });
+  }
+
+  private grantFixedRoundItemsIfNeeded(): void {
+    const fixedRound = this.currentFixedRoundConfig();
+    const grantId = fixedRound ? `${fixedRound.id}:${this.battle.round}` : undefined;
+    if (!fixedRound?.grantItems || !grantId || this.grantedItemRoundIds.has(grantId)) {
+      return;
+    }
+
+    Object.entries(fixedRound.grantItems).forEach(([itemId, count]) => {
+      const amount = Math.max(0, Math.floor(count ?? 0));
+      if (amount <= 0) {
+        return;
+      }
+
+      const id = itemId as ItemId;
+      this.temporaryItems[id] = (this.temporaryItems[id] ?? 0) + amount;
+    });
+    this.grantedItemRoundIds.add(grantId);
+  }
+
+  private currentFixedRoundConfig() {
+    const state = this.battle.getState();
+    if (!state.currentFixedRoundId) {
+      return undefined;
+    }
+
+    return this.battle.levelConfig?.fixedRounds?.find((round) => round.id === state.currentFixedRoundId);
+  }
+
+  private battleItemCounts(): Partial<Record<ItemId, number>> {
+    const counts: Partial<Record<ItemId, number>> = {};
+    ITEMS.forEach((item) => {
+      const progressCount = getProgress().ownedItems[item.id] ?? 0;
+      const temporaryCount = this.temporaryItems[item.id] ?? 0;
+      const total = progressCount + temporaryCount;
+      if (total > 0) {
+        counts[item.id] = total;
+      }
+    });
+    return counts;
+  }
+
+  private totalBattleItemCount(): number {
+    return Object.values(this.battleItemCounts()).reduce((total, count) => total + (count ?? 0), 0);
+  }
+
+  private consumeBattleItem(itemId: ItemId): void {
+    const temporaryCount = this.temporaryItems[itemId] ?? 0;
+    if (temporaryCount > 0) {
+      const nextCount = temporaryCount - 1;
+      if (nextCount <= 0) {
+        delete this.temporaryItems[itemId];
+      } else {
+        this.temporaryItems[itemId] = nextCount;
+      }
+      return;
+    }
+
+    consumeItem(itemId, 1);
   }
 
   private hasMechanic(mechanic: BattleMechanicId): boolean {
@@ -738,6 +806,9 @@ export class BattleScene extends Phaser.Scene {
       this.battle.execute(buttonState.action);
       this.playRoundResonanceEchoOnce();
       this.render();
+      if (this.showPlayerTurnLessonIfNeeded()) {
+        return;
+      }
       this.showCompareHintIfNeeded();
       return;
     }
@@ -1034,6 +1105,8 @@ export class BattleScene extends Phaser.Scene {
     const goblinPrefixes = ['哥布林：', 'Goblin: '];
     const gamblerPrefixes = ['赌徒：', 'Gambler: '];
     const werewolfPrefixes = ['狼人：', 'Werewolf: '];
+    const paladinPrefixes = ['圣骑士：', 'Paladin: '];
+    const merchantPrefixes = ['商人：', 'Merchant: '];
     const bartenderPrefixes = ['酒保：', 'Bartender: '];
     const goblinPrefix = goblinPrefixes.find((prefix) => raw.startsWith(prefix));
     if (goblinPrefix) {
@@ -1048,6 +1121,16 @@ export class BattleScene extends Phaser.Scene {
     const werewolfPrefix = werewolfPrefixes.find((prefix) => raw.startsWith(prefix));
     if (werewolfPrefix) {
       return { title: enemyName('werewolf'), body: raw.slice(werewolfPrefix.length) };
+    }
+
+    const paladinPrefix = paladinPrefixes.find((prefix) => raw.startsWith(prefix));
+    if (paladinPrefix) {
+      return { title: enemyName('paladin'), body: raw.slice(paladinPrefix.length) };
+    }
+
+    const merchantPrefix = merchantPrefixes.find((prefix) => raw.startsWith(prefix));
+    if (merchantPrefix) {
+      return { title: enemyName('merchant'), body: raw.slice(merchantPrefix.length) };
     }
 
     const bartenderPrefix = bartenderPrefixes.find((prefix) => raw.startsWith(prefix));
@@ -1104,6 +1187,17 @@ export class BattleScene extends Phaser.Scene {
         'tutorial.chapter1_4.defeatHint1',
         'tutorial.chapter1_4.defeatHint2',
         'tutorial.chapter1_4.defeatHint3',
+      ];
+    }
+
+    if (levelId === 'chapter1_6') {
+      return isVictory ? [
+        'tutorial.chapter1_6.unlockItems',
+        'tutorial.chapter1_6.nextGuestMerchant',
+      ] : [
+        'tutorial.chapter1_6.defeatHint1',
+        'tutorial.chapter1_6.defeatHint2',
+        'tutorial.chapter1_6.defeatHint3',
       ];
     }
 
@@ -1180,6 +1274,21 @@ export class BattleScene extends Phaser.Scene {
         'tutorial.chapter1_4.defeat2',
         'tutorial.chapter1_4.defeat3',
         'tutorial.chapter1_4.defeat4',
+      ];
+    }
+
+    if (levelId === 'chapter1_6') {
+      return outcome === 'victory' ? [
+        'tutorial.chapter1_6.victory1',
+        'tutorial.chapter1_6.victory2',
+        'tutorial.chapter1_6.victory3',
+        'tutorial.chapter1_6.victory4',
+        'tutorial.chapter1_6.victory5',
+      ] : [
+        'tutorial.chapter1_6.defeat1',
+        'tutorial.chapter1_6.defeat2',
+        'tutorial.chapter1_6.defeat3',
+        'tutorial.chapter1_6.defeat4',
       ];
     }
 
@@ -1270,7 +1379,8 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const ownedItems = ITEMS.filter((item) => (getProgress().ownedItems[item.id] ?? 0) > 0);
+    const itemCounts = this.battleItemCounts();
+    const ownedItems = ITEMS.filter((item) => (itemCounts[item.id] ?? 0) > 0);
     const container = this.add.container(640, 360).setDepth(80);
     this.ui.push(container);
     container.add(this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.62));
@@ -1306,7 +1416,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private itemModalRow(item: ItemDefinition, x: number, y: number): Phaser.GameObjects.Container {
-    const count = getProgress().ownedItems[item.id] ?? 0;
+    const count = this.battleItemCounts()[item.id] ?? 0;
     const canUse = this.canUseItemNow(item);
     const row = this.add.container(x, y);
     row.add(this.add.rectangle(260, 34, 544, 78, 0x20232a, 0.96).setStrokeStyle(1, canUse ? COLORS.accent : COLORS.line));
@@ -1336,7 +1446,7 @@ export class BattleScene extends Phaser.Scene {
     const hpBefore = this.hpSnapshot();
     const result = useBattleItem(item.id, this.battle);
     if (result.used) {
-      consumeItem(item.id, 1);
+      this.consumeBattleItem(item.id);
       this.itemFeedback = result.feedback;
     }
 

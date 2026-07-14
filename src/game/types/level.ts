@@ -51,6 +51,11 @@ export interface FixedRoundConfig {
   id: string;
   playerCards: CardCode[];
   playerDrawCards?: CardCode[];
+  resonanceSummonCard?: CardCode;
+  fateRerollCards?: CardCode[];
+  resonanceHornCards?: CardCode[];
+  playerHp?: number;
+  grantItems?: Partial<Record<ItemId, number>>;
   maxPlayerDraws?: number;
   playerTurnLessonKey?: string;
   enemies: FixedRoundEnemyConfig[];

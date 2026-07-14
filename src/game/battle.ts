@@ -108,7 +108,10 @@ export class Battle {
 
     this.player.fateMode = false;
     this.logEvent(t('log.viewHand', { cards: this.player.hand.map(formatCard).join(' ') }));
-    this.phase = 'enemy-turn';
+    this.phase = this.shouldSkipEnemyHandlingPhase() ? 'player-turn' : 'enemy-turn';
+    if (this.phase === 'player-turn') {
+      this.logEvent(t('log.enemyPhaseDone'));
+    }
   }
 
   chooseFate(): void {
@@ -118,7 +121,10 @@ export class Battle {
 
     this.player.fateMode = true;
     this.logEvent(t('log.fate'));
-    this.phase = 'enemy-turn';
+    this.phase = this.shouldSkipEnemyHandlingPhase() ? 'player-turn' : 'enemy-turn';
+    if (this.phase === 'player-turn') {
+      this.logEvent(t('log.enemyPhaseDone'));
+    }
   }
 
   inviteCurrentEnemy(): void {
@@ -284,7 +290,12 @@ export class Battle {
       return { used: false, success: false, message: t('skill.invalid.noSummonSuit') };
     }
 
-    const card = this.deck.drawWhere((candidate) => !isJoker(candidate) && candidate.suit === targetSuit);
+    const fixedSummonCard = this.currentFixedRound()?.resonanceSummonCard
+      ? cardFromCode(this.currentFixedRound()?.resonanceSummonCard ?? '')
+      : undefined;
+    const card = fixedSummonCard?.suit === targetSuit
+      ? this.deck.drawWhere((candidate) => candidate.suit === fixedSummonCard.suit && candidate.rank === fixedSummonCard.rank) ?? fixedSummonCard
+      : this.deck.drawWhere((candidate) => !isJoker(candidate) && candidate.suit === targetSuit);
     if (!card) {
       this.logEvent(t('log.summonNoDeckSuit', { suit: targetSuit }));
       return { used: false, success: false, message: t('skill.invalid.noSuitInDeck', { suit: targetSuit }) };
@@ -425,25 +436,26 @@ export class Battle {
   }
 
   useResonanceHorn(): { success: boolean; cards: Card[] } {
-    const success = Math.random() < 0.8;
-    if (success) {
-      this.player.hand = this.createRandomResonantPair();
-    }
+    const fixedCards = this.currentFixedRound()?.resonanceHornCards;
+    this.player.hand = fixedCards
+      ? fixedCards.map(cardFromCode)
+      : this.createRandomResonantPair();
 
     this.player.fateMode = false;
-    this.logEvent(success
-      ? t('itemEffect.resonanceHorn.success', { cards: this.player.hand.map(formatCard).join(' ') })
-      : t('itemEffect.resonanceHorn.fail', { cards: this.player.hand.map(formatCard).join(' ') }));
+    this.logEvent(t('itemEffect.resonanceHorn.success', { cards: this.player.hand.map(formatCard).join(' ') }));
     this.phase = 'enemy-turn';
     return {
-      success,
+      success: true,
       cards: this.player.hand,
     };
   }
 
   rerollPlayerHandByFate(): Card[] {
     const drawCount = Math.max(1, this.player.hand.length);
-    this.player.hand = this.drawCards(drawCount);
+    const fixedCards = this.currentFixedRound()?.fateRerollCards;
+    this.player.hand = fixedCards
+      ? fixedCards.slice(0, drawCount).map(cardFromCode)
+      : this.drawCards(drawCount);
     this.player.incomingDamageBonus = Math.max(this.player.incomingDamageBonus, 1);
     this.player.drawLocked = true;
     this.player.resonanceShiftUsed = true;
@@ -468,6 +480,9 @@ export class Battle {
     this.player.drawLocked = false;
     this.player.incomingDamageBonus = 0;
     const fixedRound = this.currentFixedRound();
+    if (fixedRound?.playerHp !== undefined) {
+      this.player.hp = Math.min(this.player.maxHp, Math.max(0, Math.floor(fixedRound.playerHp)));
+    }
     this.player.hand = fixedRound
       ? fixedRound.playerCards.map(cardFromCode)
       : [this.deck.draw(), this.deck.draw()];
@@ -766,7 +781,21 @@ export class Battle {
   }
 
   private currentFixedRound(): FixedRoundConfig | undefined {
-    return this.levelConfig?.fixedRounds?.[this.round - 1];
+    const fixedRounds = this.levelConfig?.fixedRounds;
+    if (!fixedRounds?.length) {
+      return undefined;
+    }
+
+    const fixedRound = fixedRounds[this.round - 1];
+    if (fixedRound) {
+      return fixedRound;
+    }
+
+    if (this.levelConfig?.useRandomAfterFixedRounds === false) {
+      return fixedRounds[fixedRounds.length - 1];
+    }
+
+    return undefined;
   }
 
   private maxPlayerDrawsThisRound(): number {
@@ -777,6 +806,10 @@ export class Battle {
 
   private currentFixedEnemyConfig(enemyId: EnemyType): FixedRoundEnemyConfig | undefined {
     return this.currentFixedRound()?.enemies.find((config) => config.enemyId === enemyId);
+  }
+
+  private shouldSkipEnemyHandlingPhase(): boolean {
+    return this.levelConfig?.id === 'chapter1_6' || this.levelConfig?.id === 'chapter1_7';
   }
 
   private chooseResonanceShift(cards: Card[]): { card: Card; targetSuit: Suit } | undefined {
