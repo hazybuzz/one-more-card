@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "pvp": "node server/pvpServer.js",
     "build": "tsc && vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "phaser": "^3.90.0"
+    "phaser": "^3.90.0",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
   }

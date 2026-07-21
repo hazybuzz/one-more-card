@@ -18,6 +18,7 @@ export interface EnemyState extends EnemyDefinition {
   acceptedInvite?: boolean;
   invitedDrawCount?: 1 | 2;
   passiveTriggeredThisRound: boolean;
+  soulRedeemUsed: boolean;
   defeated: boolean;
 }
 
@@ -50,6 +51,7 @@ export function createEnemiesForLevel(level?: LevelConfig): EnemyState[] {
       revealed: false,
       compared: false,
       passiveTriggeredThisRound: false,
+      soulRedeemUsed: false,
       defeated: false,
     };
   });
@@ -112,6 +114,22 @@ export function decideInvite(enemy: EnemyState, playerPoint?: number): EnemyDeci
     }
 
     return chance(0.66, t('enemy.ai.merchant.low'));
+  }
+
+  if (enemy.id === 'keeper') {
+    if (point >= 8) {
+      return chance(0.08, t('enemy.ai.keeper.high'));
+    }
+
+    if (point >= 7) {
+      return chance(0.22, t('enemy.ai.keeper.seven'));
+    }
+
+    if (point >= 5) {
+      return chance(0.42, t('enemy.ai.keeper.mid'));
+    }
+
+    return chance(0.68, t('enemy.ai.keeper.low'));
   }
 
   const resonanceChance = hasResonanceOpportunity(enemy);

@@ -194,6 +194,39 @@ export const INTRO_SEQUENCES: Record<string, IntroSequenceConfig> = {
       { type: 'levelTitle', titleKey: 'level.chapter1_7.title', subtitleKey: 'level.chapter1_7.subtitle' },
     ],
   },
+  chapter1_8_opening: {
+    id: 'chapter1_8_opening',
+    bgm: {
+      key: 'chapter1IntroBgm',
+      path: '/audio/chapter1-in-ngm.ogg',
+      volume: 0.52,
+    },
+    shuffleSfx: {
+      key: 'cardShuffle',
+      path: '/audio/card-shuffle.ogg',
+      volume: 0.46,
+      delayMs: 760,
+    },
+    titleKey: 'intro.chapter1.title',
+    showTitle: false,
+    narrationKeys: [
+      'intro.chapter1_8.scene1',
+      'intro.chapter1_8.scene2',
+      'intro.chapter1_8.scene3',
+      'intro.chapter1_8.scene4',
+      'intro.chapter1_8.scene5',
+      'intro.chapter1_8.scene6',
+      'intro.chapter1_8.scene7',
+    ],
+    steps: [
+      { type: 'dialogue', textKey: 'intro.chapter1_8.bartender1' },
+      { type: 'dialogue', textKey: 'intro.chapter1_8.keeper1' },
+      { type: 'dialogue', textKey: 'intro.chapter1_8.keeper2' },
+      { type: 'dialogue', textKey: 'intro.chapter1_8.keeper3' },
+      { type: 'dialogue', textKey: 'intro.chapter1_8.keeper4' },
+      { type: 'levelTitle', titleKey: 'level.chapter1_8.title', subtitleKey: 'level.chapter1_8.subtitle' },
+    ],
+  },
 };
 
 export function getIntroSequence(introId: string): IntroSequenceConfig | undefined {

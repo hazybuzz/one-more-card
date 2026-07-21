@@ -584,4 +584,70 @@ export const FIXED_DEALS: Record<string, FixedRoundConfig[]> = {
       ],
     },
   ],
+  chapter1_8: [
+    {
+      id: 'chapter1_8_round1',
+      playerCards: ['C6', 'DK'],
+      playerDrawCards: ['D3'],
+      maxPlayerDraws: 2,
+      grantItems: { heal_potion: 1, cooling_charm: 1, resonance_dust: 1 },
+      enemies: [
+        {
+          enemyId: 'keeper',
+          cards: ['S8', 'HQ'],
+          visibleCards: ['S8'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_8.round1.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'invite', 'compare', 'player_draw', 'reveal', 'use_skill', 'use_item'],
+      preferredAction: 'player_draw',
+      playerTurnLessonKey: 'tutorial.chapter1_8.round1.hint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_8.round1.result',
+      ],
+    },
+    {
+      id: 'chapter1_8_round2',
+      playerCards: ['H8', 'SA'],
+      playerDrawCards: ['C7'],
+      maxPlayerDraws: 2,
+      enemies: [
+        {
+          enemyId: 'keeper',
+          cards: ['D7', 'CK'],
+          visibleCards: ['D7'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_8.round2.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'invite', 'compare', 'player_draw', 'reveal', 'use_skill', 'use_item'],
+      preferredAction: 'compare',
+      playerTurnLessonKey: 'tutorial.chapter1_8.round2.hint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_8.round2.result',
+      ],
+    },
+    {
+      id: 'chapter1_8_round3',
+      playerCards: ['D5', 'S3'],
+      playerDrawCards: ['H2'],
+      maxPlayerDraws: 2,
+      enemies: [
+        {
+          enemyId: 'keeper',
+          cards: ['H6', 'H2'],
+          visibleCards: ['H6'],
+          scriptedInviteResult: 'reject',
+          scriptedInviteReasonKey: 'tutorial.chapter1_8.round3.rejectReason',
+        },
+      ],
+      availableActions: ['view_hand', 'invite', 'compare', 'player_draw', 'reveal', 'use_skill', 'use_item'],
+      preferredAction: 'use_skill',
+      playerTurnLessonKey: 'tutorial.chapter1_8.round3.hint',
+      revealSummaryKeys: [
+        'tutorial.chapter1_8.round3.result',
+      ],
+    },
+  ],
 };

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { BattleEngine, type BattleCombatPresentationEvent, type BattlePresentationEvent } from '../game/engine';
 import { preloadCardImages } from '../game/assets';
 import { playBattleMusic, preloadBattleMusic, stopBattleMusic, stopLobbyMusic } from '../game/audio';
-import { Card, cardImageIndex, formatCard } from '../game/card';
+import { Card, formatCard } from '../game/card';
 import { introIdForLevel } from '../game/data/levelIntros';
 import { EconomyChange, settleBattleEconomy } from '../game/economy';
 import { EnemyState } from '../game/enemy';
@@ -19,6 +19,8 @@ import { ActionPanel } from '../ui/components/ActionPanel';
 import { BlockingMessageModal } from '../ui/components/BlockingMessageModal';
 import { ItemBar } from '../ui/components/ItemBar';
 import { SkillBar } from '../ui/components/SkillBar';
+import { createCardView } from '../ui/presentation/CardView';
+import { createScoreBadge } from '../ui/presentation/ScoreBadge';
 import { canUseBattleItemFromState, createBattleUIState, type BattleActionButtonState, type BattleUIState } from '../ui/state/UIState';
 
 const COLORS = {
@@ -47,6 +49,7 @@ const SKILL_COLORS = {
   werewolf: 0x73c7ff,
   paladin: 0xf4e7b0,
   merchant: 0xe2c16b,
+  keeper: 0xd7b56d,
 };
 
 const SEATS = {
@@ -477,6 +480,34 @@ export class BattleScene extends Phaser.Scene {
     this.playStageBanner(t('battle.banner.soulRedeem'), onComplete, false, COLORS.resonance, '#4b3000');
   }
 
+  private playEnemySoulRedeemBannerThen(onComplete: () => void): void {
+    this.playStageBanner(t('battle.banner.keeperSoulRedeem'), onComplete, false, COLORS.resonance, '#4b3000');
+  }
+
+  private hasPendingSoulRedeem(): boolean {
+    return this.battle.pendingSoulRedeem || !!this.battle.pendingEnemySoulRedeem;
+  }
+
+  private resolvePendingSoulRedeem(): void {
+    const beforeRedeem = this.hpSnapshot();
+    if (this.battle.pendingSoulRedeem) {
+      this.battle.resolveSoulRedeem();
+    } else if (this.battle.pendingEnemySoulRedeem) {
+      this.battle.resolveEnemySoulRedeem();
+    }
+    this.playHealSoundIfHpIncreased(beforeRedeem);
+    this.startDealPresentation();
+  }
+
+  private playPendingSoulRedeemBannerThen(onComplete: () => void): void {
+    if (this.battle.pendingEnemySoulRedeem) {
+      this.playEnemySoulRedeemBannerThen(onComplete);
+      return;
+    }
+
+    this.playSoulRedeemBannerThen(onComplete);
+  }
+
   private playStageBanner(label: string, onComplete: () => void, renderBefore = true, color = COLORS.dangerText, stroke = '#3a070d'): void {
     this.stageBannerPlaying = true;
     this.itemModalOpen = false;
@@ -874,7 +905,14 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private renderResultModal(): void {
-    if (this.itemFeedback || !this.resultModalReady || this.battle.phase !== 'battle-result' || !this.battle.battleOutcome || !this.economyResult) {
+    if (
+      this.itemFeedback
+      || !this.resultModalReady
+      || this.isPresentationBusy()
+      || this.battle.phase !== 'battle-result'
+      || !this.battle.battleOutcome
+      || !this.economyResult
+    ) {
       return;
     }
 
@@ -1107,6 +1145,7 @@ export class BattleScene extends Phaser.Scene {
     const werewolfPrefixes = ['狼人：', 'Werewolf: '];
     const paladinPrefixes = ['圣骑士：', 'Paladin: '];
     const merchantPrefixes = ['商人：', 'Merchant: '];
+    const keeperPrefixes = ['酒馆老板：', 'Tavern Owner: '];
     const bartenderPrefixes = ['酒保：', 'Bartender: '];
     const goblinPrefix = goblinPrefixes.find((prefix) => raw.startsWith(prefix));
     if (goblinPrefix) {
@@ -1131,6 +1170,11 @@ export class BattleScene extends Phaser.Scene {
     const merchantPrefix = merchantPrefixes.find((prefix) => raw.startsWith(prefix));
     if (merchantPrefix) {
       return { title: enemyName('merchant'), body: raw.slice(merchantPrefix.length) };
+    }
+
+    const keeperPrefix = keeperPrefixes.find((prefix) => raw.startsWith(prefix));
+    if (keeperPrefix) {
+      return { title: enemyName('keeper'), body: raw.slice(keeperPrefix.length) };
     }
 
     const bartenderPrefix = bartenderPrefixes.find((prefix) => raw.startsWith(prefix));
@@ -1198,6 +1242,30 @@ export class BattleScene extends Phaser.Scene {
         'tutorial.chapter1_6.defeatHint1',
         'tutorial.chapter1_6.defeatHint2',
         'tutorial.chapter1_6.defeatHint3',
+      ];
+    }
+
+    if (levelId === 'chapter1_7') {
+      return isVictory ? [
+        'tutorial.chapter1_7.unlockFinalTrial',
+        'tutorial.chapter1_7.nextGuestKeeper',
+      ] : [
+        'tutorial.chapter1_7.defeatHint1',
+        'tutorial.chapter1_7.defeatHint2',
+        'tutorial.chapter1_7.defeatHint3',
+        'tutorial.chapter1_7.defeatHint4',
+      ];
+    }
+
+    if (levelId === 'chapter1_8') {
+      return isVictory ? [
+        'tutorial.chapter1_8.chapterComplete',
+        'tutorial.chapter1_8.unlockFreePlay',
+      ] : [
+        'tutorial.chapter1_8.defeatHint1',
+        'tutorial.chapter1_8.defeatHint2',
+        'tutorial.chapter1_8.defeatHint3',
+        'tutorial.chapter1_8.defeatHint4',
       ];
     }
 
@@ -1289,6 +1357,41 @@ export class BattleScene extends Phaser.Scene {
         'tutorial.chapter1_6.defeat2',
         'tutorial.chapter1_6.defeat3',
         'tutorial.chapter1_6.defeat4',
+      ];
+    }
+
+    if (levelId === 'chapter1_7') {
+      return outcome === 'victory' ? [
+        'tutorial.chapter1_7.victory1',
+        'tutorial.chapter1_7.victory2',
+        'tutorial.chapter1_7.victory3',
+        'tutorial.chapter1_7.victory4',
+        'tutorial.chapter1_7.victory5',
+        'tutorial.chapter1_7.victory6',
+      ] : [
+        'tutorial.chapter1_7.defeat1',
+        'tutorial.chapter1_7.defeat2',
+        'tutorial.chapter1_7.defeat3',
+        'tutorial.chapter1_7.defeat4',
+      ];
+    }
+
+    if (levelId === 'chapter1_8') {
+      return outcome === 'victory' ? [
+        'tutorial.chapter1_8.victory1',
+        'tutorial.chapter1_8.victory2',
+        'tutorial.chapter1_8.victory3',
+        'tutorial.chapter1_8.victory4',
+        'tutorial.chapter1_8.victory5',
+        'tutorial.chapter1_8.victory6',
+        'tutorial.chapter1_8.victory7',
+        'tutorial.chapter1_8.victory8',
+      ] : [
+        'tutorial.chapter1_8.defeat1',
+        'tutorial.chapter1_8.defeat2',
+        'tutorial.chapter1_8.defeat3',
+        'tutorial.chapter1_8.defeat4',
+        'tutorial.chapter1_8.defeat5',
       ];
     }
 
@@ -1475,19 +1578,32 @@ export class BattleScene extends Phaser.Scene {
     this.itemModalOpen = false;
     const events = this.battle.consumePresentationEvents();
     this.playImmediatePresentationEvents(events);
-    const shouldDelayResultModal = (this.hasBattleEndedEvent(events) || this.battle.pendingSoulRedeem) && this.hasCombatEvents(events);
+    const shouldDelayResultModal = this.shouldDelayOutcomeForPresentation(events);
     this.resultModalReady = !shouldDelayResultModal;
     if (!this.hasCombatEvents(events)) {
       this.render();
     }
     this.playPostActionAnimations(events, hpBefore, false, () => {
+      if (this.hasPendingSoulRedeem()) {
+        this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
+        return;
+      }
+
       if (!shouldDelayResultModal) {
         this.render();
         return;
       }
 
-      this.resultModalReady = true;
-      this.render();
+      const showResult = () => {
+        this.resultModalReady = true;
+        this.render();
+      };
+
+      if (this.showResultStoryIfNeeded(showResult)) {
+        return;
+      }
+
+      showResult();
     });
     if (!result.used) {
       this.showSkillTooltip(640, 592, t(item.nameKey), result.message);
@@ -1505,16 +1621,11 @@ export class BattleScene extends Phaser.Scene {
       this.playRoundResonanceEchoOnce();
       const events = this.battle.consumePresentationEvents();
       this.playImmediatePresentationEvents(events);
-      const shouldDelayResultModal = (this.hasBattleEndedEvent(events) || this.battle.pendingSoulRedeem) && this.hasCombatEvents(events);
+      const shouldDelayResultModal = this.shouldDelayOutcomeForPresentation(events);
       this.resultModalReady = !shouldDelayResultModal;
       this.playPostActionAnimations(events, hpBefore, false, () => {
-        if (this.battle.pendingSoulRedeem) {
-          this.playSoulRedeemBannerThen(() => {
-            const beforeRedeem = this.hpSnapshot();
-            this.battle.resolveSoulRedeem();
-            this.playHealSoundIfHpIncreased(beforeRedeem);
-            this.startDealPresentation();
-          });
+        if (this.hasPendingSoulRedeem()) {
+          this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
           return;
         }
 
@@ -1523,8 +1634,16 @@ export class BattleScene extends Phaser.Scene {
           return;
         }
 
-        this.resultModalReady = true;
-        this.render();
+        const showResult = () => {
+          this.resultModalReady = true;
+          this.render();
+        };
+
+        if (this.showResultStoryIfNeeded(showResult)) {
+          return;
+        }
+
+        showResult();
       });
     });
   }
@@ -1632,6 +1751,16 @@ export class BattleScene extends Phaser.Scene {
       };
     }
 
+    if (enemy.id === 'keeper') {
+      return {
+        name: t('skill.soulRedeem.name'),
+        icon: '✦',
+        description: t('skill.keeperSoulRedeem.tooltip'),
+        color: 0xe8cf73,
+        textColor: '#ffd86b',
+      };
+    }
+
     return {
       name: t('skill.werewolfLifesteal.name'),
       icon: 'V',
@@ -1648,6 +1777,10 @@ export class BattleScene extends Phaser.Scene {
 
     if (enemy.id === 'gambler') {
       return enemy.hp < 3 && !enemy.defeated;
+    }
+
+    if (enemy.id === 'keeper') {
+      return !enemy.soulRedeemUsed && !enemy.defeated;
     }
 
     return enemy.hp < 3 && !enemy.defeated;
@@ -1694,45 +1827,12 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private renderScoreBadge(container: Phaser.GameObjects.Container, x: number, y: number, point: number): void {
-    const color = this.pointColor(point);
-    const badge = this.add.container(x, y);
-    badge.add(this.add.circle(0, 0, 31, color.fill, 0.18).setStrokeStyle(2, color.stroke, 0.95));
-    badge.add(this.add.circle(0, 0, 22, color.fill, 0.26));
-    const pointText = this.add.text(0, -3, `${point}`, {
-      fontFamily: 'Arial',
-      fontSize: '31px',
-      color: color.text,
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    pointText.setShadow(0, 0, color.glow, 14, true, true);
-
-    if (point >= 7) {
-      pointText.setTint(0xcaff8a, 0x55ff9e, 0x1fd97a, 0x079b5a);
-    }
-
-    badge.add(pointText);
-    badge.add(this.add.text(0, 20, t('common.pointUnit'), {
-      fontFamily: 'Arial',
-      fontSize: '12px',
-      color: color.text,
-    }).setOrigin(0.5));
-    container.add(badge);
-  }
-
-  private pointColor(point: number): { fill: number; stroke: number; text: string; glow: string } {
-    if (point >= 1 && point <= 3) {
-      return { fill: 0xff4058, stroke: 0xff6f7f, text: '#ff6f7f', glow: '#ff4058' };
-    }
-
-    if (point >= 4 && point <= 6) {
-      return { fill: 0xffd45c, stroke: 0xffe58a, text: '#ffdf7a', glow: '#ffd45c' };
-    }
-
-    if (point >= 7) {
-      return { fill: 0x35e582, stroke: 0x98ff9f, text: '#98ff9f', glow: '#35e582' };
-    }
-
-    return { fill: 0x8b96aa, stroke: 0xb5c0d0, text: '#b5c0d0', glow: '#8b96aa' };
+    container.add(createScoreBadge(this, {
+      x,
+      y,
+      point,
+      label: t('common.pointUnit'),
+    }));
   }
 
   private resonanceText(score: ScoreResult): string {
@@ -1832,19 +1932,15 @@ export class BattleScene extends Phaser.Scene {
   ): void {
     cards.forEach(({ card, faceUp }, index) => {
       const cardX = x + index * options.spacing;
-      if (options.resonant) {
-        const glow = this.add.rectangle(cardX + options.width / 2, y, options.width + 8, options.height + 8, COLORS.accent, 0.12)
-          .setStrokeStyle(2, COLORS.accent, 0.95);
-        glow.setAlpha(options.muted ? 0.28 : 1);
-        container.add(glow);
-      }
-
-      const key = faceUp ? `card-${cardImageIndex(card)}` : 'card-back';
-      const image = this.add.image(cardX, y, key).setOrigin(0, 0.5).setDisplaySize(options.width, options.height);
-      if (options.muted) {
-        image.setAlpha(0.45);
-      }
-      container.add(image);
+      container.add(createCardView(this, {
+        x: cardX + options.width / 2,
+        y,
+        card: faceUp ? card : undefined,
+        hidden: !faceUp,
+        width: options.width,
+        resonant: options.resonant,
+        muted: options.muted,
+      }));
     });
   }
 
@@ -1934,7 +2030,7 @@ export class BattleScene extends Phaser.Scene {
     this.playRoundResonanceEchoOnce();
     const events = this.battle.consumePresentationEvents();
     this.playImmediatePresentationEvents(events);
-    const shouldDelayResultModal = this.hasBattleEndedEvent(events) && this.hasCombatEvents(events);
+    const shouldDelayResultModal = this.shouldDelayOutcomeForPresentation(events);
     const shouldDealNewRound = this.battle.round > roundBefore && this.battle.phase === 'choice' && !this.battle.battleOutcome;
     this.resultModalReady = !shouldDelayResultModal;
     const skipRevealBanner = phaseBefore === 'enemy-turn' && comparedBefore === aliveBefore - 1 && this.hasRoundRevealEvent(events);
@@ -1945,13 +2041,8 @@ export class BattleScene extends Phaser.Scene {
       }
 
       this.playPostActionAnimations(events, hpBefore, skipRevealBanner, () => {
-        if (this.battle.pendingSoulRedeem) {
-          this.playSoulRedeemBannerThen(() => {
-            const beforeRedeem = this.hpSnapshot();
-            this.battle.resolveSoulRedeem();
-            this.playHealSoundIfHpIncreased(beforeRedeem);
-            this.startDealPresentation();
-          });
+        if (this.hasPendingSoulRedeem()) {
+          this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
           return;
         }
 
@@ -2042,6 +2133,20 @@ export class BattleScene extends Phaser.Scene {
 
   private hasBattleEndedEvent(events: BattlePresentationEvent[]): boolean {
     return events.some((event) => event.type === 'battle-ended');
+  }
+
+  private shouldDelayOutcomeForPresentation(events: BattlePresentationEvent[]): boolean {
+    return (this.hasBattleEndedEvent(events) || this.hasPendingSoulRedeem())
+      && (this.hasCombatEvents(events) || this.hasRoundRevealEvent(events));
+  }
+
+  private isPresentationBusy(): boolean {
+    return this.dealing
+      || this.playerRedealing
+      || this.actionDealing
+      || this.stageBannerPlaying
+      || this.actionAnimationPlaying
+      || this.autoAdvancingRound;
   }
 
   private showChapter3DamageFeedbackIfNeeded(events: BattlePresentationEvent[], onComplete: () => void): boolean {

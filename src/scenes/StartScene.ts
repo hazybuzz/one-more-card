@@ -102,7 +102,7 @@ export class StartScene extends Phaser.Scene {
   }
 
   private renderMenu(): void {
-    this.add.container(640, 382).add([
+    this.add.container(640, 360).add([
       this.menuButton(0, 0, 300, 58, t('start.game', { cost: BATTLE_ENTRY_COST }), () => {
         const entry = payBattleEntry();
         this.showStatus(entry.amount > 0
@@ -110,13 +110,16 @@ export class StartScene extends Phaser.Scene {
           : t('start.entryFree'));
         this.time.delayedCall(320, () => this.scene.start('BattleScene', {}));
       }),
-      this.menuButton(0, 78, 260, 58, t('start.story'), () => {
+      this.menuButton(0, 70, 260, 56, t('start.story'), () => {
         this.scene.start('StorySelectScene');
       }),
-      this.menuButton(0, 156, 260, 58, t('start.shop'), () => {
+      this.menuButton(0, 140, 260, 56, t('start.pvp'), () => {
+        this.scene.start('PvpLobbyScene');
+      }),
+      this.menuButton(0, 210, 260, 56, t('start.shop'), () => {
         this.scene.start('ShopScene');
       }),
-      this.menuButton(0, 234, 260, 58, t('start.inventory'), () => {
+      this.menuButton(0, 280, 260, 56, t('start.inventory'), () => {
         this.scene.start('InventoryScene');
       }),
     ]);

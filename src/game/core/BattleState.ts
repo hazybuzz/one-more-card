@@ -33,6 +33,7 @@ export interface BattleEnemyState {
   acceptedInvite?: boolean;
   invitedDrawCount?: 1 | 2;
   passiveTriggeredThisRound: boolean;
+  soulRedeemUsed: boolean;
   defeated: boolean;
   score: ScoreResult;
 }
@@ -62,6 +63,7 @@ export interface BattleState {
   maxPlayerDrawsThisRound: number;
   roundRevealed: boolean;
   pendingSoulRedeem: boolean;
+  pendingEnemySoulRedeem?: EnemyType;
   player: BattlePlayerState;
   enemies: BattleEnemyState[];
   aliveEnemyIds: EnemyType[];

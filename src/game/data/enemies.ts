@@ -58,6 +58,15 @@ export const ENEMY_CONFIGS: Record<EnemyId, EnemyConfig> = {
     portraitKey: 'enemy_merchant',
     colorKey: 'merchant',
   },
+  keeper: {
+    id: 'keeper',
+    maxHp: 18,
+    aiType: 'keeper',
+    nameKey: 'enemy.keeper.name',
+    personalityKey: 'enemy.keeper.personality',
+    portraitKey: 'enemy_keeper',
+    colorKey: 'keeper',
+  },
 };
 
 export const DEFAULT_ENEMY_IDS: EnemyId[] = ['goblin', 'gambler', 'werewolf'];

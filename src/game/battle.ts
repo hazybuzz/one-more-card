@@ -1,4 +1,4 @@
-import { Card, RANKS, SUITS, Suit, cardFromCode, formatCard, isJoker } from './card';
+import { Card, RANKS, SUITS, cardFromCode, formatCard, isJoker } from './card';
 import type { BattleState } from './core/BattleState';
 import { getLevelById } from './data/levelRegistry';
 import { enemyName, t } from './i18n';
@@ -6,6 +6,7 @@ import { Deck } from './deck';
 import { EnemyState, createEnemiesForLevel, decideInvite } from './enemy';
 import { EnemyType } from './enemy';
 import { ResonanceKind, ScoreResult, scoreHand } from './scoring';
+import { chooseResonanceShift, chooseResonanceSummonSuit } from './skills/resonanceSkills';
 import type { BattleMechanicId, FixedRoundConfig, FixedRoundEnemyConfig, LevelConfig } from './types/level';
 
 export type BattlePhase = 'choice' | 'enemy-turn' | 'player-turn' | 'round-result' | 'battle-result';
@@ -65,6 +66,7 @@ export class Battle {
   round: number;
   roundRevealed: boolean;
   pendingSoulRedeem: boolean;
+  pendingEnemySoulRedeem?: EnemyType;
   results: BattleResult[];
   damageEvents: DamageEvent[];
 
@@ -96,6 +98,7 @@ export class Battle {
     this.round = 0;
     this.roundRevealed = false;
     this.pendingSoulRedeem = false;
+    this.pendingEnemySoulRedeem = undefined;
     this.results = [];
     this.damageEvents = [];
     this.startRound();
@@ -243,7 +246,7 @@ export class Battle {
       return { used: false, success: false, message: t('skill.invalid.notEnoughSuitedCards') };
     }
 
-    const conversion = this.chooseResonanceShift(candidates);
+    const conversion = chooseResonanceShift(candidates);
     if (!conversion) {
       this.logEvent(t('log.shiftNoNeed'));
       return { used: false, success: false, message: t('skill.invalid.noShiftPath') };
@@ -284,7 +287,7 @@ export class Battle {
       return { used: false, success: false, message: t('skill.invalid.noResonance') };
     }
 
-    const targetSuit = this.chooseResonanceSummonSuit();
+    const targetSuit = chooseResonanceSummonSuit(this.player.hand);
     if (!targetSuit) {
       this.logEvent(t('log.summonNoSuit'));
       return { used: false, success: false, message: t('skill.invalid.noSummonSuit') };
@@ -362,6 +365,7 @@ export class Battle {
       maxPlayerDrawsThisRound: this.maxPlayerDrawsThisRound(),
       roundRevealed: this.roundRevealed,
       pendingSoulRedeem: this.pendingSoulRedeem,
+      pendingEnemySoulRedeem: this.pendingEnemySoulRedeem,
       player: {
         hp: this.player.hp,
         maxHp: this.player.maxHp,
@@ -390,6 +394,7 @@ export class Battle {
         acceptedInvite: enemy.acceptedInvite,
         invitedDrawCount: enemy.invitedDrawCount,
         passiveTriggeredThisRound: enemy.passiveTriggeredThisRound,
+        soulRedeemUsed: enemy.soulRedeemUsed,
         defeated: enemy.defeated,
         score: this.scoreFor(enemy.hand),
       })),
@@ -415,7 +420,7 @@ export class Battle {
     }
 
     const candidates = this.player.hand.filter((card) => !isJoker(card) && card.suit);
-    return this.chooseResonanceShift(candidates) !== undefined;
+    return chooseResonanceShift(candidates) !== undefined;
   }
 
   canUseResonanceSummon(): boolean {
@@ -645,6 +650,10 @@ export class Battle {
       return;
     }
 
+    if (this.markEnemySoulRedeemPending(enemy)) {
+      return;
+    }
+
     enemy.defeated = true;
     const beforeHeal = this.player.hp;
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
@@ -660,6 +669,37 @@ export class Battle {
     this.pendingSoulRedeem = false;
     this.player.hp = Math.min(this.player.maxHp, 3);
     this.startRound();
+  }
+
+  resolveEnemySoulRedeem(): void {
+    if (!this.pendingEnemySoulRedeem) {
+      return;
+    }
+
+    const enemy = this.enemies.find((candidate) => candidate.id === this.pendingEnemySoulRedeem);
+    this.pendingEnemySoulRedeem = undefined;
+    if (enemy && !enemy.defeated) {
+      enemy.hp = Math.min(enemy.maxHp, 3);
+    }
+    this.startRound();
+  }
+
+  private markEnemySoulRedeemPending(enemy: EnemyState): boolean {
+    if (
+      !this.hasMechanic('enemy_passives')
+      || enemy.id !== 'keeper'
+      || enemy.soulRedeemUsed
+      || this.pendingEnemySoulRedeem
+    ) {
+      return false;
+    }
+
+    enemy.soulRedeemUsed = true;
+    this.pendingEnemySoulRedeem = enemy.id;
+    this.roundRevealed = true;
+    enemy.revealed = true;
+    this.logEvent(t('log.keeperSoulRedeem'));
+    return true;
   }
 
   private markSoulRedeemPending(): boolean {
@@ -810,84 +850,6 @@ export class Battle {
 
   private shouldSkipEnemyHandlingPhase(): boolean {
     return this.levelConfig?.id === 'chapter1_6' || this.levelConfig?.id === 'chapter1_7';
-  }
-
-  private chooseResonanceShift(cards: Card[]): { card: Card; targetSuit: Suit } | undefined {
-    if (cards.length < 2) {
-      return undefined;
-    }
-
-    const suitGroups = new Map<Suit, Card[]>();
-    cards.forEach((card) => {
-      if (!card.suit) {
-        return;
-      }
-
-      const group = suitGroups.get(card.suit) ?? [];
-      group.push(card);
-      suitGroups.set(card.suit, group);
-    });
-
-    if (suitGroups.size <= 1) {
-      return undefined;
-    }
-
-    const groups = [...suitGroups.entries()];
-    if (groups.length > 2) {
-      return undefined;
-    }
-
-    const counts = groups.map(([, group]) => group.length);
-    const allEqual = counts.every((count) => count === counts[0]);
-
-    if (allEqual) {
-      if (cards.length !== 2) {
-        return undefined;
-      }
-
-      const source = randomItem(cards);
-      const target = randomItem(cards.filter((card) => card !== source && card.suit && card.suit !== source?.suit));
-      if (!source || !target?.suit) {
-        return undefined;
-      }
-
-      return { card: source, targetSuit: target.suit };
-    }
-
-    const maxCount = Math.max(...counts);
-    const minCount = Math.min(...counts);
-    if (minCount !== 1) {
-      return undefined;
-    }
-
-    const majoritySuits = groups.filter(([, group]) => group.length === maxCount).map(([suit]) => suit);
-    const minorityCards = groups.filter(([, group]) => group.length === minCount).flatMap(([, group]) => group);
-    const card = randomItem(minorityCards);
-    const targetSuit = randomItem(majoritySuits);
-    if (!card || !targetSuit || card.suit === targetSuit) {
-      return undefined;
-    }
-
-    return { card, targetSuit };
-  }
-
-  private chooseResonanceSummonSuit(): Suit | undefined {
-    const suitedCards = this.player.hand.filter((card) => !isJoker(card) && card.suit);
-    if (suitedCards.length === 0) {
-      return randomItem(['♠', '♥', '♦', '♣']);
-    }
-
-    const counts = new Map<Suit, number>();
-    suitedCards.forEach((card) => {
-      if (!card.suit) {
-        return;
-      }
-
-      counts.set(card.suit, (counts.get(card.suit) ?? 0) + 1);
-    });
-
-    const maxCount = Math.max(...counts.values());
-    return randomItem([...counts.entries()].filter(([, count]) => count === maxCount).map(([suit]) => suit));
   }
 
   private createRandomResonantPair(): Card[] {
