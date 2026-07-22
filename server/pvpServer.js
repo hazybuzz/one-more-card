@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 
 const PORT = Number(process.env.PVP_PORT ?? 8787);
-const MAX_HP = 10;
+const MAX_HP = 8;
+const INITIAL_ACTION_POINTS = 3;
+const MAX_ACTION_POINTS = 4;
+const SKILL_COST = 1;
 const ACTION_TIME_MS = 15_000;
 const REVEAL_TIME_MS = 4_200;
 const SKILL_COOLDOWN_ROUNDS = 3;
@@ -68,9 +71,6 @@ setInterval(() => {
   const now = Date.now();
   rooms.forEach((room) => {
     let changed = false;
-    if (room.phase === 'playing') {
-      changed = autoStandExpiredPlayers(room, now);
-    }
 
     if (room.phase === 'round-reveal' && room.nextRoundAt && room.nextRoundAt <= now) {
       startRound(room, now);
@@ -104,9 +104,16 @@ function handleMessage(clientId, socket, message) {
     case 'surrender':
       surrenderClient(clientId, socket);
       return;
-    case 'use-skill':
     case 'draw':
     case 'stand':
+    case 'invite-draw':
+    case 'pass':
+    case 'accept-invite':
+    case 'decline-invite':
+    case 'confirm':
+    case 'draw-self':
+    case 'confirm-reveal':
+    case 'use-skill':
     case 'use-item':
       applyActionForClient(clientId, socket, message);
       return;
@@ -135,6 +142,13 @@ function createRoomForClient(clientId, socket, playerName) {
     winnerId: undefined,
     rematchRequests: new Set(),
     nextRoundAt: undefined,
+    askerId: undefined,
+    responderId: undefined,
+    duelPhase: undefined,
+    pendingInvitation: false,
+    hasAskerDrawnExtra: false,
+    hasResponderDrawnExtra: false,
+    privateNotices: {},
     logs: [`${safeName(playerName, '玩家一')} 创建了房间。`],
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -216,7 +230,7 @@ function applyActionForClient(clientId, socket, action) {
   }
 
   if (action.type === 'use-item') {
-    sendError(socket, '道具暂未开放。');
+    sendError(socket, '本测试版本暂未开放道具。');
     return;
   }
 
@@ -231,51 +245,12 @@ function applyActionForClient(clientId, socket, action) {
     return;
   }
 
-  if (player.stood) {
-    sendError(socket, '你已经开牌。');
+  const result = applyDuelAction(room, player, action);
+  if (!result.ok) {
+    sendError(socket, result.message);
     return;
   }
 
-  if (action.type === 'use-skill') {
-    const result = applySkill(room, player, action.skillId);
-    if (!result.ok) {
-      sendError(socket, result.message);
-      return;
-    }
-
-    broadcastRoom(room);
-    return;
-  }
-
-  if (action.type === 'draw') {
-    if (player.drawLocked) {
-      sendError(socket, '本轮已经不能再摸牌。');
-      return;
-    }
-
-    if (player.drawCount >= 2) {
-      sendError(socket, '本轮已经不能再摸牌。');
-      return;
-    }
-
-    player.hand.push(draw(room));
-    player.publicCardIndexes.push(player.hand.length - 1);
-    player.drawCount += 1;
-    if (player.drawCount >= 2) {
-      player.secondDrawRisk = true;
-    }
-    room.turnDeadlines[player.id] = Date.now() + ACTION_TIME_MS;
-    room.logs.unshift(`${player.name} 选择再来一张。`);
-    room.updatedAt = Date.now();
-    broadcastRoom(room);
-    return;
-  }
-
-  player.stood = true;
-  delete room.turnDeadlines[player.id];
-  room.logs.unshift(`${player.name} 选择开牌。`);
-  resolveRoundIfReady(room);
-  room.updatedAt = Date.now();
   broadcastRoom(room);
   broadcastRoomList();
 }
@@ -336,6 +311,7 @@ function surrenderClient(clientId, socket) {
   room.lastRoundResult = undefined;
   room.nextRoundAt = undefined;
   room.turnDeadlines = {};
+  room.duelPhase = undefined;
   player.stood = true;
   opponent.stood = true;
   player.hp = 0;
@@ -359,10 +335,20 @@ function startGame(room) {
     player.maxHp = MAX_HP;
     player.resonanceCount = 0;
     player.ready = false;
-    player.skills = ['resonance_shift', 'resonance_summon'];
+    player.actionPoints = INITIAL_ACTION_POINTS;
+    player.maxActionPoints = MAX_ACTION_POINTS;
+    player.skills = ['peek', 'stop_loss', 'raise_stakes', 'swap_hand'];
     player.usedSkillIds = [];
     player.skillCooldowns = {};
+    player.hasUsedSkillThisRound = false;
+    player.hasUsedPeekThisRound = false;
+    player.hasUsedActionSkillThisRound = false;
+    player.hasUsedSkillThisPhase = false;
+    player.roundDamageCap = undefined;
+    player.roundDamageBonus = 0;
+    player.roundDamageTakenBonus = 0;
   });
+  room.privateNotices = {};
   room.logs.unshift('牌局开始。');
   startRound(room);
   broadcastRoomList();
@@ -379,10 +365,19 @@ function startRound(room, now = Date.now()) {
   }
 
   room.phase = 'playing';
+  const isFirstRound = room.round === 0;
   room.round += 1;
   room.lastRoundResult = undefined;
   room.nextRoundAt = undefined;
   room.turnDeadlines = {};
+  const asker = room.players[(room.round - 1) % room.players.length];
+  const responder = room.players.find((player) => player.id !== asker?.id);
+  room.askerId = asker?.id;
+  room.responderId = responder?.id;
+  room.duelPhase = 'asker-action';
+  room.pendingInvitation = false;
+  room.hasAskerDrawnExtra = false;
+  room.hasResponderDrawnExtra = false;
   room.players.forEach((player) => {
     player.hand = [];
     player.publicCardIndexes = [];
@@ -391,6 +386,20 @@ function startRound(room, now = Date.now()) {
     player.secondDrawRisk = false;
     player.drawLocked = false;
     player.incomingDamageBonus = 0;
+    player.actionPoints = isFirstRound
+      ? player.actionPoints ?? INITIAL_ACTION_POINTS
+      : Math.min(player.maxActionPoints ?? MAX_ACTION_POINTS, (player.actionPoints ?? INITIAL_ACTION_POINTS) + 1);
+    player.maxActionPoints = player.maxActionPoints ?? MAX_ACTION_POINTS;
+    player.hasUsedSkillThisRound = false;
+    player.hasUsedPeekThisRound = false;
+    player.hasUsedActionSkillThisRound = false;
+    player.hasUsedSkillThisPhase = false;
+    player.roundDamageCap = undefined;
+    player.roundDamageBonus = 0;
+    player.roundDamageTakenBonus = 0;
+    room.privateNotices ??= {};
+    room.privateNotices[player.id] = undefined;
+    player.usedSkillIds = [];
     player.skillCooldowns = decrementSkillCooldowns(player.skillCooldowns ?? {});
     player.effects = [];
   });
@@ -401,37 +410,204 @@ function startRound(room, now = Date.now()) {
 
   room.players.forEach((player) => {
     player.publicCardIndexes = [0];
-    room.turnDeadlines[player.id] = now + ACTION_TIME_MS;
   });
-  room.logs.unshift(`第 ${room.round} 轮开始。`);
+  room.logs.unshift(`第 ${room.round} 轮开始。${asker?.name ?? '玩家'} 是发问者。`);
   room.updatedAt = now;
 }
 
-function autoStandExpiredPlayers(room, now) {
-  let changed = false;
-  room.players.forEach((player) => {
-    const deadline = room.turnDeadlines[player.id];
-    if (!player.stood && deadline && deadline <= now) {
-      player.stood = true;
-      delete room.turnDeadlines[player.id];
-      room.logs.unshift(`${player.name} 超时，自动开牌。`);
-      changed = true;
-    }
-  });
-
-  if (changed) {
-    resolveRoundIfReady(room, now);
-    room.updatedAt = now;
+function applyDuelAction(room, player, action, now = Date.now()) {
+  if (!room.duelPhase || !room.askerId || !room.responderId) {
+    return { ok: false, message: '对局阶段尚未初始化。' };
   }
 
-  return changed;
+  const asker = room.players.find((item) => item.id === room.askerId);
+  const responder = room.players.find((item) => item.id === room.responderId);
+  if (!asker || !responder) {
+    return { ok: false, message: '发问者或应对者不存在。' };
+  }
+
+  if (room.duelPhase === 'asker-action') {
+    if (player.id !== room.askerId) {
+      return { ok: false, message: '等待发问者行动。' };
+    }
+
+    if (action.type === 'use-skill') {
+      const result = applyPvpSkill(room, player, action.skillId, action);
+      if (!result.ok) {
+        return result;
+      }
+
+      if (result.keepPhase) {
+        room.updatedAt = now;
+        return { ok: true };
+      }
+
+      room.pendingInvitation = false;
+      advanceDuelPhase(room, 'responder-response');
+      room.updatedAt = now;
+      return { ok: true };
+    }
+
+    if (action.type === 'invite-draw') {
+      room.pendingInvitation = true;
+      advanceDuelPhase(room, 'responder-response');
+      room.logs.unshift(`${asker.name} 邀请 ${responder.name} 再来一张。`);
+      room.updatedAt = now;
+      return { ok: true };
+    }
+
+    if (action.type === 'pass') {
+      room.pendingInvitation = false;
+      advanceDuelPhase(room, 'responder-response');
+      room.logs.unshift(`${asker.name} 停手。`);
+      room.updatedAt = now;
+      return { ok: true };
+    }
+
+    return { ok: false, message: '发问者阶段只能邀请或停手。' };
+  }
+
+  if (room.duelPhase === 'responder-response') {
+    if (player.id !== room.responderId) {
+      return { ok: false, message: '等待应对者回应。' };
+    }
+
+    if (action.type === 'use-skill') {
+      const result = applyPvpSkill(room, player, action.skillId, action);
+      if (!result.ok) {
+        return result;
+      }
+
+      if (result.keepPhase) {
+        room.updatedAt = now;
+        return { ok: true };
+      }
+
+      room.pendingInvitation = false;
+      advanceDuelPhase(room, 'asker-final');
+      room.updatedAt = now;
+      return { ok: true };
+    }
+
+    if (room.pendingInvitation) {
+      if (action.type === 'accept-invite') {
+        if (room.hasResponderDrawnExtra) {
+          return { ok: false, message: '应对者本轮已经追加过牌。' };
+        }
+
+        responder.hand.push(draw(room));
+        responder.drawCount += 1;
+        room.hasResponderDrawnExtra = true;
+        advanceDuelPhase(room, 'asker-final');
+        room.logs.unshift(`${responder.name} 接受邀请，摸了 1 张牌。`);
+        room.updatedAt = now;
+        return { ok: true };
+      }
+
+      if (action.type === 'decline-invite') {
+        advanceDuelPhase(room, 'asker-final');
+        room.logs.unshift(`${responder.name} 拒绝邀请，保留当前手牌。`);
+        room.updatedAt = now;
+        return { ok: true };
+      }
+
+      return { ok: false, message: '应对者只能接受或拒绝邀请。' };
+    }
+
+    if (action.type === 'confirm') {
+      advanceDuelPhase(room, 'asker-final');
+      room.logs.unshift(`${responder.name} 确认。`);
+      room.updatedAt = now;
+      return { ok: true };
+    }
+
+    return { ok: false, message: '没有邀请时应对者只能确认。' };
+  }
+
+  if (room.duelPhase === 'asker-final') {
+    if (player.id !== room.askerId) {
+      return { ok: false, message: '等待发问者最终确认。' };
+    }
+
+    if (action.type === 'use-skill') {
+      const result = applyPvpSkill(room, player, action.skillId, action);
+      if (!result.ok) {
+        return result;
+      }
+
+      if (result.keepPhase) {
+        room.updatedAt = now;
+        return { ok: true };
+      }
+
+      advanceDuelPhase(room, 'responder-final');
+      room.updatedAt = now;
+      return { ok: true };
+    }
+
+    if (action.type === 'draw-self') {
+      if (room.hasAskerDrawnExtra) {
+        return { ok: false, message: '发问者本轮已经追加过牌。' };
+      }
+
+      asker.hand.push(draw(room));
+      asker.drawCount += 1;
+      room.hasAskerDrawnExtra = true;
+      advanceDuelPhase(room, 'responder-final');
+      room.logs.unshift(`${asker.name} 选择自己再来一张。`);
+      room.updatedAt = now;
+      return { ok: true };
+    }
+
+    if (action.type === 'confirm-reveal') {
+      advanceDuelPhase(room, 'responder-final');
+      room.logs.unshift(`${asker.name} 确认 Reveal。`);
+      room.updatedAt = now;
+      return { ok: true };
+    }
+
+    return { ok: false, message: '发问者最终确认只能自己再来一张或 Reveal。' };
+  }
+
+  if (room.duelPhase === 'responder-final') {
+    if (player.id !== room.responderId) {
+      return { ok: false, message: '等待应对者确认 Reveal。' };
+    }
+
+    if (action.type === 'use-skill') {
+      const result = applyPvpSkill(room, player, action.skillId, action);
+      if (!result.ok) {
+        return result;
+      }
+
+      if (result.keepPhase) {
+        room.updatedAt = now;
+        return { ok: true };
+      }
+
+      room.logs.unshift(`${responder.name} 使用技能后确认 Reveal。`);
+      resolveRound(room, now);
+      return { ok: true };
+    }
+
+    if (action.type !== 'confirm-reveal') {
+      return { ok: false, message: '应对者最终回应只能 Reveal。' };
+    }
+
+    room.logs.unshift(`${responder.name} 确认 Reveal。`);
+    resolveRound(room, now);
+    return { ok: true };
+  }
+
+  return { ok: false, message: '未知对局阶段。' };
 }
 
-function resolveRoundIfReady(room, now = Date.now()) {
-  if (room.phase !== 'playing' || room.players.length < 2 || !room.players.every((player) => player.stood)) {
+function resolveRound(room, now = Date.now()) {
+  if (room.phase !== 'playing' || room.players.length < 2) {
     return false;
   }
 
+  room.logs.unshift('双方揭晓。');
   const [playerA, playerB] = room.players;
   const scoreA = scoreHand(playerA.hand);
   const scoreB = scoreHand(playerB.hand);
@@ -452,12 +628,17 @@ function resolveRoundIfReady(room, now = Date.now()) {
       riskBonus: 0,
     };
     room.logs.unshift('双方平分抵消。');
+    room.logs.unshift(`${playerA.name} 点数 ${scoreA.point}，${playerB.name} 点数 ${scoreB.point}。`);
   } else {
     const winner = comparison > 0 ? playerA : playerB;
     const loser = comparison > 0 ? playerB : playerA;
     const winnerScore = comparison > 0 ? scoreA : scoreB;
-    const riskBonus = Math.max(loser.secondDrawRisk ? 1 : 0, loser.incomingDamageBonus ?? 0);
-    const damage = winnerScore.multiplier + riskBonus;
+    const baseDamage = winnerScore.multiplier;
+    const damageBonus = winner.roundDamageBonus ?? 0;
+    const takenBonus = loser.roundDamageTakenBonus ?? 0;
+    const uncappedDamage = baseDamage + damageBonus + takenBonus;
+    const damage = loser.roundDamageCap !== undefined ? Math.min(loser.roundDamageCap, uncappedDamage) : uncappedDamage;
+    const riskBonus = damage - baseDamage;
     loser.hp = Math.max(0, loser.hp - damage);
     room.lastRoundResult = {
       round: room.round,
@@ -469,12 +650,23 @@ function resolveRoundIfReady(room, now = Date.now()) {
       resonance: winnerScore.resonance,
       riskBonus,
     };
+    if (damageBonus > 0) {
+      room.logs.unshift(`${winner.name} 的【加码】使伤害 +${damageBonus}。`);
+    }
+    if (takenBonus > 0) {
+      room.logs.unshift(`${loser.name} 的【加码】使自己受到伤害 +${takenBonus}。`);
+    }
+    if (loser.roundDamageCap !== undefined && damage < uncappedDamage) {
+      room.logs.unshift(`${loser.name} 的【止损】使最终伤害降为 ${damage}。`);
+    }
     room.logs.unshift(`${winner.name} 赢得本轮，造成 ${damage} 点伤害。`);
+    room.logs.unshift(`${playerA.name} 点数 ${scoreA.point}，${playerB.name} 点数 ${scoreB.point}。`);
 
     if (loser.hp <= 0) {
       room.phase = 'game-over';
       room.winnerId = winner.id;
       room.nextRoundAt = undefined;
+      room.duelPhase = undefined;
       room.logs.unshift(`${winner.name} 赢得对战。`);
       room.updatedAt = now;
       return true;
@@ -482,6 +674,7 @@ function resolveRoundIfReady(room, now = Date.now()) {
   }
 
   room.phase = 'round-reveal';
+  room.duelPhase = undefined;
   room.nextRoundAt = now + REVEAL_TIME_MS;
   room.updatedAt = now;
   return true;
@@ -490,6 +683,7 @@ function resolveRoundIfReady(room, now = Date.now()) {
 function createPublicState(room, viewerId) {
   const now = Date.now();
   const opponent = room.players.find((player) => player.id !== viewerId);
+  const viewer = room.players.find((player) => player.id === viewerId);
   return {
     roomId: room.roomId,
     phase: room.phase,
@@ -514,6 +708,15 @@ function createPublicState(room, viewerId) {
       secondDrawRisk: player.secondDrawRisk,
       drawLocked: player.drawLocked,
       incomingDamageBonus: player.incomingDamageBonus ?? 0,
+      actionPoints: player.actionPoints ?? INITIAL_ACTION_POINTS,
+      maxActionPoints: player.maxActionPoints ?? MAX_ACTION_POINTS,
+      hasUsedSkillThisRound: player.hasUsedSkillThisRound ?? false,
+      hasUsedPeekThisRound: player.hasUsedPeekThisRound ?? false,
+      hasUsedActionSkillThisRound: player.hasUsedActionSkillThisRound ?? false,
+      hasUsedSkillThisPhase: player.hasUsedSkillThisPhase ?? false,
+      roundDamageCap: player.roundDamageCap,
+      roundDamageBonus: player.roundDamageBonus ?? 0,
+      roundDamageTakenBonus: player.roundDamageTakenBonus ?? 0,
       resonanceCount: player.resonanceCount,
       skills: [...player.skills],
       usedSkillIds: [...(player.usedSkillIds ?? [])],
@@ -528,73 +731,136 @@ function createPublicState(room, viewerId) {
     lastRoundResult: room.lastRoundResult,
     winnerId: room.winnerId,
     rematchRequestedIds: [...(room.rematchRequests ?? [])],
+    askerId: room.askerId,
+    responderId: room.responderId,
+    duelPhase: room.duelPhase,
+    pendingInvitation: room.pendingInvitation ?? false,
+    hasAskerDrawnExtra: room.hasAskerDrawnExtra ?? false,
+    hasResponderDrawnExtra: room.hasResponderDrawnExtra ?? false,
+    privateNotice: room.privateNotices?.[viewerId],
     logs: room.logs.slice(0, 30),
   };
 }
 
-function applySkill(room, player, skillId) {
+function applyPvpSkill(room, player, skillId, action = {}) {
   if (!player.skills.includes(skillId)) {
     return { ok: false, message: '你没有这个技能。' };
   }
 
-  player.usedSkillIds ??= [];
-  player.skillCooldowns ??= {};
-  if ((player.skillCooldowns[skillId] ?? 0) > 0) {
-    return { ok: false, message: `技能冷却中，还需 ${player.skillCooldowns[skillId]} 轮。` };
+  if (player.hasUsedSkillThisPhase) {
+    return { ok: false, message: '当前阶段已经使用过技能。' };
   }
 
-  if (skillId === 'resonance_shift') {
-    if (scoreHand(player.hand).resonance !== 'none') {
-      return { ok: false, message: '当前手牌已经触发共鸣。' };
+  if ((player.actionPoints ?? 0) < SKILL_COST) {
+    return { ok: false, message: '行动点不足。' };
+  }
+
+  const opponent = room.players.find((item) => item.id !== player.id);
+  if (!opponent) {
+    return { ok: false, message: '对手不存在。' };
+  }
+
+  if (skillId === 'peek') {
+    if (player.hasUsedPeekThisRound) {
+      return { ok: false, message: '本轮已经使用过看破。' };
     }
 
-    const conversion = chooseResonanceShift(player.hand);
-    if (!conversion) {
-      return { ok: false, message: '当前手牌无法进行共鸣转换。' };
+    const range = pointRangeLabel(scoreHand(opponent.hand).point);
+    spendSkillCost(room, player, skillId, 'peek');
+    room.privateNotices ??= {};
+    room.privateNotices[player.id] = `你看破了对方的气息：${range}。`;
+    room.logs.unshift(`${player.name} 使用了【看破】。`);
+    return { ok: true, keepPhase: true };
+  }
+
+  if (skillId === 'stop_loss') {
+    if (player.hasUsedActionSkillThisRound) {
+      return { ok: false, message: '本轮已经使用过行动技能。' };
     }
 
-    conversion.card.suit = conversion.targetSuit;
-    player.usedSkillIds.push(skillId);
-    player.skillCooldowns[skillId] = SKILL_COOLDOWN_ROUNDS;
-    player.drawLocked = true;
-    room.turnDeadlines[player.id] = Date.now() + ACTION_TIME_MS;
-    room.logs.unshift(`${player.name} 使用了共鸣转换。`);
-    room.updatedAt = Date.now();
+    player.roundDamageCap = 1;
+    spendSkillCost(room, player, skillId, 'action');
+    room.logs.unshift(`${player.name} 使用了【止损】，本轮受到的伤害最多为 1。`);
     return { ok: true };
   }
 
-  if (skillId === 'resonance_summon') {
-    if (player.hand.length >= 4) {
-      return { ok: false, message: '本轮最多只能拥有四张牌。' };
+  if (skillId === 'raise_stakes') {
+    if (player.hasUsedActionSkillThisRound) {
+      return { ok: false, message: '本轮已经使用过行动技能。' };
     }
 
-    if (scoreHand(player.hand).resonance === 'none') {
-      return { ok: false, message: '当前手牌没有共鸣，无法召唤。' };
+    player.roundDamageBonus = 1;
+    player.roundDamageTakenBonus = 1;
+    spendSkillCost(room, player, skillId, 'action');
+    room.logs.unshift(`${player.name} 使用了【加码】，本轮造成伤害 +1，但受到伤害也 +1。`);
+    return { ok: true };
+  }
+
+  if (skillId === 'swap_hand') {
+    if (player.hasUsedActionSkillThisRound) {
+      return { ok: false, message: '本轮已经使用过行动技能。' };
     }
 
-    const targetSuit = chooseResonanceSummonSuit(player.hand);
-    if (!targetSuit) {
-      return { ok: false, message: '无法确定召唤花色。' };
+    const ownIndex = Number(action.cardIndex);
+    if (!Number.isInteger(ownIndex) || ownIndex < 0 || ownIndex >= player.hand.length) {
+      return { ok: false, message: '请选择一张自己的手牌。' };
     }
 
-    const card = drawWhere(room, (candidate) => !isJoker(candidate) && candidate.suit === targetSuit);
-    if (!card) {
-      return { ok: false, message: `牌堆中没有 ${targetSuit} 花色牌。` };
+    if (opponent.hand.length === 0) {
+      return { ok: false, message: '对方没有可交换的手牌。' };
     }
 
-    player.hand.push(card);
-    player.publicCardIndexes.push(player.hand.length - 1);
-    player.usedSkillIds.push(skillId);
-    player.skillCooldowns[skillId] = SKILL_COOLDOWN_ROUNDS;
-    player.drawLocked = true;
-    player.incomingDamageBonus = Math.max(player.incomingDamageBonus ?? 0, 1);
-    room.turnDeadlines[player.id] = Date.now() + ACTION_TIME_MS;
-    room.logs.unshift(`${player.name} 使用了共鸣召唤。`);
-    room.updatedAt = Date.now();
+    const opponentIndex = Math.floor(Math.random() * opponent.hand.length);
+    [player.hand[ownIndex], opponent.hand[opponentIndex]] = [opponent.hand[opponentIndex], player.hand[ownIndex]];
+    markCardPublic(player, ownIndex);
+    markCardPublic(opponent, opponentIndex);
+    room.privateNotices[player.id] = undefined;
+    room.privateNotices[opponent.id] = undefined;
+    spendSkillCost(room, player, skillId, 'action');
+    room.logs.unshift(`${player.name} 使用了【换手】，交换了一张手牌。`);
     return { ok: true };
   }
 
   return { ok: false, message: '未知技能。' };
+}
+
+function spendSkillCost(room, player, skillId, kind) {
+  player.actionPoints = Math.max(0, (player.actionPoints ?? 0) - SKILL_COST);
+  player.hasUsedSkillThisRound = true;
+  player.hasUsedSkillThisPhase = true;
+  if (kind === 'peek') {
+    player.hasUsedPeekThisRound = true;
+  } else {
+    player.hasUsedActionSkillThisRound = true;
+  }
+  player.usedSkillIds ??= [];
+  player.usedSkillIds.push(skillId);
+  room.updatedAt = Date.now();
+}
+
+function advanceDuelPhase(room, phase) {
+  room.duelPhase = phase;
+  room.players.forEach((player) => {
+    player.hasUsedSkillThisPhase = false;
+  });
+}
+
+function markCardPublic(player, cardIndex) {
+  if (!player.publicCardIndexes.includes(cardIndex)) {
+    player.publicCardIndexes.push(cardIndex);
+  }
+}
+
+function pointRangeLabel(point) {
+  if (point <= 3) {
+    return '低点 0-3';
+  }
+
+  if (point <= 6) {
+    return '中点 4-6';
+  }
+
+  return '高点 7-9';
 }
 
 function createPlayer(id, name, role) {
@@ -613,8 +879,17 @@ function createPlayer(id, name, role) {
     secondDrawRisk: false,
     drawLocked: false,
     incomingDamageBonus: 0,
+    actionPoints: INITIAL_ACTION_POINTS,
+    maxActionPoints: MAX_ACTION_POINTS,
+    hasUsedSkillThisRound: false,
+    hasUsedPeekThisRound: false,
+    hasUsedActionSkillThisRound: false,
+    hasUsedSkillThisPhase: false,
+    roundDamageCap: undefined,
+    roundDamageBonus: 0,
+    roundDamageTakenBonus: 0,
     resonanceCount: 0,
-    skills: ['resonance_shift', 'resonance_summon'],
+    skills: ['peek', 'stop_loss', 'raise_stakes', 'swap_hand'],
     usedSkillIds: [],
     skillCooldowns: {},
     items: [],

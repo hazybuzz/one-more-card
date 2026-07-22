@@ -1,9 +1,11 @@
 import { Card, RANKS, SUITS } from '../card';
 import { scoreHand } from '../scoring';
-import { chooseResonanceShift, chooseResonanceSummonSuit } from '../skills/resonanceSkills';
-import type { PvpAction, PvpPlayerRole, PvpPlayerState, PvpPublicRoomState, PvpRoomState } from './PvpTypes';
+import type { PvpAction, PvpPlayerRole, PvpPlayerState, PvpPublicRoomState, PvpRoomState, PvpSkillId } from './PvpTypes';
 
-export const PVP_MAX_HP = 10;
+export const PVP_MAX_HP = 8;
+export const PVP_INITIAL_ACTION_POINTS = 3;
+export const PVP_MAX_ACTION_POINTS = 4;
+export const PVP_SKILL_COST = 1;
 export const PVP_INITIAL_CARDS = 2;
 export const PVP_MAX_DRAWS_PER_ROUND = 2;
 export const PVP_ACTION_TIME_MS = 15_000;
@@ -23,6 +25,10 @@ export function createPvpRoom(roomId: string, hostId: string, hostName: string, 
     deck: createShuffledPvpDeck(),
     turnDeadlines: {},
     rematchRequestedIds: [],
+    pendingInvitation: false,
+    hasAskerDrawnExtra: false,
+    hasResponderDrawnExtra: false,
+    privateNotices: {},
     logs: [`${hostName} 创建了房间。`],
     createdAt: now,
     updatedAt: now,
@@ -84,10 +90,20 @@ export function startPvpGame(room: PvpRoomState, now = Date.now()): void {
     player.maxHp = PVP_MAX_HP;
     player.resonanceCount = 0;
     player.ready = false;
-    player.skills = ['resonance_shift', 'resonance_summon'];
+    player.actionPoints = PVP_INITIAL_ACTION_POINTS;
+    player.maxActionPoints = PVP_MAX_ACTION_POINTS;
+    player.skills = ['peek', 'stop_loss', 'raise_stakes', 'swap_hand'];
     player.usedSkillIds = [];
     player.skillCooldowns = {};
+    player.hasUsedSkillThisRound = false;
+    player.hasUsedPeekThisRound = false;
+    player.hasUsedActionSkillThisRound = false;
+    player.hasUsedSkillThisPhase = false;
+    player.roundDamageCap = undefined;
+    player.roundDamageBonus = 0;
+    player.roundDamageTakenBonus = 0;
   });
+  room.privateNotices = {};
   room.logs.unshift('牌局开始。');
   startPvpRound(room, now);
 }
@@ -103,9 +119,18 @@ export function startPvpRound(room: PvpRoomState, now = Date.now()): void {
   }
 
   room.phase = 'playing';
+  const isFirstRound = room.round === 0;
   room.round += 1;
   room.lastRoundResult = undefined;
   room.turnDeadlines = {};
+  const asker = room.players[(room.round - 1) % room.players.length];
+  const responder = room.players.find((player) => player.id !== asker?.id);
+  room.askerId = asker?.id;
+  room.responderId = responder?.id;
+  room.duelPhase = 'asker-action';
+  room.pendingInvitation = false;
+  room.hasAskerDrawnExtra = false;
+  room.hasResponderDrawnExtra = false;
   room.players.forEach((player) => {
     player.hand = [];
     player.publicCardIndexes = [];
@@ -114,6 +139,19 @@ export function startPvpRound(room: PvpRoomState, now = Date.now()): void {
     player.secondDrawRisk = false;
     player.drawLocked = false;
     player.incomingDamageBonus = 0;
+    player.actionPoints = isFirstRound
+      ? player.actionPoints
+      : Math.min(player.maxActionPoints, player.actionPoints + 1);
+    player.hasUsedSkillThisRound = false;
+    player.hasUsedPeekThisRound = false;
+    player.hasUsedActionSkillThisRound = false;
+    player.hasUsedSkillThisPhase = false;
+    player.roundDamageCap = undefined;
+    player.roundDamageBonus = 0;
+    player.roundDamageTakenBonus = 0;
+    room.privateNotices ??= {};
+    room.privateNotices[player.id] = undefined;
+    player.usedSkillIds = [];
     player.skillCooldowns = decrementSkillCooldowns(player.skillCooldowns);
     player.effects = [];
   });
@@ -152,7 +190,7 @@ export function applyPvpAction(room: PvpRoomState, playerId: string, action: Pvp
   }
 
   if (action.type === 'use-skill') {
-    return applyPvpSkill(room, player, action.skillId, now);
+    return applyPvpSkill(room, player, action.skillId, now, action.cardIndex);
   }
 
   if (action.type === 'draw') {
@@ -165,7 +203,6 @@ export function applyPvpAction(room: PvpRoomState, playerId: string, action: Pvp
     }
 
     player.hand.push(drawFromRoom(room));
-    player.publicCardIndexes.push(player.hand.length - 1);
     player.drawCount += 1;
     if (player.drawCount >= 2) {
       player.secondDrawRisk = true;
@@ -298,6 +335,7 @@ export function requestPvpRematch(room: PvpRoomState, playerId: string, now = Da
 
 export function createPublicPvpState(room: PvpRoomState, viewerId: string, now = Date.now()): PvpPublicRoomState {
   const opponent = room.players.find((player) => player.id !== viewerId);
+  const viewer = room.players.find((player) => player.id === viewerId);
   return {
     roomId: room.roomId,
     phase: room.phase,
@@ -311,7 +349,10 @@ export function createPublicPvpState(room: PvpRoomState, viewerId: string, now =
       hp: player.hp,
       maxHp: player.maxHp,
       hand: player.hand.map((card, index) => {
-        const shouldReveal = player.id === viewerId || room.phase === 'round-reveal' || room.phase === 'game-over' || player.publicCardIndexes.includes(index);
+        const shouldReveal = player.id === viewerId
+          || room.phase === 'round-reveal'
+          || room.phase === 'game-over'
+          || player.publicCardIndexes.includes(index);
         return shouldReveal ? { hidden: false, card } : { hidden: true };
       }),
       stood: player.stood,
@@ -319,6 +360,15 @@ export function createPublicPvpState(room: PvpRoomState, viewerId: string, now =
       secondDrawRisk: player.secondDrawRisk,
       drawLocked: player.drawLocked,
       incomingDamageBonus: player.incomingDamageBonus,
+      actionPoints: player.actionPoints,
+      maxActionPoints: player.maxActionPoints,
+      hasUsedSkillThisRound: player.hasUsedSkillThisRound,
+      hasUsedPeekThisRound: player.hasUsedPeekThisRound,
+      hasUsedActionSkillThisRound: player.hasUsedActionSkillThisRound,
+      hasUsedSkillThisPhase: player.hasUsedSkillThisPhase,
+      roundDamageCap: player.roundDamageCap,
+      roundDamageBonus: player.roundDamageBonus,
+      roundDamageTakenBonus: player.roundDamageTakenBonus,
       resonanceCount: player.resonanceCount,
       skills: [...player.skills],
       usedSkillIds: [...player.usedSkillIds],
@@ -333,6 +383,13 @@ export function createPublicPvpState(room: PvpRoomState, viewerId: string, now =
     lastRoundResult: room.lastRoundResult,
     winnerId: room.winnerId,
     rematchRequestedIds: [...room.rematchRequestedIds],
+    askerId: room.askerId,
+    responderId: room.responderId,
+    duelPhase: room.duelPhase,
+    pendingInvitation: room.pendingInvitation,
+    hasAskerDrawnExtra: room.hasAskerDrawnExtra,
+    hasResponderDrawnExtra: room.hasResponderDrawnExtra,
+    privateNotice: room.privateNotices?.[viewerId],
     logs: room.logs.slice(0, 30),
   };
 }
@@ -353,8 +410,17 @@ function createPvpPlayer(id: string, name: string, role: PvpPlayerRole): PvpPlay
     secondDrawRisk: false,
     drawLocked: false,
     incomingDamageBonus: 0,
+    actionPoints: PVP_INITIAL_ACTION_POINTS,
+    maxActionPoints: PVP_MAX_ACTION_POINTS,
+    hasUsedSkillThisRound: false,
+    hasUsedPeekThisRound: false,
+    hasUsedActionSkillThisRound: false,
+    hasUsedSkillThisPhase: false,
+    roundDamageCap: undefined,
+    roundDamageBonus: 0,
+    roundDamageTakenBonus: 0,
     resonanceCount: 0,
-    skills: ['resonance_shift', 'resonance_summon'],
+    skills: ['peek', 'stop_loss', 'raise_stakes', 'swap_hand'],
     usedSkillIds: [],
     skillCooldowns: {},
     items: [],
@@ -391,77 +457,117 @@ function drawFromRoom(room: PvpRoomState): Card {
   return card;
 }
 
-function applyPvpSkill(room: PvpRoomState, player: PvpPlayerState, skillId: string, now: number): PvpActionResult {
+function applyPvpSkill(room: PvpRoomState, player: PvpPlayerState, skillId: PvpSkillId, now: number, cardIndex?: number): PvpActionResult {
   if (!player.skills.includes(skillId)) {
     return { ok: false, message: '你没有这个技能。' };
   }
 
-  if ((player.skillCooldowns[skillId] ?? 0) > 0) {
-    return { ok: false, message: `技能冷却中，还需 ${player.skillCooldowns[skillId]} 轮。` };
+  if (player.hasUsedSkillThisPhase) {
+    return { ok: false, message: '当前阶段已经使用过技能。' };
   }
 
-  if (skillId === 'resonance_shift') {
-    if (scoreHand(player.hand).resonance !== 'none') {
-      return { ok: false, message: '当前手牌已经触发共鸣。' };
+  if (player.actionPoints < PVP_SKILL_COST) {
+    return { ok: false, message: '行动点不足。' };
+  }
+
+  const opponent = room.players.find((item) => item.id !== player.id);
+  if (!opponent) {
+    return { ok: false, message: '对手不存在。' };
+  }
+
+  if (skillId === 'peek') {
+    if (player.hasUsedPeekThisRound) {
+      return { ok: false, message: '本轮已经使用过看破。' };
     }
 
-    const conversion = chooseResonanceShift(player.hand);
-    if (!conversion) {
-      return { ok: false, message: '当前手牌无法进行共鸣转换。' };
-    }
-
-    conversion.card.suit = conversion.targetSuit;
-    player.usedSkillIds.push(skillId);
-    player.skillCooldowns[skillId] = PVP_SKILL_COOLDOWN_ROUNDS;
-    player.drawLocked = true;
-    room.turnDeadlines[player.id] = now + PVP_ACTION_TIME_MS;
-    room.logs.unshift(`${player.name} 使用了共鸣转换。`);
-    touch(room, now);
+    const range = pvpPointRangeLabel(scoreHand(opponent.hand).point);
+    spendPvpSkillCost(room, player, skillId, now, 'peek');
+    room.privateNotices ??= {};
+    room.privateNotices[player.id] = `你看破了对方的气息：${range}。`;
+    room.logs.unshift(`${player.name} 使用了【看破】。`);
     return { ok: true };
   }
 
-  if (skillId === 'resonance_summon') {
-    if (player.hand.length >= 4) {
-      return { ok: false, message: '本轮最多只能拥有四张牌。' };
+  if (skillId === 'stop_loss') {
+    if (player.hasUsedActionSkillThisRound) {
+      return { ok: false, message: '本轮已经使用过行动技能。' };
     }
 
-    if (scoreHand(player.hand).resonance === 'none') {
-      return { ok: false, message: '当前手牌没有共鸣，无法召唤。' };
+    player.roundDamageCap = 1;
+    spendPvpSkillCost(room, player, skillId, now, 'action');
+    room.logs.unshift(`${player.name} 使用了【止损】，本轮受到的伤害最多为 1。`);
+    return { ok: true };
+  }
+
+  if (skillId === 'raise_stakes') {
+    if (player.hasUsedActionSkillThisRound) {
+      return { ok: false, message: '本轮已经使用过行动技能。' };
     }
 
-    const targetSuit = chooseResonanceSummonSuit(player.hand);
-    if (!targetSuit) {
-      return { ok: false, message: '无法确定召唤花色。' };
+    player.roundDamageBonus = 1;
+    player.roundDamageTakenBonus = 1;
+    spendPvpSkillCost(room, player, skillId, now, 'action');
+    room.logs.unshift(`${player.name} 使用了【加码】，本轮造成伤害 +1，但受到伤害也 +1。`);
+    return { ok: true };
+  }
+
+  if (skillId === 'swap_hand') {
+    if (player.hasUsedActionSkillThisRound) {
+      return { ok: false, message: '本轮已经使用过行动技能。' };
     }
 
-    const card = drawWhere(room, (candidate) => candidate.suit === targetSuit);
-    if (!card) {
-      return { ok: false, message: `牌堆中没有 ${targetSuit} 花色牌。` };
+    if (!Number.isInteger(cardIndex) || cardIndex === undefined || cardIndex < 0 || cardIndex >= player.hand.length) {
+      return { ok: false, message: '请选择一张自己的手牌。' };
     }
 
-    player.hand.push(card);
-    player.publicCardIndexes.push(player.hand.length - 1);
-    player.usedSkillIds.push(skillId);
-    player.skillCooldowns[skillId] = PVP_SKILL_COOLDOWN_ROUNDS;
-    player.drawLocked = true;
-    player.incomingDamageBonus = Math.max(player.incomingDamageBonus, 1);
-    room.turnDeadlines[player.id] = now + PVP_ACTION_TIME_MS;
-    room.logs.unshift(`${player.name} 使用了共鸣召唤。`);
-    touch(room, now);
+    if (opponent.hand.length === 0) {
+      return { ok: false, message: '对方没有可交换的手牌。' };
+    }
+
+    const opponentIndex = Math.floor(Math.random() * opponent.hand.length);
+    [player.hand[cardIndex], opponent.hand[opponentIndex]] = [opponent.hand[opponentIndex], player.hand[cardIndex]];
+    markPvpCardPublic(player, cardIndex);
+    markPvpCardPublic(opponent, opponentIndex);
+    room.privateNotices ??= {};
+    room.privateNotices[player.id] = undefined;
+    room.privateNotices[opponent.id] = undefined;
+    spendPvpSkillCost(room, player, skillId, now, 'action');
+    room.logs.unshift(`${player.name} 使用了【换手】，交换了一张手牌。`);
     return { ok: true };
   }
 
   return { ok: false, message: '未知技能。' };
 }
 
-function drawWhere(room: PvpRoomState, predicate: (card: Card) => boolean): Card | undefined {
-  const index = room.deck.findIndex(predicate);
-  if (index < 0) {
-    return undefined;
+function spendPvpSkillCost(room: PvpRoomState, player: PvpPlayerState, skillId: PvpSkillId, now: number, kind: 'peek' | 'action'): void {
+  player.actionPoints = Math.max(0, player.actionPoints - PVP_SKILL_COST);
+  player.hasUsedSkillThisRound = true;
+  player.hasUsedSkillThisPhase = true;
+  if (kind === 'peek') {
+    player.hasUsedPeekThisRound = true;
+  } else {
+    player.hasUsedActionSkillThisRound = true;
+  }
+  player.usedSkillIds.push(skillId);
+  touch(room, now);
+}
+
+function markPvpCardPublic(player: PvpPlayerState, cardIndex: number): void {
+  if (!player.publicCardIndexes.includes(cardIndex)) {
+    player.publicCardIndexes.push(cardIndex);
+  }
+}
+
+function pvpPointRangeLabel(point: number): string {
+  if (point <= 3) {
+    return '低点 0-3';
   }
 
-  const [card] = room.deck.splice(index, 1);
-  return card;
+  if (point <= 6) {
+    return '中点 4-6';
+  }
+
+  return '高点 7-9';
 }
 
 function decrementSkillCooldowns(cooldowns: Record<string, number>): Record<string, number> {

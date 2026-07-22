@@ -1,4 +1,4 @@
-import type { PvpClientMessage, PvpPublicRoomState, PvpRoomSummary, PvpServerMessage } from './PvpTypes';
+import type { PvpClientMessage, PvpPublicRoomState, PvpRoomSummary, PvpServerMessage, PvpSkillId } from './PvpTypes';
 
 type StateListener = (state: PvpPublicRoomState) => void;
 type ErrorListener = (message: string) => void;
@@ -90,8 +90,36 @@ export class PvpClient {
     this.send({ type: 'stand' });
   }
 
-  useSkill(skillId: string, targetId?: string): void {
-    this.send({ type: 'use-skill', skillId, targetId });
+  inviteDraw(): void {
+    this.send({ type: 'invite-draw' });
+  }
+
+  pass(): void {
+    this.send({ type: 'pass' });
+  }
+
+  acceptInvite(): void {
+    this.send({ type: 'accept-invite' });
+  }
+
+  declineInvite(): void {
+    this.send({ type: 'decline-invite' });
+  }
+
+  confirm(): void {
+    this.send({ type: 'confirm' });
+  }
+
+  drawSelf(): void {
+    this.send({ type: 'draw-self' });
+  }
+
+  confirmReveal(): void {
+    this.send({ type: 'confirm-reveal' });
+  }
+
+  useSkill(skillId: PvpSkillId, targetId?: string, cardIndex?: number): void {
+    this.send({ type: 'use-skill', skillId, targetId, cardIndex });
   }
 
   useItem(itemId: string, targetId?: string): void {

@@ -1,12 +1,11 @@
 import Phaser from 'phaser';
 import { preloadCardImages } from '../game/assets';
-import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
+import { playBattleMusic, preloadBattleMusic, stopBattleMusic, stopLobbyMusic } from '../game/audio';
 import { cardValue } from '../game/card';
 import { t } from '../game/i18n';
 import { pvpClient } from '../game/pvp/PvpClient';
-import type { PublicPvpCard, PublicPvpPlayerState, PvpPublicRoomState } from '../game/pvp/PvpTypes';
+import type { PublicPvpCard, PublicPvpPlayerState, PvpPublicRoomState, PvpSkillId } from '../game/pvp/PvpTypes';
 import { scoreHand } from '../game/scoring';
-import { canResonanceShift } from '../game/skills/resonanceSkills';
 import { createCardView } from '../ui/presentation/CardView';
 import { playClashProjectiles, playDamageProjectile } from '../ui/presentation/DamageAnimator';
 import { playDealSequence, type DealAnimationStep } from '../ui/presentation/DealAnimator';
@@ -24,6 +23,7 @@ const COLORS = {
   muted: '#aeb4c0',
   accent: 0xe8cf73,
   accentText: '#e8cf73',
+  apText: '#52b7ff',
   green: '#78d18a',
   dangerText: '#ff4b5f',
   button: 0x303542,
@@ -47,13 +47,17 @@ export class PvpBattleScene extends Phaser.Scene {
   private serverClockOffsetMs = 0;
   private gameOverSettledKey = '';
   private gameOverAnimationInFlightKey = '';
+  private speechBubble?: { playerId: string; text: string; key: string; variant?: 'normal' | 'skill' };
+  private skillWindowOpen = false;
+  private swapSelecting = false;
+  private dismissedPrivateNoticeKey = '';
 
   constructor() {
     super('PvpBattleScene');
   }
 
   preload(): void {
-    preloadLobbyMusic(this);
+    preloadBattleMusic(this);
     preloadCardImages(this);
     preloadResonanceEffects(this);
     if (!this.cache.audio.exists('cardSlide')) {
@@ -74,7 +78,8 @@ export class PvpBattleScene extends Phaser.Scene {
   }
 
   create(): void {
-    playLobbyMusic(this);
+    stopLobbyMusic(this);
+    playBattleMusic(this);
     this.state = undefined;
     this.connected = pvpClient.connected;
     this.status = this.connected ? t('pvp.connected') : t('pvp.disconnected');
@@ -90,6 +95,7 @@ export class PvpBattleScene extends Phaser.Scene {
         const previousRound = this.state?.round;
         this.serverClockOffsetMs = Date.now() - state.serverTime;
         this.state = state;
+        this.updateSpeechBubble(previousState, state);
         if (this.startDealAnimationIfNeeded(previousState, state)) {
           return;
         }
@@ -110,6 +116,7 @@ export class PvpBattleScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.unsubscribers.forEach((unsubscribe) => unsubscribe());
       this.unsubscribers = [];
+      stopBattleMusic(this);
     });
     this.render();
   }
@@ -131,9 +138,11 @@ export class PvpBattleScene extends Phaser.Scene {
     this.renderPlayerPanel(640, 566, self, true);
     this.renderPlayerPanel(640, 176, opponent, false);
     this.renderCenterInfo();
-    this.renderSkillPanel();
     this.renderActions();
+    this.renderSpeechBubble();
     this.renderLog();
+    this.renderSkillWindow();
+    this.renderPrivateNotice();
   }
 
   private addBackground(): void {
@@ -201,6 +210,12 @@ export class PvpBattleScene extends Phaser.Scene {
       color: titleColor,
       fontStyle: 'bold',
     }));
+    panel.add(this.add.text(width / 2 - 272, -height / 2 + 20, `AP ${player.actionPoints}/${player.maxActionPoints}`, {
+      fontFamily: 'Arial',
+      fontSize: '25px',
+      color: COLORS.apText,
+      fontStyle: 'bold',
+    }).setShadow(0, 0, COLORS.apText, 10, true, true));
     panel.add(this.add.text(width / 2 - 132, -height / 2 + 20, `HP ${player.hp}/${player.maxHp}`, {
       fontFamily: 'Arial',
       fontSize: '25px',
@@ -229,6 +244,20 @@ export class PvpBattleScene extends Phaser.Scene {
         width: cardWidth,
         resonant: this.shouldHighlightCard(player, isSelf),
       }));
+
+      if (isSelf && this.swapSelecting && this.canSelectSwapCard(player)) {
+        const hit = this.add.rectangle(startX + index * cardGap, isSelf ? 18 : 14, cardWidth, cardWidth * 1.42, 0xffffff, 0.001);
+        hit.setStrokeStyle(2, COLORS.accent, 0.75);
+        hit.setInteractive({ useHandCursor: true });
+        hit.on('pointerover', () => hit.setFillStyle(0xe8cf73, 0.12));
+        hit.on('pointerout', () => hit.setFillStyle(0xffffff, 0.001));
+        hit.on('pointerdown', () => {
+          this.playButtonClick();
+          this.swapSelecting = false;
+          pvpClient.useSkill('swap_hand', undefined, index);
+        });
+        panel.add(hit);
+      }
     });
 
     this.renderScoreSummary(panel, player, startX, cardGap, cardWidth, isSelf);
@@ -240,38 +269,48 @@ export class PvpBattleScene extends Phaser.Scene {
     }
 
     const panel = this.add.container(640, 360);
-    panel.add(this.add.rectangle(0, 0, 430, 172, COLORS.panel, 0.94).setStrokeStyle(2, COLORS.line));
-    panel.add(this.add.text(0, -58, t('pvp.battle.round', { round: this.state.round }), {
+    panel.add(this.add.rectangle(0, 0, 470, 196, COLORS.panel, 0.94).setStrokeStyle(2, COLORS.line));
+    panel.add(this.add.text(0, -72, t('pvp.battle.round', { round: this.state.round }), {
       fontFamily: 'Arial',
       fontSize: '28px',
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    this.timerText = this.add.text(0, -18, '', {
+    this.timerText = this.add.text(0, -34, '', {
       fontFamily: 'Arial',
-      fontSize: '22px',
+      fontSize: '21px',
       color: COLORS.accentText,
       fontStyle: 'bold',
     }).setOrigin(0.5);
     panel.add(this.timerText);
     this.updateTimerText();
 
-    panel.add(this.add.text(0, 22, this.centerStatusText(), {
+    const roleText = this.add.text(0, -4, this.duelRoleText(), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: COLORS.text,
+      align: 'center',
+      wordWrap: { width: 410 },
+    }).setOrigin(0.5);
+    panel.add(roleText);
+
+    panel.add(this.add.text(0, 38, this.centerStatusText(), {
       fontFamily: 'Arial',
       fontSize: '16px',
       color: COLORS.muted,
       align: 'center',
-      wordWrap: { width: 370 },
+      wordWrap: { width: 410 },
     }).setOrigin(0.5));
 
     const result = this.roundResultText();
     if (result) {
-      const text = this.add.text(0, 64, result, {
+      const text = this.add.text(0, 78, result, {
         fontFamily: 'Arial',
-        fontSize: '17px',
+        fontSize: '16px',
         color: COLORS.accentText,
         align: 'center',
+        wordWrap: { width: 410 },
       }).setOrigin(0.5);
       text.setShadow(0, 0, COLORS.accentText, 8, true, true);
       panel.add(text);
@@ -280,58 +319,189 @@ export class PvpBattleScene extends Phaser.Scene {
 
   private renderActions(): void {
     const self = this.selfPlayer();
-    const canAct = this.state?.phase === 'playing' && !!self && !self.stood;
-    const canDraw = canAct && !self?.drawLocked && (self?.drawCount ?? 0) < 2;
-    this.button(510, 676, 180, 48, t('pvp.battle.draw'), () => pvpClient.draw(), '18px', canDraw);
-    this.button(750, 676, 180, 48, t('pvp.battle.stand'), () => pvpClient.stand(), '18px', canAct);
-  }
-
-  private renderSkillPanel(): void {
-    const self = this.selfPlayer();
-    if (!self) {
+    if (!this.state || this.state.phase !== 'playing' || !self) {
       return;
     }
 
-    const panel = this.add.container(214, 610);
-    panel.add(this.add.rectangle(0, 0, 248, 122, COLORS.panel, 0.94).setStrokeStyle(2, COLORS.line));
-    panel.add(this.add.text(-104, -48, t('pvp.battle.skills'), {
-      fontFamily: 'Arial',
-      fontSize: '18px',
-      color: COLORS.text,
-      fontStyle: 'bold',
-    }));
-    panel.add(this.skillButton(-54, 20, 'resonance_shift', '◇', t('skill.resonanceShift.name'), this.canUsePvpSkill(self, 'resonance_shift')));
-    panel.add(this.skillButton(58, 20, 'resonance_summon', '✦', t('skill.resonanceSummon.name'), this.canUsePvpSkill(self, 'resonance_summon')));
+    if (this.swapSelecting) {
+      this.button(640, 676, 190, 48, t('pvp.battle.cancelSwap'), () => {
+        this.swapSelecting = false;
+        this.render();
+      }, '18px');
+      return;
+    }
+
+    const isAsker = self.id === this.state.askerId;
+    const isResponder = self.id === this.state.responderId;
+    if (this.state.duelPhase === 'asker-action' && isAsker) {
+      this.button(394, 676, 200, 48, t('pvp.battle.inviteDraw'), () => pvpClient.inviteDraw(), '18px');
+      this.button(620, 676, 160, 48, t('pvp.battle.pass'), () => pvpClient.pass(), '18px');
+      this.renderSkillButton(840, 676, self);
+      return;
+    }
+
+    if (this.state.duelPhase === 'responder-response' && isResponder) {
+      if (this.state.pendingInvitation) {
+        this.button(394, 676, 190, 48, t('pvp.battle.acceptInvite'), () => pvpClient.acceptInvite(), '18px');
+        this.button(620, 676, 160, 48, t('pvp.battle.declineInvite'), () => pvpClient.declineInvite(), '18px');
+        this.renderSkillButton(840, 676, self);
+      } else {
+        this.button(536, 676, 190, 48, t('pvp.battle.confirm'), () => pvpClient.confirm(), '18px');
+        this.renderSkillButton(760, 676, self);
+      }
+      return;
+    }
+
+    if (this.state.duelPhase === 'asker-final' && isAsker) {
+      this.button(394, 676, 210, 48, t('pvp.battle.drawSelf'), () => pvpClient.drawSelf(), '18px', !this.state.hasAskerDrawnExtra);
+      this.button(620, 676, 160, 48, t('pvp.battle.confirmReveal'), () => pvpClient.confirmReveal(), '18px');
+      this.renderSkillButton(840, 676, self);
+      return;
+    }
+
+    if (this.state.duelPhase === 'responder-final' && isResponder) {
+      this.button(536, 676, 190, 48, t('pvp.battle.confirmReveal'), () => pvpClient.confirmReveal(), '18px');
+      this.renderSkillButton(760, 676, self);
+    }
   }
 
-  private skillButton(x: number, y: number, skillId: string, icon: string, label: string, enabled: boolean): Phaser.GameObjects.Container {
-    const button = this.add.container(x, y);
-    const cooldown = this.selfPlayer()?.skillCooldowns[skillId] ?? 0;
-    const rect = this.add.rectangle(0, 0, 92, 64, enabled ? 0x2a2e38 : 0x20232a).setStrokeStyle(2, enabled ? COLORS.accent : COLORS.line);
-    const iconText = this.add.text(0, -12, icon, {
+  private renderSkillButton(x: number, y: number, self: PublicPvpPlayerState): void {
+    this.button(x, y, 150, 48, t('pvp.battle.skill'), () => {
+      this.skillWindowOpen = true;
+      this.render();
+    }, '18px', this.canUseSkill(self));
+  }
+
+  private renderSkillWindow(): void {
+    if (!this.skillWindowOpen || !this.state) {
+      return;
+    }
+
+    const self = this.selfPlayer();
+    const canUse = !!self && this.canUseSkill(self);
+    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.55).setDepth(40);
+    overlay.setInteractive();
+
+    const panel = this.add.container(640, 360).setDepth(41);
+    panel.add(this.add.rectangle(0, 0, 620, 430, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.accent));
+    panel.add(this.add.text(0, -182, t('pvp.battle.skillWindowTitle'), {
       fontFamily: 'Arial',
       fontSize: '28px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5));
+    panel.add(this.add.text(0, -150, self ? t('pvp.battle.skillWindowAp', {
+      ap: self.actionPoints,
+      max: self.maxActionPoints,
+      used: self.hasUsedSkillThisPhase ? t('pvp.battle.phaseSkillUsed') : t('pvp.battle.phaseSkillUnused'),
+    }) : '', {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: COLORS.muted,
+    }).setOrigin(0.5));
+
+    const skills: Array<{ id: PvpSkillId; icon: string; enabled: boolean }> = [
+      { id: 'peek', icon: '!', enabled: canUse && this.canUseSkillId(self, 'peek') },
+      { id: 'stop_loss', icon: '#', enabled: canUse && this.canUseSkillId(self, 'stop_loss') },
+      { id: 'raise_stakes', icon: '^', enabled: canUse && this.canUseSkillId(self, 'raise_stakes') },
+      { id: 'swap_hand', icon: '~', enabled: canUse && this.canUseSkillId(self, 'swap_hand') },
+    ];
+
+    skills.forEach((skill, index) => {
+      const x = index % 2 === 0 ? -154 : 154;
+      const y = index < 2 ? -62 : 82;
+      panel.add(this.skillCard(x, y, skill.id, skill.icon, skill.enabled));
+    });
+
+    panel.add(this.button(0, 182, 150, 42, t('common.close'), () => {
+      this.skillWindowOpen = false;
+      this.render();
+    }, '16px'));
+  }
+
+  private renderPrivateNotice(): void {
+    if (!this.state?.privateNotice) {
+      return;
+    }
+
+    const key = `${this.state.round}:${this.state.privateNotice}`;
+    if (this.dismissedPrivateNoticeKey === key) {
+      return;
+    }
+
+    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.42).setDepth(50);
+    overlay.setInteractive();
+    const panel = this.add.container(640, 360).setDepth(51);
+    panel.add(this.add.rectangle(0, 0, 520, 210, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.accent));
+    panel.add(this.add.text(0, -66, t('pvp.battle.privateNoticeTitle'), {
+      fontFamily: 'Arial',
+      fontSize: '24px',
+      color: COLORS.accentText,
+      fontStyle: 'bold',
+      align: 'center',
+    }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 8, true, true));
+    panel.add(this.add.text(0, -10, this.state.privateNotice, {
+      fontFamily: 'Arial',
+      fontSize: '20px',
+      color: COLORS.text,
+      align: 'center',
+      wordWrap: { width: 430 },
+      lineSpacing: 5,
+    }).setOrigin(0.5));
+    panel.add(this.button(0, 66, 150, 42, t('common.close'), () => {
+      this.dismissedPrivateNoticeKey = key;
+      this.render();
+    }, '16px'));
+  }
+
+  private skillCard(x: number, y: number, skillId: PvpSkillId, icon: string, enabled: boolean): Phaser.GameObjects.Container {
+    const card = this.add.container(x, y);
+    const fill = enabled ? 0x2a2e38 : COLORS.disabled;
+    const rect = this.add.rectangle(0, 0, 280, 116, fill).setStrokeStyle(2, enabled ? COLORS.accent : COLORS.line);
+    const iconText = this.add.text(-112, -28, icon, {
+      fontFamily: 'Arial',
+      fontSize: '26px',
       color: enabled ? COLORS.accentText : COLORS.muted,
       fontStyle: 'bold',
     }).setOrigin(0.5);
-    const labelText = this.add.text(0, 18, cooldown > 0 ? `CD ${cooldown}` : label, {
+    const name = this.add.text(-78, -40, t(`pvp.skill.${skillId}.name`), {
+      fontFamily: 'Arial',
+      fontSize: '18px',
+      color: enabled ? COLORS.text : COLORS.muted,
+      fontStyle: 'bold',
+    });
+    const description = this.add.text(-78, -10, t(`pvp.skill.${skillId}.desc`), {
+      fontFamily: 'Arial',
+      fontSize: '13px',
+      color: enabled ? COLORS.muted : '#777b86',
+      wordWrap: { width: 196 },
+      lineSpacing: 3,
+    });
+    const cost = this.add.text(-78, 36, t('pvp.skill.cost', { cost: 1 }), {
       fontFamily: 'Arial',
       fontSize: '12px',
-      color: enabled ? COLORS.text : COLORS.muted,
-    }).setOrigin(0.5);
+      color: enabled ? COLORS.accentText : COLORS.muted,
+    });
+
     if (enabled) {
-      iconText.setShadow(0, 0, COLORS.accentText, 9, true, true);
       rect.setInteractive({ useHandCursor: true });
       rect.on('pointerover', () => rect.setFillStyle(COLORS.buttonHover));
-      rect.on('pointerout', () => rect.setFillStyle(0x2a2e38));
+      rect.on('pointerout', () => rect.setFillStyle(fill));
       rect.on('pointerdown', () => {
         this.playButtonClick();
+        this.skillWindowOpen = false;
+        if (skillId === 'swap_hand') {
+          this.swapSelecting = true;
+          this.render();
+          return;
+        }
+
         pvpClient.useSkill(skillId);
       });
     }
 
-    button.add([rect, iconText, labelText]);
-    return button;
+    card.add([rect, iconText, name, description, cost]);
+    return card;
   }
 
   private renderRematchControl(): void {
@@ -399,19 +569,26 @@ export class PvpBattleScene extends Phaser.Scene {
       return;
     }
 
-    if (this.state.phase !== 'playing' || !this.state.actionDeadline) {
-      const text = this.state.phase === 'round-reveal' || this.isGameOverSettling()
+    const asker = this.state.players.find((player) => player.id === this.state?.askerId);
+    this.timerText.setText(this.state.phase === 'playing'
+      ? t('pvp.battle.asker', { name: asker?.name ?? '' })
+      : this.state.phase === 'round-reveal' || this.isGameOverSettling()
         ? t('pvp.battle.reveal')
-        : this.gameOverText();
-      this.timerText.setText(text);
-      return;
+        : this.gameOverText());
+    this.timerText.setColor(COLORS.accentText);
+  }
+
+  private duelRoleText(): string {
+    if (!this.state || this.state.phase !== 'playing') {
+      return '';
     }
 
-    const serverNow = Date.now() - this.serverClockOffsetMs;
-    const remainingMs = Math.max(0, this.state.actionDeadline - serverNow);
-    const remaining = Math.ceil(remainingMs / 1000);
-    this.timerText.setText(t('pvp.battle.timer', { seconds: remaining }));
-    this.timerText.setColor(remaining <= 5 ? COLORS.dangerText : COLORS.accentText);
+    const asker = this.state.players.find((player) => player.id === this.state?.askerId);
+    const responder = this.state.players.find((player) => player.id === this.state?.responderId);
+    return t('pvp.battle.duelRoles', {
+      asker: asker?.name ?? '',
+      responder: responder?.name ?? '',
+    });
   }
 
   private centerStatusText(): string {
@@ -428,24 +605,15 @@ export class PvpBattleScene extends Phaser.Scene {
     }
 
     const self = this.selfPlayer();
-    const opponent = this.opponentPlayer();
+    if (this.swapSelecting) {
+      return t('pvp.battle.swapSelecting');
+    }
+
     if (this.state.phase === 'round-reveal') {
       return t('pvp.battle.revealHint');
     }
 
-    if (self?.stood && opponent?.stood) {
-      return t('pvp.battle.bothStood');
-    }
-
-    if (self?.stood) {
-      return t('pvp.battle.youStood');
-    }
-
-    if (opponent?.stood) {
-      return t('pvp.battle.opponentStood');
-    }
-
-    return t('pvp.battle.chooseAction');
+    return this.duelPhaseStatusText(self);
   }
 
   private roundResultText(): string {
@@ -474,6 +642,211 @@ export class PvpBattleScene extends Phaser.Scene {
     });
   }
 
+  private duelPhaseStatusText(self?: PublicPvpPlayerState): string {
+    if (!this.state || !self) {
+      return '';
+    }
+
+    const isAsker = self.id === this.state.askerId;
+    const isResponder = self.id === this.state.responderId;
+    const phaseKey = this.state.duelPhase ? t(`pvp.duelPhase.${this.state.duelPhase}`) : '';
+
+    if (this.state.duelPhase === 'asker-action') {
+      return isAsker ? t('pvp.battle.yourAskerAction', { phase: phaseKey }) : t('pvp.battle.waitAskerAction', { phase: phaseKey });
+    }
+
+    if (this.state.duelPhase === 'responder-response') {
+      if (isResponder) {
+        return this.state.pendingInvitation
+          ? t('pvp.battle.yourResponderInvite', { phase: phaseKey })
+          : t('pvp.battle.yourResponderConfirm', { phase: phaseKey });
+      }
+      return t('pvp.battle.waitResponderResponse', { phase: phaseKey });
+    }
+
+    if (this.state.duelPhase === 'asker-final') {
+      return isAsker ? t('pvp.battle.yourAskerFinal', { phase: phaseKey }) : t('pvp.battle.waitAskerFinal', { phase: phaseKey });
+    }
+
+    if (this.state.duelPhase === 'responder-final') {
+      return isResponder ? t('pvp.battle.yourResponderFinal', { phase: phaseKey }) : t('pvp.battle.waitResponderFinal', { phase: phaseKey });
+    }
+
+    return phaseKey;
+  }
+
+  private canUseSkill(self: PublicPvpPlayerState): boolean {
+    return this.isPlayerActionPhase(self)
+      && self.actionPoints >= 1
+      && !self.hasUsedSkillThisPhase
+      && (!self.hasUsedPeekThisRound || !self.hasUsedActionSkillThisRound);
+  }
+
+  private canUseSkillId(self: PublicPvpPlayerState | undefined, skillId: PvpSkillId): boolean {
+    if (!self || !this.isPlayerActionPhase(self) || self.actionPoints < 1 || self.hasUsedSkillThisPhase) {
+      return false;
+    }
+
+    if (skillId === 'peek') {
+      return !self.hasUsedPeekThisRound;
+    }
+
+    return !self.hasUsedActionSkillThisRound;
+  }
+
+  private isPlayerActionPhase(self: PublicPvpPlayerState): boolean {
+    if (!this.state || this.state.phase !== 'playing') {
+      return false;
+    }
+
+    const isAsker = self.id === this.state.askerId;
+    const isResponder = self.id === this.state.responderId;
+    return (this.state.duelPhase === 'asker-action' && isAsker)
+      || (this.state.duelPhase === 'responder-response' && isResponder)
+      || (this.state.duelPhase === 'asker-final' && isAsker)
+      || (this.state.duelPhase === 'responder-final' && isResponder);
+  }
+
+  private canSelectSwapCard(self: PublicPvpPlayerState): boolean {
+    return this.swapSelecting && this.canUseSkillId(self, 'swap_hand') && self.hand.length > 0;
+  }
+
+
+  private updateSpeechBubble(previous: PvpPublicRoomState | undefined, current: PvpPublicRoomState): void {
+    if (!previous || previous.round !== current.round || previous.phase !== 'playing') {
+      return;
+    }
+
+    const skillBubble = this.skillSpeechBubble(previous, current);
+    if (skillBubble) {
+      this.showSpeechBubble(skillBubble);
+      return;
+    }
+
+    const keyBase = `${current.round}:${previous.duelPhase}->${current.duelPhase}:${current.phase}:${current.pendingInvitation}:${current.hasAskerDrawnExtra}:${current.hasResponderDrawnExtra}`;
+    let bubble: { playerId?: string; text?: string; key: string; variant?: 'normal' | 'skill' } = { key: keyBase };
+
+    if (previous.duelPhase === 'asker-action' && current.duelPhase === 'responder-response') {
+      bubble = {
+        playerId: current.askerId,
+        text: current.pendingInvitation ? t('pvp.battle.bubbleInvite') : t('pvp.battle.bubblePass'),
+        key: keyBase,
+      };
+    }
+
+    if (previous.duelPhase === 'responder-response' && current.duelPhase === 'asker-final') {
+      bubble = {
+        playerId: current.responderId,
+        text: previous.pendingInvitation
+          ? current.hasResponderDrawnExtra ? t('pvp.battle.bubbleAccept') : t('pvp.battle.bubbleDecline')
+          : t('pvp.battle.bubbleConfirm'),
+        key: keyBase,
+      };
+    }
+
+    if (previous.duelPhase === 'asker-final' && current.duelPhase === 'responder-final') {
+      bubble = {
+        playerId: current.askerId,
+        text: current.hasAskerDrawnExtra ? t('pvp.battle.bubbleDrawSelf') : t('pvp.battle.bubbleReveal'),
+        key: keyBase,
+      };
+    }
+
+    if (previous.duelPhase === 'responder-final' && current.duelPhase === undefined && (current.phase === 'round-reveal' || current.phase === 'game-over')) {
+      bubble = {
+        playerId: current.responderId,
+        text: t('pvp.battle.bubbleReveal'),
+        key: keyBase,
+      };
+    }
+
+    if (!bubble.playerId || !bubble.text) {
+      return;
+    }
+
+    this.showSpeechBubble({
+      playerId: bubble.playerId,
+      text: bubble.text,
+      key: bubble.key,
+      variant: bubble.variant,
+    });
+  }
+
+  private skillSpeechBubble(previous: PvpPublicRoomState, current: PvpPublicRoomState): { playerId: string; text: string; key: string; variant: 'skill' } | undefined {
+    for (const currentPlayer of current.players) {
+      const previousPlayer = previous.players.find((player) => player.id === currentPlayer.id);
+      if (!previousPlayer || currentPlayer.usedSkillIds.length <= previousPlayer.usedSkillIds.length) {
+        continue;
+      }
+
+      const skillId = currentPlayer.usedSkillIds[currentPlayer.usedSkillIds.length - 1];
+      return {
+        playerId: currentPlayer.id,
+        text: t('pvp.battle.bubbleSkillUsed', { skill: t(`pvp.skill.${skillId}.name`) }),
+        key: `skill:${current.round}:${currentPlayer.id}:${currentPlayer.usedSkillIds.length}:${skillId}`,
+        variant: 'skill',
+      };
+    }
+
+    return undefined;
+  }
+
+  private showSpeechBubble(bubble: { playerId: string; text: string; key: string; variant?: 'normal' | 'skill' }): void {
+    if (this.speechBubble?.key === bubble.key) {
+      return;
+    }
+
+    this.speechBubble = bubble;
+    const duration = bubble.variant === 'skill' ? 1250 : 1000;
+    this.time.delayedCall(duration, () => {
+      if (this.speechBubble?.key !== bubble.key) {
+        return;
+      }
+
+      this.speechBubble = undefined;
+      this.render();
+    });
+  }
+
+  private renderSpeechBubble(): void {
+    if (!this.state || !this.speechBubble) {
+      return;
+    }
+
+    const player = this.state.players.find((item) => item.id === this.speechBubble?.playerId);
+    if (!player) {
+      return;
+    }
+
+    const isSelf = player.id === this.state.selfId;
+    const x = 330;
+    const y = isSelf ? 492 : 104;
+    const isSkill = this.speechBubble.variant === 'skill';
+    const text = this.add.text(x, y, this.speechBubble.text, {
+      fontFamily: 'Arial',
+      fontSize: '17px',
+      color: isSkill ? COLORS.accentText : '#15171c',
+      fontStyle: 'bold',
+      align: 'center',
+      padding: { x: 12, y: 7 },
+    }).setOrigin(0.5);
+    const width = Math.max(108, text.width + 28);
+    const height = Math.max(38, text.height + 12);
+    const fill = isSkill ? 0x19130a : 0xf4f0df;
+    const stroke = isSkill ? COLORS.accent : 0x2a2a2a;
+    const glow = isSkill ? this.add.rectangle(x, y, width + 10, height + 10, COLORS.accent, 0.16) : undefined;
+    const rect = this.add.rectangle(x, y, width, height, fill, 0.96).setStrokeStyle(2, stroke, isSkill ? 0.95 : 0.75);
+    const tail = this.add.triangle(x + width / 2 - 14, y + height / 2 - 2, 0, 0, 18, 0, 9, 12, fill, 0.96)
+      .setStrokeStyle(1, stroke, isSkill ? 0.8 : 0.55);
+    if (isSkill) {
+      text.setShadow(0, 0, COLORS.accentText, 8, true, true);
+    }
+    glow?.setDepth(19);
+    rect.setDepth(20);
+    tail.setDepth(20);
+    text.setDepth(21);
+  }
+
   private playerStatusText(player: PublicPvpPlayerState, isSelf: boolean): string {
     const score = this.state?.lastRoundResult?.scores[player.id];
     const point = score && (this.state?.phase === 'round-reveal' || this.state?.phase === 'game-over')
@@ -481,8 +854,9 @@ export class PvpBattleScene extends Phaser.Scene {
       : '';
     const risk = player.secondDrawRisk || player.incomingDamageBonus > 0 ? ` · ${t('pvp.battle.secondDrawRisk')}` : '';
     const stood = player.stood ? ` · ${isSelf ? t('pvp.battle.youStoodShort') : t('pvp.battle.opponentStoodShort')}` : '';
-    const usedSkills = player.usedSkillIds.length > 0 ? ` · ${t('pvp.battle.skillUsedCount', { count: player.usedSkillIds.length })}` : '';
-    return `${t('pvp.battle.drawCount', { count: player.drawCount })}${risk}${stood}${point}${usedSkills}`;
+    const peekState = player.hasUsedPeekThisRound ? t('pvp.battle.peekUsed') : t('pvp.battle.peekUnused');
+    const actionSkillState = player.hasUsedActionSkillThisRound ? t('pvp.battle.actionSkillUsed') : t('pvp.battle.actionSkillUnused');
+    return `${peekState} · ${actionSkillState} · ${t('pvp.battle.drawCount', { count: player.drawCount })}${risk}${stood}${point}`;
   }
 
   private gameOverText(): string {
@@ -503,32 +877,6 @@ export class PvpBattleScene extends Phaser.Scene {
 
   private playButtonClick(): void {
     this.sound.play('buttonClick', { volume: 0.42 });
-  }
-
-  private canUsePvpSkill(player: PublicPvpPlayerState, skillId: string): boolean {
-    if (this.state?.phase !== 'playing'
-      || player.stood
-      || !player.skills.includes(skillId)
-      || (player.skillCooldowns[skillId] ?? 0) > 0) {
-      return false;
-    }
-
-    const cards = player.hand
-      .filter((card): card is Extract<PublicPvpCard, { hidden: false }> => !card.hidden)
-      .map((card) => card.card);
-    if (cards.length !== player.hand.length) {
-      return false;
-    }
-
-    if (skillId === 'resonance_shift') {
-      return scoreHand(cards).resonance === 'none' && canResonanceShift(cards);
-    }
-
-    if (skillId === 'resonance_summon') {
-      return cards.length < 4 && scoreHand(cards).resonance !== 'none';
-    }
-
-    return false;
   }
 
   private renderScoreSummary(panel: Phaser.GameObjects.Container, player: PublicPvpPlayerState, startX: number, cardGap: number, cardWidth: number, isSelf: boolean): void {
@@ -691,6 +1039,9 @@ export class PvpBattleScene extends Phaser.Scene {
       this.lastBannerKey = '';
       this.gameOverSettledKey = '';
       this.gameOverAnimationInFlightKey = '';
+      this.skillWindowOpen = false;
+      this.swapSelecting = false;
+      this.dismissedPrivateNoticeKey = '';
     }
   }
 

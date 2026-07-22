@@ -2,6 +2,8 @@ import type { Card } from '../card';
 import type { ResonanceKind, ScoreResult } from '../scoring';
 
 export type PvpRoomPhase = 'waiting' | 'playing' | 'round-reveal' | 'game-over';
+export type PvpDuelPhase = 'asker-action' | 'responder-response' | 'asker-final' | 'responder-final';
+export type PvpSkillId = 'peek' | 'swap_hand' | 'stop_loss' | 'raise_stakes';
 
 export type PvpPlayerRole = 'host' | 'guest';
 
@@ -20,9 +22,18 @@ export interface PvpPlayerState {
   secondDrawRisk: boolean;
   drawLocked: boolean;
   incomingDamageBonus: number;
+  actionPoints: number;
+  maxActionPoints: number;
+  hasUsedSkillThisRound: boolean;
+  hasUsedPeekThisRound: boolean;
+  hasUsedActionSkillThisRound: boolean;
+  hasUsedSkillThisPhase: boolean;
+  roundDamageCap?: number;
+  roundDamageBonus: number;
+  roundDamageTakenBonus: number;
   resonanceCount: number;
-  skills: string[];
-  usedSkillIds: string[];
+  skills: PvpSkillId[];
+  usedSkillIds: PvpSkillId[];
   skillCooldowns: Record<string, number>;
   items: string[];
   effects: string[];
@@ -49,6 +60,13 @@ export interface PvpRoomState {
   lastRoundResult?: PvpRoundResult;
   winnerId?: string;
   rematchRequestedIds: string[];
+  askerId?: string;
+  responderId?: string;
+  duelPhase?: PvpDuelPhase;
+  pendingInvitation: boolean;
+  hasAskerDrawnExtra: boolean;
+  hasResponderDrawnExtra: boolean;
+  privateNotices?: Record<string, string | undefined>;
   logs: string[];
   createdAt: number;
   updatedAt: number;
@@ -72,9 +90,18 @@ export interface PublicPvpPlayerState {
   secondDrawRisk: boolean;
   drawLocked: boolean;
   incomingDamageBonus: number;
+  actionPoints: number;
+  maxActionPoints: number;
+  hasUsedSkillThisRound: boolean;
+  hasUsedPeekThisRound: boolean;
+  hasUsedActionSkillThisRound: boolean;
+  hasUsedSkillThisPhase: boolean;
+  roundDamageCap?: number;
+  roundDamageBonus: number;
+  roundDamageTakenBonus: number;
   resonanceCount: number;
-  skills: string[];
-  usedSkillIds: string[];
+  skills: PvpSkillId[];
+  usedSkillIds: PvpSkillId[];
   skillCooldowns: Record<string, number>;
   items: string[];
   effects: string[];
@@ -92,6 +119,13 @@ export interface PvpPublicRoomState {
   lastRoundResult?: PvpRoundResult;
   winnerId?: string;
   rematchRequestedIds: string[];
+  askerId?: string;
+  responderId?: string;
+  duelPhase?: PvpDuelPhase;
+  pendingInvitation: boolean;
+  hasAskerDrawnExtra: boolean;
+  hasResponderDrawnExtra: boolean;
+  privateNotice?: string;
   logs: string[];
 }
 
@@ -108,7 +142,14 @@ export interface PvpRoomSummary {
 export type PvpAction =
   | { type: 'draw' }
   | { type: 'stand' }
-  | { type: 'use-skill'; skillId: string; targetId?: string }
+  | { type: 'invite-draw' }
+  | { type: 'pass' }
+  | { type: 'accept-invite' }
+  | { type: 'decline-invite' }
+  | { type: 'confirm' }
+  | { type: 'draw-self' }
+  | { type: 'confirm-reveal' }
+  | { type: 'use-skill'; skillId: PvpSkillId; targetId?: string; cardIndex?: number }
   | { type: 'use-item'; itemId: string; targetId?: string };
 
 export type PvpClientMessage =
