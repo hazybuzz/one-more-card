@@ -93,9 +93,9 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
     titleKey: 'level.chapter1_8.title',
     subtitleKey: 'level.chapter1_8.subtitle',
     enemyIds: ['keeper'],
-    playerHp: 10,
-    enemyHpOverrides: { keeper: 14 },
-    unlockedMechanics: ['invite', 'compare', 'player_draw', 'resonance', 'skills', 'items', 'soul_redeem', 'enemy_passives', 'boss'],
+    playerHp: 7,
+    enemyHpOverrides: { keeper: 7 },
+    unlockedMechanics: ['invite', 'compare', 'player_draw', 'resonance', 'skills', 'items', 'soul_redeem', 'boss'],
     fixedRounds: FIXED_DEALS.chapter1_8,
     useRandomAfterFixedRounds: true,
     bossConfig: {
@@ -103,6 +103,18 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
       dialogueKey: 'dialogue.chapter1.boss',
     },
     rewards: [{ soulCoins: 40 }],
+  },
+  {
+    id: 'chapter1_9',
+    chapterId,
+    titleKey: 'level.chapter1_9.title',
+    subtitleKey: 'level.chapter1_9.subtitle',
+    enemyIds: ['goblin', 'gambler', 'werewolf'],
+    playerHp: 12,
+    unlockedMechanics: ['invite', 'compare', 'player_draw', 'resonance', 'skills', 'items', 'soul_redeem', 'enemy_passives'],
+    levelIntroLessonKey: 'tutorial.chapter1_9.standardGameIntro',
+    useRandomAfterFixedRounds: true,
+    rewards: [{ soulCoins: 50 }],
   },
 ];
 

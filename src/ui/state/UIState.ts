@@ -26,6 +26,7 @@ export interface BattleActionButtonState {
 
 export interface SkillSlotState {
   id: SkillSlotId;
+  visible: boolean;
   enabled: boolean;
   cooldown: number;
   titleKey: string;
@@ -196,12 +197,14 @@ function canUseAction(state: BattleState, action: BattleActionId): boolean {
 
 function createShiftSkillState(state: BattleState, inputLocked: boolean): SkillSlotState {
   const cooldown = state.player.resonanceShiftCooldown;
+  const visible = state.phase === 'player-turn' && hasMechanic(state, 'skills') && !inputLocked;
   const canShift = state.phase === 'player-turn'
     && hasMechanic(state, 'skills')
     && !inputLocked
     && state.player.canUseResonanceShift;
   return {
     id: 'shift',
+    visible,
     enabled: canShift,
     cooldown,
     titleKey: 'skill.resonanceShift.name',
@@ -212,12 +215,14 @@ function createShiftSkillState(state: BattleState, inputLocked: boolean): SkillS
 
 function createSummonSkillState(state: BattleState, inputLocked: boolean): SkillSlotState {
   const cooldown = state.player.resonanceSummonCooldown;
+  const visible = state.phase === 'player-turn' && hasMechanic(state, 'skills') && !inputLocked;
   const canSummon = state.phase === 'player-turn'
     && hasMechanic(state, 'skills')
     && !inputLocked
     && state.player.canUseResonanceSummon;
   return {
     id: 'summon',
+    visible,
     enabled: canSummon,
     cooldown,
     titleKey: 'skill.resonanceSummon.name',

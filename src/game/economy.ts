@@ -3,6 +3,7 @@ import { addSoulCoins, getProgress, recordBattleResult, setSoulCoins } from './p
 export const BATTLE_ENTRY_COST = 20;
 export const BATTLE_WIN_BASE_REWARD = 30;
 export const HP_TO_COIN_RATE = 1;
+export const PVP_DUEL_COIN_STAKE = 20;
 
 export interface EconomyChange {
   amount: number;
@@ -33,6 +34,26 @@ export function settleBattleEconomy(outcome: 'victory' | 'defeat', remainingHp: 
 
   return {
     amount: 0,
+    total: getProgress().soulCoins,
+  };
+}
+
+export function settlePvpDuelEconomy(outcome: 'victory' | 'defeat'): EconomyChange {
+  recordBattleResult(outcome);
+
+  if (outcome === 'victory') {
+    addSoulCoins(PVP_DUEL_COIN_STAKE);
+    return {
+      amount: PVP_DUEL_COIN_STAKE,
+      total: getProgress().soulCoins,
+    };
+  }
+
+  const currentCoins = getProgress().soulCoins;
+  const loss = Math.min(currentCoins, PVP_DUEL_COIN_STAKE);
+  setSoulCoins(currentCoins - loss);
+  return {
+    amount: -loss,
     total: getProgress().soulCoins,
   };
 }

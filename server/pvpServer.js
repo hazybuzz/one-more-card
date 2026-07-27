@@ -133,6 +133,7 @@ function createRoomForClient(clientId, socket, playerName) {
   const roomId = createRoomId();
   const room = {
     roomId,
+    matchId: 0,
     phase: 'waiting',
     round: 0,
     players: [createPlayer(clientId, playerName, 'host')],
@@ -325,6 +326,7 @@ function surrenderClient(clientId, socket) {
 
 function startGame(room) {
   room.phase = 'playing';
+  room.matchId = (room.matchId ?? 0) + 1;
   room.round = 0;
   room.winnerId = undefined;
   room.lastRoundResult = undefined;
@@ -686,6 +688,7 @@ function createPublicState(room, viewerId) {
   const viewer = room.players.find((player) => player.id === viewerId);
   return {
     roomId: room.roomId,
+    matchId: room.matchId,
     phase: room.phase,
     round: room.round,
     players: room.players.map((player) => ({

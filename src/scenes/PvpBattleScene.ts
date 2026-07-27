@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { preloadCardImages } from '../game/assets';
 import { playBattleMusic, preloadBattleMusic, stopBattleMusic, stopLobbyMusic } from '../game/audio';
 import { cardValue } from '../game/card';
+import { EconomyChange, settlePvpDuelEconomy } from '../game/economy';
 import { t } from '../game/i18n';
 import { pvpClient } from '../game/pvp/PvpClient';
 import type { PublicPvpCard, PublicPvpPlayerState, PvpPublicRoomState, PvpSkillId } from '../game/pvp/PvpTypes';
@@ -47,6 +48,8 @@ export class PvpBattleScene extends Phaser.Scene {
   private serverClockOffsetMs = 0;
   private gameOverSettledKey = '';
   private gameOverAnimationInFlightKey = '';
+  private pvpEconomySettledKey = '';
+  private pvpEconomyResult?: EconomyChange;
   private speechBubble?: { playerId: string; text: string; key: string; variant?: 'normal' | 'skill' };
   private skillWindowOpen = false;
   private swapSelecting = false;
@@ -81,6 +84,8 @@ export class PvpBattleScene extends Phaser.Scene {
     stopLobbyMusic(this);
     playBattleMusic(this);
     this.state = undefined;
+    this.pvpEconomySettledKey = '';
+    this.pvpEconomyResult = undefined;
     this.connected = pvpClient.connected;
     this.status = this.connected ? t('pvp.connected') : t('pvp.disconnected');
     this.unsubscribers = [
@@ -143,6 +148,7 @@ export class PvpBattleScene extends Phaser.Scene {
     this.renderLog();
     this.renderSkillWindow();
     this.renderPrivateNotice();
+    this.renderGameOverSettlement();
   }
 
   private addBackground(): void {
@@ -509,14 +515,69 @@ export class PvpBattleScene extends Phaser.Scene {
       return;
     }
 
-    const requested = this.state.rematchRequestedIds.includes(this.state.selfId);
-    this.button(108, 98, 170, 42, t('pvp.battle.rematch'), () => pvpClient.rematch(), '15px', !requested);
-    const label = requested ? t('pvp.battle.rematchWaiting') : t('pvp.battle.rematchHint');
-    this.add.text(108, 130, label, {
+    this.add.text(108, 98, t('pvp.battle.settlementOpen'), {
       fontFamily: 'Arial',
-      fontSize: '12px',
-      color: requested ? COLORS.accentText : COLORS.muted,
+      fontSize: '13px',
+      color: COLORS.muted,
+      align: 'center',
+      wordWrap: { width: 160 },
     }).setOrigin(0.5);
+  }
+
+  private renderGameOverSettlement(): void {
+    if (!this.state || this.state.phase !== 'game-over' || this.isGameOverSettling()) {
+      return;
+    }
+
+    const economy = this.settlePvpEconomyOnce();
+    const victory = this.state.winnerId === this.state.selfId;
+    const requested = this.state.rematchRequestedIds.includes(this.state.selfId);
+    const overlay = this.add.rectangle(640, 360, 1280, 720, 0x000000, 0.58).setDepth(60);
+    overlay.setInteractive();
+
+    const panel = this.add.container(640, 360).setDepth(61);
+    panel.add(this.add.rectangle(0, 0, 520, 330, COLORS.panel, 0.98).setStrokeStyle(2, victory ? 0x78d18a : 0xff4b5f));
+
+    const titleColor = victory ? COLORS.green : COLORS.dangerText;
+    panel.add(this.add.text(0, -112, victory ? t('pvp.battle.settlementVictory') : t('pvp.battle.settlementDefeat'), {
+      fontFamily: 'Arial',
+      fontSize: '34px',
+      color: titleColor,
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setShadow(0, 0, titleColor, 12, true, true));
+
+    const amountText = economy.amount >= 0
+      ? t('pvp.battle.coinGain', { amount: economy.amount })
+      : t('pvp.battle.coinLoss', { amount: Math.abs(economy.amount) });
+    const amountColor = economy.amount >= 0 ? COLORS.green : COLORS.dangerText;
+    panel.add(this.add.text(0, -46, amountText, {
+      fontFamily: 'Arial',
+      fontSize: '25px',
+      color: amountColor,
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setShadow(0, 0, amountColor, 8, true, true));
+
+    panel.add(this.add.text(0, -4, t('pvp.battle.coinTotal', { total: economy.total }), {
+      fontFamily: 'Arial',
+      fontSize: '18px',
+      color: COLORS.text,
+    }).setOrigin(0.5));
+
+    panel.add(this.add.text(0, 36, requested ? t('pvp.battle.rematchWaiting') : t('pvp.battle.rematchHint'), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: requested ? COLORS.accentText : COLORS.muted,
+      align: 'center',
+      wordWrap: { width: 430 },
+    }).setOrigin(0.5));
+
+    panel.add(this.button(-112, 106, 180, 48, requested ? t('pvp.battle.rematchRequested') : t('pvp.battle.rematch'), () => {
+      pvpClient.rematch();
+      this.render();
+    }, '17px', !requested));
+    panel.add(this.button(112, 106, 180, 48, t('pvp.battle.returnRoom'), () => {
+      this.scene.start('PvpLobbyScene', { suppressBattleAutoOpen: true });
+    }, '17px'));
   }
 
   private renderLog(): void {
@@ -1039,6 +1100,8 @@ export class PvpBattleScene extends Phaser.Scene {
       this.lastBannerKey = '';
       this.gameOverSettledKey = '';
       this.gameOverAnimationInFlightKey = '';
+      this.pvpEconomySettledKey = '';
+      this.pvpEconomyResult = undefined;
       this.skillWindowOpen = false;
       this.swapSelecting = false;
       this.dismissedPrivateNoticeKey = '';
@@ -1141,7 +1204,60 @@ export class PvpBattleScene extends Phaser.Scene {
       return '';
     }
 
-    return `game-over:${this.state.round}:${this.state.winnerId ?? 'draw'}`;
+    return `game-over:${this.state.roomId}:${this.state.matchId ?? 0}:${this.state.round}:${this.state.winnerId ?? 'draw'}`;
+  }
+
+  private settlePvpEconomyOnce(): EconomyChange {
+    const key = this.currentGameOverKey();
+    if (this.pvpEconomySettledKey === key && this.pvpEconomyResult) {
+      return this.pvpEconomyResult;
+    }
+
+    const stored = this.readStoredPvpEconomySettlement(key);
+    if (stored) {
+      this.pvpEconomyResult = stored;
+      this.pvpEconomySettledKey = key;
+      return stored;
+    }
+
+    const outcome = this.state?.winnerId === this.state?.selfId ? 'victory' : 'defeat';
+    this.pvpEconomyResult = settlePvpDuelEconomy(outcome);
+    this.pvpEconomySettledKey = key;
+    this.storePvpEconomySettlement(key, this.pvpEconomyResult);
+    return this.pvpEconomyResult;
+  }
+
+  private readStoredPvpEconomySettlement(key: string): EconomyChange | undefined {
+    try {
+      const raw = sessionStorage.getItem(this.pvpEconomyStorageKey(key));
+      if (!raw) {
+        return undefined;
+      }
+
+      const parsed = JSON.parse(raw) as Partial<EconomyChange>;
+      if (typeof parsed.amount !== 'number' || typeof parsed.total !== 'number') {
+        return undefined;
+      }
+
+      return {
+        amount: parsed.amount,
+        total: parsed.total,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private storePvpEconomySettlement(key: string, economy: EconomyChange): void {
+    try {
+      sessionStorage.setItem(this.pvpEconomyStorageKey(key), JSON.stringify(economy));
+    } catch {
+      // Session storage is only used to avoid duplicate local settlement.
+    }
+  }
+
+  private pvpEconomyStorageKey(key: string): string {
+    return `one-more-card:pvp-economy:${key}`;
   }
 
   private playerPosition(player: PublicPvpPlayerState): Phaser.Math.Vector2 {

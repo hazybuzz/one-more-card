@@ -25,8 +25,10 @@ interface SkillBarOptions {
 export class SkillBar {
   static render(scene: Phaser.Scene, options: SkillBarOptions): Phaser.GameObjects.Container {
     const container = scene.add.container(options.x, options.y);
-    container.add(this.renderSlot(scene, options, 'shift', 0));
-    container.add(this.renderSlot(scene, options, 'summon', 84));
+    const visibleSkills = (['shift', 'summon'] as SkillSlotId[]).filter((id) => options.skills[id].visible);
+    visibleSkills.forEach((id, index) => {
+      container.add(this.renderSlot(scene, options, id, index * 84));
+    });
     return container;
   }
 

@@ -1269,6 +1269,18 @@ export class BattleScene extends Phaser.Scene {
       ];
     }
 
+    if (levelId === 'chapter1_9') {
+      return isVictory ? [
+        'tutorial.chapter1_9.chapterComplete',
+        'tutorial.chapter1_9.unlockStandardGame',
+      ] : [
+        'tutorial.chapter1_9.defeatHint1',
+        'tutorial.chapter1_9.defeatHint2',
+        'tutorial.chapter1_9.defeatHint3',
+        'tutorial.chapter1_9.defeatHint4',
+      ];
+    }
+
     return [];
   }
 
@@ -1392,6 +1404,23 @@ export class BattleScene extends Phaser.Scene {
         'tutorial.chapter1_8.defeat3',
         'tutorial.chapter1_8.defeat4',
         'tutorial.chapter1_8.defeat5',
+      ];
+    }
+
+    if (levelId === 'chapter1_9') {
+      return outcome === 'victory' ? [
+        'tutorial.chapter1_9.victory1',
+        'tutorial.chapter1_9.victory2',
+        'tutorial.chapter1_9.victory3',
+        'tutorial.chapter1_9.victory4',
+        'tutorial.chapter1_9.victory5',
+        'tutorial.chapter1_9.victory6',
+        'tutorial.chapter1_9.victory7',
+      ] : [
+        'tutorial.chapter1_9.defeat1',
+        'tutorial.chapter1_9.defeat2',
+        'tutorial.chapter1_9.defeat3',
+        'tutorial.chapter1_9.defeat4',
       ];
     }
 
@@ -1541,8 +1570,26 @@ export class BattleScene extends Phaser.Scene {
       color: COLORS.muted,
       wordWrap: { width: 310 },
     }));
-    row.add(this.button(414, 10, 112, 46, t('battle.itemModal.use'), () => this.useItemFromModal(item), canUse ? COLORS.button : 0x25272d, '18px'));
+    if (canUse) {
+      row.add(this.button(414, 10, 112, 46, t('battle.itemModal.use'), () => this.useItemFromModal(item), COLORS.button, '18px'));
+    } else {
+      row.add(this.add.text(414, 33, t(this.itemTimingHintKey(item)), {
+        fontFamily: 'Arial',
+        fontSize: '13px',
+        color: COLORS.muted,
+        align: 'center',
+        wordWrap: { width: 112 },
+      }).setOrigin(0.5));
+    }
     return row;
+  }
+
+  private itemTimingHintKey(item: ItemDefinition): string {
+    if (item.id === 'heal_potion' || item.id === 'resonance_dust') {
+      return 'battle.itemModal.timingUnknownHand';
+    }
+
+    return 'battle.itemModal.timingPlayerTurn';
   }
 
   private useItemFromModal(item: ItemDefinition): void {

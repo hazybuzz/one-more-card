@@ -19,6 +19,7 @@ export interface PvpActionResult {
 export function createPvpRoom(roomId: string, hostId: string, hostName: string, now = Date.now()): PvpRoomState {
   return {
     roomId,
+    matchId: 0,
     phase: 'waiting',
     round: 0,
     players: [createPvpPlayer(hostId, hostName, 'host')],
@@ -80,6 +81,7 @@ export function setPvpReady(room: PvpRoomState, playerId: string, now = Date.now
 
 export function startPvpGame(room: PvpRoomState, now = Date.now()): void {
   room.phase = 'playing';
+  room.matchId = (room.matchId ?? 0) + 1;
   room.round = 0;
   room.winnerId = undefined;
   room.lastRoundResult = undefined;
@@ -338,6 +340,7 @@ export function createPublicPvpState(room: PvpRoomState, viewerId: string, now =
   const viewer = room.players.find((player) => player.id === viewerId);
   return {
     roomId: room.roomId,
+    matchId: room.matchId,
     phase: room.phase,
     round: room.round,
     players: room.players.map((player) => ({

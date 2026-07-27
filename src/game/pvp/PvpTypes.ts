@@ -52,6 +52,7 @@ export interface PvpRoundResult {
 
 export interface PvpRoomState {
   roomId: string;
+  matchId?: number;
   phase: PvpRoomPhase;
   round: number;
   players: PvpPlayerState[];
@@ -109,6 +110,7 @@ export interface PublicPvpPlayerState {
 
 export interface PvpPublicRoomState {
   roomId: string;
+  matchId?: number;
   phase: PvpRoomPhase;
   round: number;
   players: PublicPvpPlayerState[];

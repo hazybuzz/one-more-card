@@ -23,5 +23,9 @@ export function introIdForLevel(levelId: string): string {
     return 'chapter1_8_opening';
   }
 
+  if (levelId === 'chapter1_9') {
+    return 'chapter1_9_opening';
+  }
+
   return 'chapter1_opening';
 }
