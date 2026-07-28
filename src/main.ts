@@ -7,6 +7,7 @@ import { PvpLobbyScene } from './scenes/PvpLobbyScene';
 import { ShopScene } from './scenes/ShopScene';
 import { StartScene } from './scenes/StartScene';
 import { StorySelectScene } from './scenes/StorySelectScene';
+import { TableSelectScene } from './scenes/TableSelectScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -14,7 +15,7 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 1280,
   height: 720,
   backgroundColor: '#101114',
-  scene: [StartScene, StorySelectScene, PvpLobbyScene, PvpBattleScene, ShopScene, InventoryScene, ChapterIntroScene, BattleScene],
+  scene: [StartScene, TableSelectScene, StorySelectScene, PvpLobbyScene, PvpBattleScene, ShopScene, InventoryScene, ChapterIntroScene, BattleScene],
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,

@@ -4,6 +4,7 @@ import { preloadCardImages } from '../game/assets';
 import { playBattleMusic, preloadBattleMusic, stopBattleMusic, stopLobbyMusic } from '../game/audio';
 import { Card, formatCard } from '../game/card';
 import { introIdForLevel } from '../game/data/levelIntros';
+import { getTableThemeById } from '../game/data/tableThemes';
 import { EconomyChange, settleBattleEconomy } from '../game/economy';
 import { EnemyState } from '../game/enemy';
 import { enemyName, enemyPersonality, t } from '../game/i18n';
@@ -15,6 +16,7 @@ import { completeStoryLevelAndUnlockNext, getNextStoryLevel } from '../game/stor
 import type { BattleState } from '../game/core/BattleState';
 import type { BattleMechanicId } from '../game/types/level';
 import type { ItemId } from '../game/types/item';
+import type { TableThemeId, TableThemeVisualConfig } from '../game/types/tableTheme';
 import { ActionPanel } from '../ui/components/ActionPanel';
 import { BlockingMessageModal } from '../ui/components/BlockingMessageModal';
 import { ItemBar } from '../ui/components/ItemBar';
@@ -50,6 +52,10 @@ const SKILL_COLORS = {
   paladin: 0xf4e7b0,
   merchant: 0xe2c16b,
   keeper: 0xd7b56d,
+  viking_warrior: 0xff8a3d,
+  rune_shaman: 0x79c9ff,
+  valkyrie: 0xf7d889,
+  einherjar: 0xaeb9c9,
 };
 
 const SEATS = {
@@ -61,6 +67,19 @@ const SEATS = {
   ],
 };
 
+const PASSIVE_EFFECT_TIMING = {
+  stepGap: 150,
+  flashIn: 190,
+  flashHold: 430,
+  flashOut: 760,
+  standardTotal: 1400,
+  goblinTotal: 1520,
+  shockwave: 1040,
+  insightLine: 1080,
+  shuffleCard: 1040,
+  bloodReturn: 920,
+};
+
 export class BattleScene extends Phaser.Scene {
   private battle!: BattleEngine;
   private battleEconomySettled = false;
@@ -68,6 +87,7 @@ export class BattleScene extends Phaser.Scene {
   private resultModalReady = true;
   private itemModalOpen = false;
   private confirmReturnToStorySelect = false;
+  private confirmExitFormalGame = false;
   private itemFeedback?: { title: string; message: string; success: boolean };
   private temporaryItems: Partial<Record<ItemId, number>> = {};
   private grantedItemRoundIds = new Set<string>();
@@ -100,6 +120,7 @@ export class BattleScene extends Phaser.Scene {
   private chapter3LossHintShown = false;
   private shownChapter4ResonanceFeedbackIds = new Set<string>();
   private battleLevelId?: string;
+  private tableThemeId?: TableThemeId;
 
   constructor() {
     super('BattleScene');
@@ -146,20 +167,23 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  init(data?: { levelId?: string }): void {
+  init(data?: { levelId?: string; tableThemeId?: TableThemeId }): void {
     this.battleLevelId = data?.levelId;
+    this.tableThemeId = data?.tableThemeId;
   }
 
   create(): void {
     stopLobbyMusic(this);
     playBattleMusic(this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => stopBattleMusic(this));
-    this.battle = new BattleEngine({ levelId: this.battleLevelId });
+    const tableThemeConfig = this.tableThemeId ? getTableThemeById(this.tableThemeId) : undefined;
+    this.battle = new BattleEngine({ levelId: this.battleLevelId, tableThemeConfig });
     this.battleEconomySettled = false;
     this.economyResult = undefined;
     this.resultModalReady = true;
     this.autoAdvancingRound = false;
     this.confirmReturnToStorySelect = false;
+    this.confirmExitFormalGame = false;
     this.blockingMessage = undefined;
     this.temporaryItems = {};
     this.grantedItemRoundIds.clear();
@@ -193,30 +217,95 @@ export class BattleScene extends Phaser.Scene {
     this.renderPlayer();
     this.renderLog();
     this.renderStoryReturnButton();
+    this.renderFormalExitButton();
     this.renderActions();
     this.renderItemModal();
     this.renderItemFeedback();
     this.renderResultModal();
     this.renderStoryReturnConfirmModal();
+    this.renderFormalExitConfirmModal();
     this.renderBlockingMessage();
   }
 
   private addBackground(): void {
-    this.add.rectangle(640, 360, 1280, 720, COLORS.bg);
+    const visual = this.currentThemeVisual();
+    if (visual.motif === 'northern') {
+      this.addNorthernBackground(visual);
+      return;
+    }
+
+    this.addTavernBackground(visual);
+  }
+
+  private addTavernBackground(visual: TableThemeVisualConfig): void {
+    this.add.rectangle(640, 360, 1280, 720, visual.backgroundColor);
     this.add.rectangle(640, 360, 1280, 720, 0x14161a);
-    this.add.circle(640, 350, 205, 0x191c22, 0.95).setStrokeStyle(2, COLORS.line);
-    this.add.circle(640, 350, 145, 0x101114, 0.5).setStrokeStyle(1, 0x2b303c);
+    this.add.circle(640, 350, 205, visual.tableColor, 0.95).setStrokeStyle(2, visual.lineColor);
+    this.add.circle(640, 350, 145, 0x101114, 0.5).setStrokeStyle(1, visual.tableRingColor);
+  }
+
+  private addNorthernBackground(visual: TableThemeVisualConfig): void {
+    this.add.rectangle(640, 360, 1280, 720, visual.backgroundColor);
+    this.add.rectangle(640, 90, 1280, 180, 0x0b1821, 0.86);
+    this.add.rectangle(640, 182, 1280, 16, 0x1c2b33, 0.82).setStrokeStyle(1, visual.lineColor, 0.42);
+    this.add.rectangle(640, 360, 1280, 720, 0x05080d, 0.22);
+
+    for (let i = 0; i < 8; i += 1) {
+      const x = 120 + i * 150;
+      this.add.rectangle(x, 84, 84, 18, 0x26343a, 0.74).setAngle(i % 2 === 0 ? -4 : 4);
+    }
+
+    this.add.circle(198, 454, 46, 0xff8a3d, 0.08).setStrokeStyle(2, 0xff8a3d, 0.35);
+    this.add.circle(1082, 454, 46, 0xff8a3d, 0.08).setStrokeStyle(2, 0xff8a3d, 0.35);
+    this.add.circle(198, 454, 15, 0xff8a3d, 0.38);
+    this.add.circle(1082, 454, 15, 0xff8a3d, 0.38);
+
+    this.add.circle(640, 350, 214, visual.tableColor, 0.95).setStrokeStyle(3, visual.tableRingColor, 0.55);
+    this.add.circle(640, 350, 154, 0x071018, 0.58).setStrokeStyle(2, visual.tableRingColor, 0.32);
+    this.add.circle(640, 350, 90, 0x79c9ff, 0.035).setStrokeStyle(2, visual.tableRingColor, 0.24);
+    ['I', 'V', 'X', 'R'].forEach((glyph, index) => {
+      const angle = (-90 + index * 90) * (Math.PI / 180);
+      const x = 640 + Math.cos(angle) * 178;
+      const y = 350 + Math.sin(angle) * 178;
+      const rune = this.add.text(x, y, glyph, {
+        fontFamily: 'Arial',
+        fontSize: '22px',
+        color: visual.glowColor,
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      rune.setAlpha(0.45);
+      rune.setShadow(0, 0, visual.glowColor, 8, true, true);
+    });
+
+    for (let i = 0; i < 7; i += 1) {
+      this.add.rectangle(640, 236 + i * 34, 980 - i * 42, 1, visual.tableRingColor, 0.05 + i * 0.015);
+    }
+  }
+
+  private currentThemeVisual(): TableThemeVisualConfig {
+    return this.battle.tableThemeConfig?.visual ?? {
+      accentColor: COLORS.accent,
+      glowColor: COLORS.accentText,
+      backgroundColor: COLORS.bg,
+      panelColor: COLORS.panel,
+      panelAltColor: COLORS.panelAlt,
+      lineColor: COLORS.line,
+      tableColor: 0x191c22,
+      tableRingColor: 0x2b303c,
+      motif: 'tavern',
+    };
   }
 
   private renderEnemies(): void {
+    const visual = this.currentThemeVisual();
     this.battle.enemies.forEach((enemy, index) => {
       const seat = this.enemySeatForIndex(index);
       const container = this.add.container(seat.x, seat.y);
       this.ui.push(container);
       this.seatContainers.set(enemy.id, container);
       const active = this.battle.currentEnemyIndex === index && this.battle.phase === 'enemy-turn';
-      const defeatedColor = enemy.defeated ? 0x24262b : COLORS.panel;
-      container.add(this.add.rectangle(0, 0, seat.width, seat.height, active ? COLORS.panelAlt : defeatedColor).setStrokeStyle(2, active ? COLORS.accent : COLORS.line));
+      const defeatedColor = enemy.defeated ? 0x24262b : visual.panelColor;
+      container.add(this.add.rectangle(0, 0, seat.width, seat.height, active ? visual.panelAltColor : defeatedColor).setStrokeStyle(2, active ? visual.accentColor : visual.lineColor));
       container.add(this.add.text(-seat.width / 2 + 18, -seat.height / 2 + 18, enemyName(enemy.id), { fontFamily: 'Arial', fontSize: '22px', color: enemy.defeated ? COLORS.muted : COLORS.text }));
       const hp = this.hpText(seat.width / 2 - 118, -seat.height / 2 + 18, t('common.hp', { hp: this.enemyDisplayHp(index), maxHp: enemy.maxHp }), enemy.defeated);
       this.enemyHpTexts.set(enemy.id, hp);
@@ -233,13 +322,41 @@ export class BattleScene extends Phaser.Scene {
 
       this.renderEnemySpeech(container, enemy, seat);
 
-      if (this.hasMechanic('enemy_passives') && enemy.id !== 'bartender') {
+      if (this.hasMechanic('enemy_passives') && this.enemyHasPassiveInfo(enemy)) {
         container.add(this.enemyPassiveIcon(enemy, index, seat));
       }
+      this.renderEnemyStatusBadges(container, enemy, index, seat);
     });
   }
 
+  private renderEnemyStatusBadges(container: Phaser.GameObjects.Container, enemy: EnemyState, index: number, seat: { width: number; height: number }): void {
+    if (enemy.defeated) {
+      return;
+    }
+
+    const attackBonus = Math.max(0, enemy.attackBonus + enemy.roundAttackBonus);
+    if (attackBonus <= 0) {
+      return;
+    }
+
+    const x = index === 1 ? -seat.width / 2 + 38 : -seat.width / 2 + 100;
+    const y = index === 1 ? -seat.height / 2 + 84 : -seat.height / 2 - 31;
+    const badge = this.add.container(x, y);
+    const width = 76;
+    const bg = this.add.rectangle(0, 0, width, 24, 0x461f27, 0.86).setStrokeStyle(2, 0xff4b5f, 0.95);
+    const text = this.add.text(0, 0, t('battle.status.attackBonus', { amount: attackBonus }), {
+      fontFamily: 'Arial',
+      fontSize: '13px',
+      color: '#ff6f6f',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    text.setShadow(0, 0, '#ff4b5f', 9, true, true);
+    badge.add([bg, text]);
+    container.add(badge);
+  }
+
   private renderCenterInfo(): void {
+    const visual = this.currentThemeVisual();
     const battleState = this.battle.getState();
     const uiState = this.createUIState(battleState);
     const container = this.add.container(640, 342);
@@ -249,7 +366,9 @@ export class BattleScene extends Phaser.Scene {
     container.add(this.add.text(0, -44, this.phaseText(uiState), { fontFamily: 'Arial', fontSize: '17px', color: COLORS.muted, align: 'center', wordWrap: { width: 430 } }).setOrigin(0.5));
 
     const targetText = t('battle.target', { target: battleState.currentEnemyId && battleState.phase === 'enemy-turn' ? enemyName(battleState.currentEnemyId) : t('battle.targetNone') });
-    container.add(this.add.text(0, 18, targetText, { fontFamily: 'Arial', fontSize: '21px', color: '#e8cf73' }).setOrigin(0.5));
+    const target = this.add.text(0, 18, targetText, { fontFamily: 'Arial', fontSize: '21px', color: visual.glowColor }).setOrigin(0.5);
+    target.setShadow(0, 0, visual.glowColor, 7, true, true);
+    container.add(target);
 
     const tutorialText = this.currentTutorialText(battleState);
     if (tutorialText) {
@@ -261,7 +380,7 @@ export class BattleScene extends Phaser.Scene {
         lineSpacing: 5,
         wordWrap: { width: 540 },
       }).setOrigin(0.5);
-      tutorial.setShadow(0, 0, COLORS.accentText, 6, true, true);
+      tutorial.setShadow(0, 0, visual.glowColor, 6, true, true);
       container.add(tutorial);
       return;
     }
@@ -745,7 +864,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private renderActions(): void {
-    if (this.blockingMessage || this.confirmReturnToStorySelect) {
+    if (this.blockingMessage || this.confirmReturnToStorySelect || this.confirmExitFormalGame) {
       return;
     }
 
@@ -786,6 +905,23 @@ export class BattleScene extends Phaser.Scene {
       }
 
       this.confirmReturnToStorySelect = true;
+      this.render();
+    }, COLORS.danger, '16px'));
+  }
+
+  private renderFormalExitButton(): void {
+    if (this.battle.levelConfig?.id || !this.tableThemeId || this.battle.phase === 'battle-result') {
+      return;
+    }
+
+    const container = this.add.container(1128, 116).setDepth(40);
+    this.ui.push(container);
+    container.add(this.button(0, 0, 118, 40, t('battle.formalExit.button'), () => {
+      if (this.blockingMessage || this.itemModalOpen || this.itemFeedback || this.actionAnimationPlaying || this.dealing || this.actionDealing || this.playerRedealing) {
+        return;
+      }
+
+      this.confirmExitFormalGame = true;
       this.render();
     }, COLORS.danger, '16px'));
   }
@@ -832,6 +968,48 @@ export class BattleScene extends Phaser.Scene {
     ]);
   }
 
+  private renderFormalExitConfirmModal(): void {
+    if (!this.confirmExitFormalGame) {
+      return;
+    }
+
+    const container = this.add.container(640, 360).setDepth(105);
+    this.ui.push(container);
+
+    const blocker = this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.68);
+    blocker.setInteractive();
+    container.add(blocker);
+    container.add(this.add.rectangle(0, 0, 520, 270, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.danger));
+
+    const title = this.add.text(0, -84, t('battle.formalExit.title'), {
+      fontFamily: 'Arial',
+      fontSize: '28px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    const body = this.add.text(0, -22, t('battle.formalExit.body'), {
+      fontFamily: 'Arial',
+      fontSize: '18px',
+      color: COLORS.muted,
+      align: 'center',
+      lineSpacing: 8,
+      wordWrap: { width: 410 },
+    }).setOrigin(0.5);
+
+    container.add([
+      title,
+      body,
+      this.button(-172, 62, 150, 46, t('battle.formalExit.cancel'), () => {
+        this.confirmExitFormalGame = false;
+        this.render();
+      }),
+      this.button(22, 62, 184, 46, t('battle.formalExit.confirm'), () => {
+        this.confirmExitFormalGame = false;
+        this.scene.start('StartScene');
+      }, COLORS.danger, '17px'),
+    ]);
+  }
+
   private handleActionButton(buttonState: BattleActionButtonState): void {
     if (buttonState.id === 'view-hand') {
       this.battle.execute(buttonState.action);
@@ -850,19 +1028,21 @@ export class BattleScene extends Phaser.Scene {
       const events = this.battle.consumePresentationEvents();
       this.playImmediatePresentationEvents(events);
       this.playActionDealEvents(events, () => {
-        const continueAfterInviteDialogue = () => {
-          if (this.showPlayerTurnLessonIfNeeded()) {
+        this.playPassiveEffectEvents(events, () => {
+          const continueAfterInviteDialogue = () => {
+            if (this.showPlayerTurnLessonIfNeeded()) {
+              return;
+            }
+
+            this.render();
+          };
+
+          if (invitedEnemyId && this.showInviteDialogueIfNeeded(invitedEnemyId, continueAfterInviteDialogue)) {
             return;
           }
 
-          this.render();
-        };
-
-        if (invitedEnemyId && this.showInviteDialogueIfNeeded(invitedEnemyId, continueAfterInviteDialogue)) {
-          return;
-        }
-
-        continueAfterInviteDialogue();
+          continueAfterInviteDialogue();
+        });
       });
       return;
     }
@@ -884,7 +1064,9 @@ export class BattleScene extends Phaser.Scene {
       }
 
       this.battle.execute({ type: 'next-round' });
-      this.startDealPresentation();
+      const events = this.battle.consumePresentationEvents();
+      this.playImmediatePresentationEvents(events);
+      this.playPassiveEffectEvents(events, () => this.startDealPresentation());
     });
   }
 
@@ -894,7 +1076,11 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.battleEconomySettled = true;
-    const economy = settleBattleEconomy(this.battle.battleOutcome, this.battle.player.hp);
+    const economy = settleBattleEconomy(
+      this.battle.battleOutcome,
+      this.battle.player.hp,
+      this.battle.tableThemeConfig?.rewardMultiplier ?? 1,
+    );
     if (this.battle.battleOutcome === 'victory' && this.battle.levelConfig?.id) {
       completeStoryLevelAndUnlockNext(this.battle.levelConfig.id);
     }
@@ -969,6 +1155,11 @@ export class BattleScene extends Phaser.Scene {
 
   private continueAfterResult(): void {
     const levelId = this.battle.levelConfig?.id;
+    if (!levelId && this.tableThemeId) {
+      this.scene.start('TableSelectScene');
+      return;
+    }
+
     if (!levelId) {
       this.scene.start('BattleScene', {});
       return;
@@ -1777,6 +1968,16 @@ export class BattleScene extends Phaser.Scene {
     return icon;
   }
 
+  private enemyHasPassiveInfo(enemy: EnemyState): boolean {
+    return enemy.id === 'goblin'
+      || enemy.id === 'gambler'
+      || enemy.id === 'werewolf'
+      || enemy.id === 'keeper'
+      || enemy.id === 'viking_warrior'
+      || enemy.id === 'rune_shaman'
+      || enemy.id === 'valkyrie';
+  }
+
   private enemyPassiveInfo(enemy: EnemyState): { name: string; icon: string; description: string; color: number; textColor: string } {
     if (enemy.id === 'goblin') {
       return {
@@ -1808,6 +2009,36 @@ export class BattleScene extends Phaser.Scene {
       };
     }
 
+    if (enemy.id === 'viking_warrior') {
+      return {
+        name: t('skill.warHorn.name'),
+        icon: 'H',
+        description: t('skill.warHorn.tooltip'),
+        color: 0xff8a3d,
+        textColor: '#ffad6b',
+      };
+    }
+
+    if (enemy.id === 'rune_shaman') {
+      return {
+        name: t('skill.runeBlessing.name'),
+        icon: 'R',
+        description: t('skill.runeBlessing.tooltip'),
+        color: 0x79c9ff,
+        textColor: '#9ed8ff',
+      };
+    }
+
+    if (enemy.id === 'valkyrie') {
+      return {
+        name: t('skill.einherjarSummon.name'),
+        icon: 'V',
+        description: t('skill.einherjarSummon.tooltip'),
+        color: 0xf7d889,
+        textColor: '#ffe39a',
+      };
+    }
+
     return {
       name: t('skill.werewolfLifesteal.name'),
       icon: 'V',
@@ -1828,6 +2059,18 @@ export class BattleScene extends Phaser.Scene {
 
     if (enemy.id === 'keeper') {
       return !enemy.soulRedeemUsed && !enemy.defeated;
+    }
+
+    if (enemy.id === 'viking_warrior') {
+      return enemy.hp < 3 && !enemy.passiveTriggered && !enemy.defeated;
+    }
+
+    if (enemy.id === 'rune_shaman') {
+      return enemy.hp < 3 && !enemy.defeated;
+    }
+
+    if (enemy.id === 'valkyrie') {
+      return enemy.hp < 4 && enemy.summonCount < 2 && !enemy.defeated;
     }
 
     return enemy.hp < 3 && !enemy.defeated;
@@ -2067,6 +2310,28 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
+  private passiveEffectEvents(events: BattlePresentationEvent[]): Extract<BattlePresentationEvent, { type: 'passive-effect' }>[] {
+    return events.filter((event): event is Extract<BattlePresentationEvent, { type: 'passive-effect' }> => event.type === 'passive-effect');
+  }
+
+  private cardsRedealtEvents(events: BattlePresentationEvent[]): Extract<BattlePresentationEvent, { type: 'cards-redealt' }>[] {
+    return events.filter((event): event is Extract<BattlePresentationEvent, { type: 'cards-redealt' }> => event.type === 'cards-redealt');
+  }
+
+  private preCombatPresentationEvents(events: BattlePresentationEvent[]): BattlePresentationEvent[] {
+    return events.filter((event) => (
+      (event.type === 'passive-effect' && event.passiveId === 'gambler_blessing')
+      || event.type === 'cards-redealt'
+    ));
+  }
+
+  private postCombatPresentationEvents(events: BattlePresentationEvent[]): BattlePresentationEvent[] {
+    return events.filter((event) => !(
+      (event.type === 'passive-effect' && event.passiveId === 'gambler_blessing')
+      || event.type === 'cards-redealt'
+    ));
+  }
+
   private runAction(action: () => void): void {
     const roundBefore = this.battle.round;
     const hpBefore = this.hpSnapshot();
@@ -2083,71 +2348,77 @@ export class BattleScene extends Phaser.Scene {
     const skipRevealBanner = phaseBefore === 'enemy-turn' && comparedBefore === aliveBefore - 1 && this.hasRoundRevealEvent(events);
 
     this.playActionDealEvents(events, () => {
-      if (!this.hasCombatEvents(events)) {
-        this.render();
-      }
-
-      this.playPostActionAnimations(events, hpBefore, skipRevealBanner, () => {
-        if (this.hasPendingSoulRedeem()) {
-          this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
-          return;
+      const continueAfterActionDeals = () => {
+        if (!this.hasCombatEvents(events)) {
+          this.render();
         }
 
-        const continueAfterRevealDialogue = () => {
-          if (!shouldDelayResultModal) {
-            if (shouldDealNewRound) {
-              this.startDealPresentation();
-            } else if (this.showPlayerTurnLessonIfNeeded()) {
-              return;
-            } else {
-              this.render();
-            }
+        this.playPostActionAnimations(events, hpBefore, skipRevealBanner, () => {
+          this.playPassiveEffectEvents(this.postCombatPresentationEvents(events), () => {
+          if (this.hasPendingSoulRedeem()) {
+            this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
             return;
           }
 
-          const showResult = () => {
-            this.resultModalReady = true;
-            if (shouldDealNewRound) {
-              this.startDealPresentation();
-            } else if (this.showPlayerTurnLessonIfNeeded()) {
+          const continueAfterRevealDialogue = () => {
+            if (!shouldDelayResultModal) {
+              if (shouldDealNewRound) {
+                this.startDealPresentation();
+              } else if (this.showPlayerTurnLessonIfNeeded()) {
+                return;
+              } else {
+                this.render();
+              }
               return;
-            } else {
-              this.render();
             }
+
+            const showResult = () => {
+              this.resultModalReady = true;
+              if (shouldDealNewRound) {
+                this.startDealPresentation();
+              } else if (this.showPlayerTurnLessonIfNeeded()) {
+                return;
+              } else {
+                this.render();
+              }
+            };
+
+            if (this.showResultStoryIfNeeded(showResult)) {
+              return;
+            }
+
+            showResult();
           };
 
-          if (this.showResultStoryIfNeeded(showResult)) {
+          const continueAfterDamageFeedback = () => {
+            if (this.hasRoundRevealEvent(events) && this.showRevealDialogueIfNeeded(continueAfterRevealDialogue)) {
+              return;
+            }
+
+            continueAfterRevealDialogue();
+          };
+
+          if (this.showChapter3DamageFeedbackIfNeeded(events, continueAfterDamageFeedback)) {
             return;
           }
 
-          showResult();
-        };
-
-        const continueAfterDamageFeedback = () => {
-          if (this.hasRoundRevealEvent(events) && this.showRevealDialogueIfNeeded(continueAfterRevealDialogue)) {
+          if (this.showChapter4ResonanceFeedbackIfNeeded(events, continueAfterDamageFeedback)) {
             return;
           }
 
-          continueAfterRevealDialogue();
-        };
+          continueAfterDamageFeedback();
+          });
+        });
+      };
 
-        if (this.showChapter3DamageFeedbackIfNeeded(events, continueAfterDamageFeedback)) {
-          return;
-        }
-
-        if (this.showChapter4ResonanceFeedbackIfNeeded(events, continueAfterDamageFeedback)) {
-          return;
-        }
-
-        continueAfterDamageFeedback();
-      });
+      continueAfterActionDeals();
     });
   }
 
   private playPostActionAnimations(events: BattlePresentationEvent[], hpBefore: { player: number; enemies: number[] }, skipRevealBanner = false, onComplete?: () => void): void {
     const combatEvents = this.combatEvents(events);
     if (combatEvents.length === 0) {
-      onComplete?.();
+      this.playPreCombatPresentationEvents(events, () => onComplete?.());
       return;
     }
 
@@ -2161,13 +2432,81 @@ export class BattleScene extends Phaser.Scene {
         onComplete?.();
       });
     };
+    const playPreCombatThenDamage = () => {
+      this.playPreCombatPresentationEvents(events, playWithDelayedHp);
+    };
 
     if (combatEvents.length > 0 && this.hasRoundRevealEvent(events) && !skipRevealBanner) {
-      this.playRevealBannerThen(playWithDelayedHp);
+      this.playRevealBannerThen(playPreCombatThenDamage);
       return;
     }
 
-    playWithDelayedHp();
+    playPreCombatThenDamage();
+  }
+
+  private playPreCombatPresentationEvents(events: BattlePresentationEvent[], onComplete: () => void): void {
+    const preEvents = this.preCombatPresentationEvents(events);
+    if (preEvents.length === 0) {
+      onComplete();
+      return;
+    }
+
+    this.playPassiveEffectEvents(preEvents, () => {
+      this.playCardsRedealtEvents(preEvents, onComplete);
+    });
+  }
+
+  private playCardsRedealtEvents(events: BattlePresentationEvent[], onComplete: () => void): void {
+    const redealEvents = this.cardsRedealtEvents(events);
+    if (redealEvents.length === 0) {
+      onComplete();
+      return;
+    }
+
+    const playStep = (index: number) => {
+      if (index >= redealEvents.length) {
+        onComplete();
+        return;
+      }
+
+      this.playEnemyRedeal(redealEvents[index], () => {
+        this.time.delayedCall(120, () => playStep(index + 1));
+      });
+    };
+
+    playStep(0);
+  }
+
+  private playEnemyRedeal(event: Extract<BattlePresentationEvent, { type: 'cards-redealt' }>, onComplete: () => void): void {
+    const enemyIndex = event.targetEnemyIndex;
+    if (enemyIndex < 0 || enemyIndex >= this.battle.enemies.length) {
+      onComplete();
+      return;
+    }
+
+    this.actionDealing = true;
+    this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
+    this.dealtEnemyCards[enemyIndex] = 0;
+    this.render();
+
+    const count = Math.min(event.count, this.battle.enemies[enemyIndex].hand.length);
+    const playCard = (cardIndex: number) => {
+      if (cardIndex >= count || !this.actionDealing) {
+        this.actionDealing = false;
+        this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
+        this.render();
+        onComplete();
+        return;
+      }
+
+      this.playDealCard(this.dealTargetForEnemy(enemyIndex, cardIndex), () => {
+        this.dealtEnemyCards[enemyIndex] = Math.max(this.dealtEnemyCards[enemyIndex], cardIndex + 1);
+        this.render();
+        this.time.delayedCall(90, () => playCard(cardIndex + 1));
+      });
+    };
+
+    playCard(0);
   }
 
   private hasCombatEvents(events: BattlePresentationEvent[]): boolean {
@@ -2381,6 +2720,244 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(totalDuration, () => onComplete?.());
   }
 
+  private playPassiveEffectEvents(events: BattlePresentationEvent[], onComplete: () => void): void {
+    const passiveEvents = this.passiveEffectEvents(events);
+    if (passiveEvents.length === 0) {
+      onComplete();
+      return;
+    }
+
+    this.actionAnimationPlaying = true;
+    this.render();
+    const playStep = (index: number) => {
+      if (index >= passiveEvents.length) {
+        this.actionAnimationPlaying = false;
+        this.render();
+        onComplete();
+        return;
+      }
+
+      this.playPassiveEffect(passiveEvents[index], () => {
+        this.time.delayedCall(PASSIVE_EFFECT_TIMING.stepGap, () => playStep(index + 1));
+      });
+    };
+
+    playStep(0);
+  }
+
+  private playPassiveEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    if (event.passiveId === 'goblin_instinct') {
+      this.playGoblinInstinctEffect(event, onComplete);
+      return;
+    }
+
+    if (event.passiveId === 'gambler_blessing') {
+      this.playGamblerBlessingEffect(event, onComplete);
+      return;
+    }
+
+    if (event.passiveId === 'werewolf_lifesteal') {
+      this.playWerewolfLifestealEffect(event, onComplete);
+      return;
+    }
+
+    if (event.passiveId === 'war_horn') {
+      this.playWarHornEffect(event, onComplete);
+      return;
+    }
+
+    if (event.passiveId === 'rune_blessing') {
+      this.playRuneBlessingEffect(event, onComplete);
+      return;
+    }
+
+    this.playEinherjarSummonEffect(event, onComplete);
+  }
+
+  private playGoblinInstinctEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    const player = new Phaser.Math.Vector2(SEATS.player.x, SEATS.player.y);
+    this.sound.play('attackWind', { volume: 0.28 });
+    this.flashEnemySeat(event.sourceEnemyIndex, 0x65d46e, t('battle.passive.goblinInstinct'), '#78d18a');
+    this.playShockwave(source.x, source.y, 0x65d46e, 140);
+    this.playInsightLine(source, player, 0x65d46e);
+    this.time.delayedCall(PASSIVE_EFFECT_TIMING.goblinTotal, onComplete);
+  }
+
+  private playGamblerBlessingEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    this.sound.play('cardPlace', { volume: 0.48 });
+    this.flashEnemySeat(event.sourceEnemyIndex, 0xf25f9a, t('battle.passive.gamblerBlessing'), '#ff7bb6');
+    this.playCardShuffleBurst(source.x, source.y + 16, 0xf25f9a);
+    this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+  }
+
+  private playWerewolfLifestealEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    const player = new Phaser.Math.Vector2(SEATS.player.x, SEATS.player.y);
+    this.sound.play('healSound', { volume: 0.46 });
+    this.flashEnemySeat(event.sourceEnemyIndex, 0x73c7ff, t('battle.passive.werewolfLifesteal'), '#88d4ff');
+    this.playBloodReturn(player, source, 0xef6f6c);
+    this.time.delayedCall(260, () => this.flashEnemySeat(event.sourceEnemyIndex, 0x78d18a, t('battle.passive.hpGain', { amount: event.amount ?? 1 }), '#89f09f'));
+    this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+  }
+
+  private playWarHornEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    this.sound.play('attackFire', { volume: 0.46 });
+    this.flashEnemySeat(event.sourceEnemyIndex, 0xff8a3d, t('battle.passive.warHorn'), '#ffad6b');
+    this.playShockwave(source.x, source.y, 0xff5a2c, 260);
+    event.targetEnemyIndexes.forEach((index, offset) => {
+      this.time.delayedCall(120 + offset * 70, () => this.flashEnemySeat(index, 0xff3f3f, t('battle.passive.attackUp'), '#ff6f6f'));
+    });
+    this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+  }
+
+  private playRuneBlessingEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    const isHeal = event.effect === 'heal';
+    const color = isHeal ? 0x78d18a : 0x79c9ff;
+    const textColor = isHeal ? '#89f09f' : '#9ed8ff';
+    this.sound.play(isHeal ? 'healSound' : 'attackWind', { volume: isHeal ? 0.44 : 0.36 });
+    this.flashEnemySeat(event.sourceEnemyIndex, 0x79c9ff, t('battle.passive.runeBlessing'), '#9ed8ff');
+    this.playShockwave(source.x, source.y, 0x79c9ff, 190);
+    event.targetEnemyIndexes.forEach((index, offset) => {
+      const label = isHeal ? t('battle.passive.hpUp') : t('battle.passive.attackUp');
+      this.time.delayedCall(180 + offset * 80, () => this.flashEnemySeat(index, color, label, textColor));
+    });
+    this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+  }
+
+  private playEinherjarSummonEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    this.sound.play('resonanceEcho', { volume: 0.5 });
+    this.flashEnemySeat(event.sourceEnemyIndex, 0xf7d889, t('battle.passive.einherjarSummon'), '#ffe39a');
+    this.playShockwave(source.x, source.y, 0xf7d889, 220);
+    event.targetEnemyIndexes.forEach((index, offset) => {
+      this.time.delayedCall(220 + offset * 120, () => {
+        const target = this.enemySeatCenter(index);
+        this.playSummonColumn(target.x, target.y, 0xf7d889);
+        this.flashEnemySeat(index, 0xf7d889, t('battle.passive.einherjarArrive'), '#ffe39a');
+      });
+    });
+    this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+  }
+
+  private enemySeatCenter(index: number): Phaser.Math.Vector2 {
+    const seat = this.enemySeatForIndex(index);
+    return new Phaser.Math.Vector2(seat.x, seat.y);
+  }
+
+  private flashEnemySeat(index: number, color: number, label: string, textColor: string): void {
+    const seat = this.enemySeatForIndex(index);
+    const overlay = this.add.container(seat.x, seat.y).setDepth(28);
+    const frame = this.add.rectangle(0, 0, seat.width + 12, seat.height + 12, color, 0.08).setStrokeStyle(4, color, 1);
+    const text = this.add.text(0, -seat.height / 2 - 18, label, {
+      fontFamily: 'Arial',
+      fontSize: '26px',
+      color: textColor,
+      fontStyle: 'bold',
+      stroke: '#101114',
+      strokeThickness: 5,
+    }).setOrigin(0.5);
+    text.setShadow(0, 0, textColor, 14, true, true);
+    overlay.add([frame, text]);
+    overlay.setAlpha(0);
+    overlay.setScale(0.94);
+
+    this.tweens.add({
+      targets: overlay,
+      alpha: 1,
+      scale: 1,
+      duration: PASSIVE_EFFECT_TIMING.flashIn,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.time.delayedCall(PASSIVE_EFFECT_TIMING.flashHold, () => {
+          this.tweens.add({
+            targets: overlay,
+            alpha: 0,
+            scale: 1.08,
+            duration: PASSIVE_EFFECT_TIMING.flashOut,
+            ease: 'Sine.easeOut',
+            onComplete: () => overlay.destroy(true),
+          });
+        });
+      },
+    });
+  }
+
+  private playShockwave(x: number, y: number, color: number, radius: number): void {
+    const wave = this.add.circle(x, y, 18, color, 0.08).setStrokeStyle(5, color, 0.95).setDepth(24);
+    this.tweens.add({
+      targets: wave,
+      radius,
+      alpha: 0,
+      duration: PASSIVE_EFFECT_TIMING.shockwave,
+      ease: 'Cubic.easeOut',
+      onComplete: () => wave.destroy(),
+    });
+  }
+
+  private playSummonColumn(x: number, y: number, color: number): void {
+    const column = this.add.rectangle(x, y, 74, 210, color, 0.24).setDepth(25);
+    column.setStrokeStyle(3, color, 0.9);
+    this.tweens.add({
+      targets: column,
+      alpha: 0,
+      scaleY: 1.32,
+      duration: PASSIVE_EFFECT_TIMING.shockwave,
+      ease: 'Sine.easeOut',
+      onComplete: () => column.destroy(),
+    });
+  }
+
+  private playInsightLine(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, color: number): void {
+    const line = this.add.line(0, 0, from.x, from.y, to.x, to.y, color, 0.9).setOrigin(0, 0).setDepth(27);
+    line.setLineWidth(4);
+    this.tweens.add({
+      targets: line,
+      alpha: 0,
+      duration: PASSIVE_EFFECT_TIMING.insightLine,
+      ease: 'Sine.easeOut',
+      onComplete: () => line.destroy(),
+    });
+  }
+
+  private playCardShuffleBurst(x: number, y: number, color: number): void {
+    for (let index = 0; index < 5; index += 1) {
+      const card = this.add.rectangle(x - 36 + index * 18, y, 26, 36, 0xf2f2ed, 0.92).setStrokeStyle(2, color, 0.9).setDepth(27);
+      card.setAngle(-16 + index * 8);
+      this.tweens.add({
+        targets: card,
+        x: x + Math.sin(index) * 52,
+        y: y - 34 - index * 4,
+        angle: card.angle + 110,
+        alpha: 0,
+        duration: PASSIVE_EFFECT_TIMING.shuffleCard,
+        ease: 'Cubic.easeOut',
+        delay: index * 38,
+        onComplete: () => card.destroy(),
+      });
+    }
+  }
+
+  private playBloodReturn(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, color: number): void {
+    const orb = this.add.circle(from.x, from.y - 18, 10, color, 0.82).setDepth(27);
+    orb.setStrokeStyle(3, 0xffffff, 0.38);
+    this.tweens.add({
+      targets: orb,
+      x: to.x,
+      y: to.y,
+      scale: 1.35,
+      duration: PASSIVE_EFFECT_TIMING.bloodReturn,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        this.playImpactBurst(to.x, to.y, color);
+        orb.destroy();
+      },
+    });
+  }
+
   private playCombatAnimation(event: BattleCombatPresentationEvent): void {
     const enemy = this.battle.enemies.find((item) => item.id === event.enemyId);
     if (!enemy) {
@@ -2403,6 +2980,18 @@ export class BattleScene extends Phaser.Scene {
     const label = event.attacker === 'player' ? t('common.player') : enemyName(enemy.id);
 
     const resonantAttack = event.resonance === 'resonance' || event.resonance === 'strong';
+    if (event.attacker === 'player' && resonantAttack && getProgress().equippedAttackEffect === 'thunder_hammer') {
+      const hammerResonance = event.resonance === 'strong' ? 'strong' : 'resonance';
+      this.playThunderHammerAttack(to, hammerResonance, () => {
+        this.sound.play('damageExplosion', { volume: event.resonance === 'strong' ? 0.66 : 0.56 });
+        this.applyVisualDamage(event, enemy);
+        this.playImpactBurst(to.x, to.y, 0x7fd7ff);
+        this.playDamageText(to.x, to.y - 42, event.amount);
+        this.shakeSeat(enemy.id);
+      });
+      return;
+    }
+
     this.playProjectile(from, to, color, label, resonantAttack, () => {
       this.sound.play('damageExplosion', { volume: 0.5 });
       this.applyVisualDamage(event, enemy);
@@ -2410,6 +2999,154 @@ export class BattleScene extends Phaser.Scene {
       this.playDamageText(to.x, to.y - 42, event.amount);
       this.shakeSeat(event.attacker === 'player' ? enemy.id : 'player');
     });
+  }
+
+  private playThunderHammerAttack(to: Phaser.Math.Vector2, resonance: 'resonance' | 'strong' | undefined, onHit: () => void): void {
+    const strong = resonance === 'strong';
+    const stormColor = 0x7fd7ff;
+    const goldColor = 0xf6d86b;
+    const startY = Math.max(58, to.y - 230);
+    const hammer = this.add.container(to.x - 34, startY).setDepth(24).setAlpha(0);
+    const handle = this.add.rectangle(0, -16, 12, 98, 0x6b4a2a).setStrokeStyle(2, strong ? goldColor : 0xf4d58a);
+    const head = this.add.rectangle(0, 34, 92, 34, 0x4d5566).setStrokeStyle(strong ? 4 : 3, strong ? goldColor : 0xd7e8ff);
+    const glow = this.add.circle(0, 34, strong ? 64 : 56, strong ? goldColor : stormColor, strong ? 0.18 : 0.16);
+    hammer.add([glow, handle, head]);
+    hammer.setAngle(-18);
+    hammer.setScale(0.92);
+
+    const charge = this.add.circle(to.x, to.y, strong ? 18 : 12, stormColor, strong ? 0.24 : 0.18).setDepth(22);
+    this.tweens.add({
+      targets: charge,
+      scale: strong ? 7.4 : 5.8,
+      alpha: 0,
+      duration: strong ? 660 : 520,
+      ease: 'Cubic.easeOut',
+      onComplete: () => charge.destroy(),
+    });
+
+    this.sound.play('attackWind', { volume: strong ? 0.68 : 0.56 });
+    this.tweens.add({
+      targets: hammer,
+      y: to.y - 30,
+      x: to.x - 10,
+      angle: 8,
+      alpha: 1,
+      scale: 1.12,
+      duration: strong ? 560 : 520,
+      ease: 'Cubic.easeIn',
+      onComplete: () => {
+        this.playLightningStrike(to.x, to.y, stormColor, goldColor, strong);
+        onHit();
+        this.tweens.add({
+          targets: hammer,
+          y: to.y - 92,
+          alpha: 0,
+          duration: 360,
+          ease: 'Quad.easeOut',
+          onComplete: () => hammer.destroy(true),
+        });
+      },
+    });
+  }
+
+  private playLightningStrike(x: number, y: number, stormColor: number, goldColor: number, strong = false): void {
+    const bolt = this.add.graphics().setDepth(23);
+    const topY = Math.max(40, y - (strong ? 300 : 250));
+    const points = [
+      new Phaser.Math.Vector2(x + Phaser.Math.Between(strong ? -28 : -18, strong ? 28 : 18), topY),
+      new Phaser.Math.Vector2(x + Phaser.Math.Between(strong ? -52 : -34, strong ? 52 : 34), y - (strong ? 205 : 170)),
+      new Phaser.Math.Vector2(x + Phaser.Math.Between(strong ? -44 : -28, strong ? 44 : 28), y - (strong ? 118 : 96)),
+      new Phaser.Math.Vector2(x + Phaser.Math.Between(strong ? -26 : -18, strong ? 26 : 18), y - 20),
+      new Phaser.Math.Vector2(x, y),
+    ];
+
+    bolt.lineStyle(strong ? 14 : 10, 0xffffff, 0.95);
+    bolt.beginPath();
+    bolt.moveTo(points[0].x, points[0].y);
+    points.slice(1).forEach((point) => bolt.lineTo(point.x, point.y));
+    bolt.strokePath();
+    bolt.lineStyle(strong ? 6 : 4, stormColor, 1);
+    bolt.beginPath();
+    bolt.moveTo(points[0].x, points[0].y);
+    points.slice(1).forEach((point) => bolt.lineTo(point.x, point.y));
+    bolt.strokePath();
+    if (strong) {
+      this.drawLightningFork(bolt, x, y, stormColor, -1);
+      this.drawLightningFork(bolt, x, y, stormColor, 1);
+      this.drawLightningFork(bolt, x, y, goldColor, -1);
+      this.drawLightningFork(bolt, x, y, goldColor, 1);
+      this.drawLightningFork(bolt, x, y, stormColor, Phaser.Math.Between(0, 1) === 0 ? -1 : 1);
+    }
+
+    const ring = this.add.circle(x, y, strong ? 28 : 20, goldColor, strong ? 0.24 : 0.18).setDepth(22).setStrokeStyle(strong ? 5 : 4, stormColor, 0.8);
+    const core = this.add.circle(x, y, strong ? 14 : 10, 0xffffff, 0.9).setDepth(24);
+    const localFlash = this.add.circle(x, y, strong ? 46 : 34, 0xffffff, strong ? 0.22 : 0.18).setDepth(23);
+    const outerRing = strong
+      ? this.add.circle(x, y, 42, stormColor, 0.08).setDepth(21).setStrokeStyle(3, goldColor, 0.72)
+      : undefined;
+
+    this.tweens.add({
+      targets: bolt,
+      alpha: 0,
+      duration: strong ? 360 : 260,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        bolt.destroy();
+      },
+    });
+    this.tweens.add({
+      targets: ring,
+      scale: strong ? 5.6 : 4.6,
+      alpha: 0,
+      duration: strong ? 680 : 520,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+    this.tweens.add({
+      targets: core,
+      scale: 2.8,
+      alpha: 0,
+      duration: 300,
+      ease: 'Quad.easeOut',
+      onComplete: () => core.destroy(),
+    });
+    this.tweens.add({
+      targets: localFlash,
+      scale: 2.2,
+      alpha: 0,
+      duration: 240,
+      ease: 'Quad.easeOut',
+      onComplete: () => localFlash.destroy(),
+    });
+    if (outerRing) {
+      this.tweens.add({
+        targets: outerRing,
+        scale: 4.8,
+        alpha: 0,
+        duration: 780,
+        ease: 'Cubic.easeOut',
+        onComplete: () => outerRing.destroy(),
+      });
+    }
+  }
+
+  private drawLightningFork(graphics: Phaser.GameObjects.Graphics, x: number, y: number, color: number, direction: -1 | 1): void {
+    const startX = x + Phaser.Math.Between(-18, 18);
+    const startY = y - Phaser.Math.Between(92, 158);
+    const endX = x + direction * Phaser.Math.Between(54, 92);
+    const endY = startY + Phaser.Math.Between(24, 54);
+    graphics.lineStyle(3, 0xffffff, 0.82);
+    graphics.beginPath();
+    graphics.moveTo(startX, startY);
+    graphics.lineTo((startX + endX) / 2 + direction * 14, (startY + endY) / 2);
+    graphics.lineTo(endX, endY);
+    graphics.strokePath();
+    graphics.lineStyle(2, color, 0.92);
+    graphics.beginPath();
+    graphics.moveTo(startX, startY);
+    graphics.lineTo((startX + endX) / 2 + direction * 14, (startY + endY) / 2);
+    graphics.lineTo(endX, endY);
+    graphics.strokePath();
   }
 
   private applyVisualDamage(event: Extract<BattleCombatPresentationEvent, { type: 'damage' }>, enemy: EnemyState): void {

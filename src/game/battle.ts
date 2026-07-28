@@ -6,8 +6,10 @@ import { Deck } from './deck';
 import { EnemyState, createEnemiesForLevel, decideInvite } from './enemy';
 import { EnemyType } from './enemy';
 import { ResonanceKind, ScoreResult, scoreHand } from './scoring';
-import { chooseResonanceShift, chooseResonanceSummonSuit } from './skills/resonanceSkills';
+import { chooseResonanceShift, chooseResonanceSummonTarget, isResonanceSummonMatch } from './skills/resonanceSkills';
+import type { BattlePresentationEvent } from './engine/BattleEvents';
 import type { BattleMechanicId, FixedRoundConfig, FixedRoundEnemyConfig, LevelConfig } from './types/level';
+import type { TableThemeConfig } from './types/tableTheme';
 
 export type BattlePhase = 'choice' | 'enemy-turn' | 'player-turn' | 'round-result' | 'battle-result';
 export type BattleOutcome = 'victory' | 'defeat' | undefined;
@@ -52,6 +54,7 @@ export interface SkillResult {
 export interface BattleInitOptions {
   levelId?: string;
   levelConfig?: LevelConfig;
+  tableThemeConfig?: TableThemeConfig;
 }
 
 export class Battle {
@@ -59,6 +62,7 @@ export class Battle {
   readonly enemies: EnemyState[];
   readonly log: string[];
   readonly levelConfig?: LevelConfig;
+  readonly tableThemeConfig?: TableThemeConfig;
 
   phase: BattlePhase;
   battleOutcome: BattleOutcome;
@@ -69,13 +73,15 @@ export class Battle {
   pendingEnemySoulRedeem?: EnemyType;
   results: BattleResult[];
   damageEvents: DamageEvent[];
+  passiveEffectEvents: BattlePresentationEvent[];
 
   private deck: Deck;
 
   constructor(options: BattleInitOptions = {}) {
     this.deck = new Deck();
     this.levelConfig = options.levelConfig ?? (options.levelId ? getLevelById(options.levelId) : undefined);
-    const playerHp = this.levelConfig?.playerHp ?? 12;
+    this.tableThemeConfig = options.tableThemeConfig;
+    const playerHp = this.levelConfig?.playerHp ?? this.tableThemeConfig?.playerHp ?? 12;
     this.player = {
       hp: playerHp,
       maxHp: playerHp,
@@ -90,7 +96,7 @@ export class Battle {
       incomingDamageBonus: 0,
       soulRedeemUsed: false,
     };
-    this.enemies = createEnemiesForLevel(this.levelConfig);
+    this.enemies = createEnemiesForLevel(this.levelConfig, this.tableThemeConfig);
     this.log = [];
     this.phase = 'choice';
     this.battleOutcome = undefined;
@@ -101,6 +107,7 @@ export class Battle {
     this.pendingEnemySoulRedeem = undefined;
     this.results = [];
     this.damageEvents = [];
+    this.passiveEffectEvents = [];
     this.startRound();
   }
 
@@ -140,6 +147,7 @@ export class Battle {
     const drawCount = 1;
     if (this.hasMechanic('enemy_passives') && enemy.id === 'goblin' && enemy.hp < 3 && !enemy.passiveTriggeredThisRound) {
       enemy.passiveTriggeredThisRound = true;
+      this.pushPassiveEffect('goblin_instinct', enemy, [enemy], 'sense');
       this.logEvent(t('log.goblinInstinct'));
     }
 
@@ -287,28 +295,28 @@ export class Battle {
       return { used: false, success: false, message: t('skill.invalid.noResonance') };
     }
 
-    const targetSuit = chooseResonanceSummonSuit(this.player.hand);
-    if (!targetSuit) {
-      this.logEvent(t('log.summonNoSuit'));
-      return { used: false, success: false, message: t('skill.invalid.noSummonSuit') };
+    const summonTarget = chooseResonanceSummonTarget(this.player.hand);
+    if (!summonTarget) {
+      this.logEvent(t('log.summonNoTarget'));
+      return { used: false, success: false, message: t('skill.invalid.noSummonTarget') };
     }
 
     const fixedSummonCard = this.currentFixedRound()?.resonanceSummonCard
       ? cardFromCode(this.currentFixedRound()?.resonanceSummonCard ?? '')
       : undefined;
-    const card = fixedSummonCard?.suit === targetSuit
+    const card = fixedSummonCard && isResonanceSummonMatch(fixedSummonCard, summonTarget)
       ? this.deck.drawWhere((candidate) => candidate.suit === fixedSummonCard.suit && candidate.rank === fixedSummonCard.rank) ?? fixedSummonCard
-      : this.deck.drawWhere((candidate) => !isJoker(candidate) && candidate.suit === targetSuit);
+      : this.deck.drawWhere((candidate) => isResonanceSummonMatch(candidate, summonTarget));
     if (!card) {
-      this.logEvent(t('log.summonNoDeckSuit', { suit: targetSuit }));
-      return { used: false, success: false, message: t('skill.invalid.noSuitInDeck', { suit: targetSuit }) };
+      const target = summonTarget.kind === 'rank' ? summonTarget.rank : summonTarget.suit;
+      this.logEvent(t('log.summonNoDeckTarget', { target }));
+      return { used: false, success: false, message: t('skill.invalid.noSummonTargetInDeck', { target }) };
     }
 
     this.player.resonanceSummonUsed = true;
     this.player.resonanceSummonCooldown = 2;
     this.player.resonanceShiftUsed = true;
     this.player.drawLocked = true;
-    this.player.incomingDamageBonus = 1;
     this.player.hand.push(card);
     this.logEvent(t('log.summon', { card: formatCard(card) }));
     this.logEvent(t('log.playerMustReveal'));
@@ -393,9 +401,14 @@ export class Battle {
         invited: enemy.invited,
         acceptedInvite: enemy.acceptedInvite,
         invitedDrawCount: enemy.invitedDrawCount,
+        passiveTriggered: enemy.passiveTriggered,
         passiveTriggeredThisRound: enemy.passiveTriggeredThisRound,
         soulRedeemUsed: enemy.soulRedeemUsed,
         defeated: enemy.defeated,
+        attackBonus: enemy.attackBonus,
+        roundAttackBonus: enemy.roundAttackBonus,
+        summoned: enemy.summoned,
+        summonCount: enemy.summonCount,
         score: this.scoreFor(enemy.hand),
       })),
       aliveEnemyIds: this.aliveEnemies.map((enemy) => enemy.id),
@@ -475,7 +488,6 @@ export class Battle {
     this.phase = 'choice';
     this.battleOutcome = undefined;
     this.roundRevealed = false;
-    this.currentEnemyIndex = this.firstAliveEnemyIndex();
     this.player.fateMode = false;
     this.player.drawCountThisRound = 0;
     this.player.resonanceShiftUsed = false;
@@ -488,6 +500,8 @@ export class Battle {
     if (fixedRound?.playerHp !== undefined) {
       this.player.hp = Math.min(this.player.maxHp, Math.max(0, Math.floor(fixedRound.playerHp)));
     }
+    this.prepareEnemyRoundStartPassives();
+    this.currentEnemyIndex = this.firstAliveEnemyIndex();
     this.player.hand = fixedRound
       ? fixedRound.playerCards.map(cardFromCode)
       : [this.deck.draw(), this.deck.draw()];
@@ -498,7 +512,6 @@ export class Battle {
       enemy.invited = undefined;
       enemy.acceptedInvite = undefined;
       enemy.invitedDrawCount = undefined;
-      enemy.passiveTriggeredThisRound = false;
 
       if (enemy.defeated) {
         return;
@@ -554,7 +567,7 @@ export class Battle {
       this.damageEvents.push({ type: 'damage', attacker: 'player', enemyId: enemy.id, amount: damage, resonance: playerScore.resonance });
     } else if (comparison < 0) {
       outcome = 'lose';
-      damage = enemyScore.multiplier + this.player.incomingDamageBonus;
+      damage = enemyScore.multiplier + this.player.incomingDamageBonus + this.enemyAttackBonus(enemy);
       this.player.hp = Math.max(0, this.player.hp - damage);
       this.applyPostDamagePassive(enemy, damage);
       this.damageEvents.push({ type: 'damage', attacker: 'enemy', enemyId: enemy.id, amount: damage, resonance: enemyScore.resonance });
@@ -629,6 +642,8 @@ export class Battle {
     const drawCount = enemy.hand.length;
     enemy.hand = this.drawCards(drawCount as 1 | 2);
     enemy.passiveTriggeredThisRound = true;
+    this.pushPassiveEffect('gambler_blessing', enemy, [enemy], 'reroll', drawCount);
+    this.pushCardsRedealtEvent(enemy, drawCount);
     this.logEvent(t('log.gamblerBlessing', { count: drawCount }));
   }
 
@@ -641,12 +656,14 @@ export class Battle {
     enemy.hp = Math.min(enemy.maxHp, enemy.hp + damage);
     const healed = enemy.hp - beforeHeal;
     if (healed > 0) {
+      this.pushPassiveEffect('werewolf_lifesteal', enemy, [enemy], 'heal', healed);
       this.logEvent(t('log.werewolfLifesteal', { healed }));
     }
   }
 
   private applyDefeatAndReward(enemy: EnemyState): void {
     if (enemy.defeated || enemy.hp > 0) {
+      this.applyWarHornIfNeeded(enemy);
       return;
     }
 
@@ -659,6 +676,144 @@ export class Battle {
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
     const healed = this.player.hp - beforeHeal;
     this.logEvent(t('log.enemyDefeatedReward', { enemy: enemyName(enemy.id), healed }));
+  }
+
+  private prepareEnemyRoundStartPassives(): void {
+    this.enemies.forEach((enemy) => {
+      enemy.roundAttackBonus = 0;
+      enemy.passiveTriggeredThisRound = false;
+    });
+
+    if (!this.hasMechanic('enemy_passives') || !this.isNorthernLonghouse()) {
+      return;
+    }
+
+    this.applyRuneBlessing();
+    this.applyEinherjarSummon();
+  }
+
+  private applyRuneBlessing(): void {
+    const shaman = this.enemies.find((enemy) => enemy.id === 'rune_shaman' && !enemy.defeated);
+    if (!shaman || shaman.hp >= 3) {
+      return;
+    }
+
+    const candidates = this.aliveEnemies.filter((enemy) => enemy.id !== 'rune_shaman');
+    const attackTarget = candidates[Math.floor(Math.random() * candidates.length)] ?? shaman;
+    const woundedTargets = this.aliveEnemies.filter((enemy) => enemy.hp < enemy.maxHp);
+    const shouldHeal = woundedTargets.length > 0 && Math.random() >= 0.5;
+    if (!shouldHeal) {
+      const target = attackTarget;
+      target.roundAttackBonus += 1;
+      shaman.passiveTriggeredThisRound = true;
+      this.pushPassiveEffect('rune_blessing', shaman, [target], 'attack', 1);
+      this.logEvent(t('log.runeBlessingAttack', { enemy: enemyName(target.id) }));
+      return;
+    }
+
+    const target = woundedTargets[Math.floor(Math.random() * woundedTargets.length)];
+    const beforeHp = target.hp;
+    target.hp = Math.min(target.maxHp, target.hp + 1);
+    const healed = target.hp - beforeHp;
+    shaman.passiveTriggeredThisRound = true;
+    this.pushPassiveEffect('rune_blessing', shaman, [target], 'heal', healed);
+    this.logEvent(t('log.runeBlessingHeal', { enemy: enemyName(target.id), healed }));
+  }
+
+  private applyEinherjarSummon(): void {
+    const valkyrie = this.enemies.find((enemy) => enemy.id === 'valkyrie' && !enemy.defeated);
+    if (!valkyrie || valkyrie.hp >= 4 || valkyrie.summonCount >= 2) {
+      return;
+    }
+
+    if (this.enemies.some((enemy) => enemy.id === 'einherjar' && !enemy.defeated)) {
+      return;
+    }
+
+    const defeatedSlot = this.enemies.find((enemy) => enemy.defeated && enemy.id !== 'valkyrie');
+    if (!defeatedSlot) {
+      return;
+    }
+
+    defeatedSlot.id = 'einherjar';
+    defeatedSlot.maxHp = 1;
+    defeatedSlot.hp = 1;
+    defeatedSlot.hand = [];
+    defeatedSlot.revealed = false;
+    defeatedSlot.compared = false;
+    defeatedSlot.invited = undefined;
+    defeatedSlot.acceptedInvite = undefined;
+    defeatedSlot.invitedDrawCount = undefined;
+    defeatedSlot.passiveTriggered = false;
+    defeatedSlot.passiveTriggeredThisRound = false;
+    defeatedSlot.soulRedeemUsed = false;
+    defeatedSlot.defeated = false;
+    defeatedSlot.attackBonus = 0;
+    defeatedSlot.roundAttackBonus = 0;
+    defeatedSlot.summoned = true;
+    defeatedSlot.summonCount = 0;
+    valkyrie.summonCount += 1;
+    valkyrie.passiveTriggeredThisRound = true;
+    this.pushPassiveEffect('einherjar_summon', valkyrie, [defeatedSlot], 'summon', valkyrie.summonCount);
+    this.logEvent(t('log.einherjarSummon', { count: valkyrie.summonCount }));
+  }
+
+  private applyWarHornIfNeeded(enemy: EnemyState): void {
+    if (!this.hasMechanic('enemy_passives') || !this.isNorthernLonghouse() || enemy.id !== 'viking_warrior' || enemy.summoned || enemy.hp >= 3 || enemy.passiveTriggered) {
+      return;
+    }
+
+    enemy.passiveTriggered = true;
+    enemy.passiveTriggeredThisRound = true;
+    this.enemies.forEach((candidate) => {
+      if (!candidate.defeated) {
+        candidate.attackBonus += 1;
+      }
+    });
+    this.pushPassiveEffect('war_horn', enemy, this.aliveEnemies, 'attack', 1);
+    this.logEvent(t('log.warHorn'));
+  }
+
+  private enemyAttackBonus(enemy: EnemyState): number {
+    return Math.max(0, enemy.attackBonus + enemy.roundAttackBonus);
+  }
+
+  private isNorthernLonghouse(): boolean {
+    return this.tableThemeConfig?.id === 'northern_longhouse';
+  }
+
+  consumePassiveEffectEvents(): BattlePresentationEvent[] {
+    const events = [...this.passiveEffectEvents];
+    this.passiveEffectEvents = [];
+    return events;
+  }
+
+  private pushPassiveEffect(
+    passiveId: Extract<BattlePresentationEvent, { type: 'passive-effect' }>['passiveId'],
+    source: EnemyState,
+    targets: EnemyState[],
+    effect: Extract<BattlePresentationEvent, { type: 'passive-effect' }>['effect'],
+    amount?: number,
+  ): void {
+    this.passiveEffectEvents.push({
+      type: 'passive-effect',
+      passiveId,
+      sourceEnemyId: source.id,
+      sourceEnemyIndex: this.enemies.indexOf(source),
+      targetEnemyIds: targets.map((target) => target.id),
+      targetEnemyIndexes: targets.map((target) => this.enemies.indexOf(target)),
+      effect,
+      amount,
+    });
+  }
+
+  private pushCardsRedealtEvent(enemy: EnemyState, count: number): void {
+    this.passiveEffectEvents.push({
+      type: 'cards-redealt',
+      target: enemy.id,
+      targetEnemyIndex: this.enemies.indexOf(enemy),
+      count,
+    });
   }
 
   resolveSoulRedeem(): void {

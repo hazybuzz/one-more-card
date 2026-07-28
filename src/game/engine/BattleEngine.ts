@@ -59,6 +59,7 @@ export class BattleEngine extends Battle {
   consumePresentationEvents(): BattlePresentationEvent[] {
     const events = [
       ...this.presentationEvents,
+      ...this.consumePassiveEffectEvents(),
       ...this.damageEvents.map((event): BattlePresentationEvent => {
         if (event.type === 'clash') {
           return {

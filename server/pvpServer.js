@@ -952,7 +952,7 @@ function scoreHand(cards) {
     rawTotal,
     point: rawTotal % 10,
     resonance,
-    multiplier: resonance === 'strong' ? 3 : resonance === 'resonance' ? 2 : 1,
+    multiplier: resonance === 'strong' ? cards.length : resonance === 'resonance' ? 2 : 1,
     reason: sameRank ? 'same-rank' : sameSuit ? 'same-suit' : 'none',
   };
 }

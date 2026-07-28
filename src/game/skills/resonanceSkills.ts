@@ -1,10 +1,14 @@
-import type { Card, Suit } from '../card';
+import type { Card, Rank, Suit } from '../card';
 import { isJoker } from '../card';
 
 export interface ResonanceShiftChoice {
   card: Card;
   targetSuit: Suit;
 }
+
+export type ResonanceSummonTarget =
+  | { kind: 'rank'; rank: Rank }
+  | { kind: 'suit'; suit: Suit };
 
 export function canResonanceShift(cards: Card[]): boolean {
   return chooseResonanceShift(cards) !== undefined;
@@ -86,6 +90,31 @@ export function chooseResonanceSummonSuit(cards: Card[]): Suit | undefined {
 
   const maxCount = Math.max(...counts.values());
   return randomItem([...counts.entries()].filter(([, count]) => count === maxCount).map(([suit]) => suit));
+}
+
+export function chooseResonanceSummonTarget(cards: Card[]): ResonanceSummonTarget | undefined {
+  if (cards.length < 2) {
+    return undefined;
+  }
+
+  const nonJokers = cards.filter((card) => !isJoker(card));
+  const sameRank = nonJokers.length === cards.length && cards.every((card) => card.rank === cards[0].rank);
+  if (sameRank) {
+    return { kind: 'rank', rank: cards[0].rank };
+  }
+
+  const suit = chooseResonanceSummonSuit(cards);
+  return suit ? { kind: 'suit', suit } : undefined;
+}
+
+export function isResonanceSummonMatch(card: Card, target: ResonanceSummonTarget): boolean {
+  if (isJoker(card)) {
+    return false;
+  }
+
+  return target.kind === 'rank'
+    ? card.rank === target.rank
+    : card.suit === target.suit;
 }
 
 export function drawResonanceSummonCard(cards: Card[], targetSuit: Suit): Card | undefined {

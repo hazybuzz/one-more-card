@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
+import { COSMETICS, CosmeticConfig } from '../game/cosmetics';
 import { ITEMS, ItemDefinition } from '../game/items';
 import { t } from '../game/i18n';
-import { getProgress } from '../game/progress';
+import { equipAttackEffect, getProgress, ownsCosmetic, unequipAttackEffect } from '../game/progress';
 
 const COLORS = {
   bg: 0x101114,
@@ -30,6 +31,11 @@ export class InventoryScene extends Phaser.Scene {
 
   create(): void {
     playLobbyMusic(this);
+    this.render();
+  }
+
+  private render(): void {
+    this.children.removeAll(true);
     this.addBackground();
     this.renderHeader();
     this.renderInventory();
@@ -79,7 +85,8 @@ export class InventoryScene extends Phaser.Scene {
 
   private renderInventory(): void {
     const ownedItems = ITEMS.filter((item) => (getProgress().ownedItems[item.id] ?? 0) > 0);
-    if (ownedItems.length === 0) {
+    const ownedCosmetics = COSMETICS.filter((cosmetic) => ownsCosmetic(cosmetic.id));
+    if (ownedItems.length === 0 && ownedCosmetics.length === 0) {
       this.add.text(640, 360, t('inventory.empty'), {
         fontFamily: 'Arial',
         fontSize: '28px',
@@ -88,26 +95,44 @@ export class InventoryScene extends Phaser.Scene {
       return;
     }
 
+    this.add.text(640, 152, t('inventory.itemsSection'), {
+      fontFamily: 'Arial',
+      fontSize: '22px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+
     const startX = 278;
     ownedItems.forEach((item, index) => {
-      this.renderItemCard(startX + index * 362, 348, item, getProgress().ownedItems[item.id] ?? 0);
+      this.renderItemCard(startX + index * 362, 300, item, getProgress().ownedItems[item.id] ?? 0);
+    });
+
+    this.add.text(640, 464, t('inventory.cosmeticsSection'), {
+      fontFamily: 'Arial',
+      fontSize: '22px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+
+    ownedCosmetics.forEach((cosmetic, index) => {
+      this.renderCosmeticCard(278 + index * 362, 558, cosmetic);
     });
   }
 
   private renderItemCard(x: number, y: number, item: ItemDefinition, count: number): void {
     const card = this.add.container(x, y);
-    card.add(this.add.rectangle(0, 0, 304, 320, COLORS.panel, 0.96).setStrokeStyle(2, COLORS.accent));
-    card.add(this.add.circle(0, -96, 38, COLORS.accent, 0.18).setStrokeStyle(2, COLORS.accent));
-    card.add(this.add.text(0, -99, item.icon, {
+    card.add(this.add.rectangle(0, 0, 304, 244, COLORS.panel, 0.96).setStrokeStyle(2, COLORS.accent));
+    card.add(this.add.circle(0, -74, 30, COLORS.accent, 0.18).setStrokeStyle(2, COLORS.accent));
+    card.add(this.add.text(0, -76, item.icon, {
       fontFamily: 'Arial',
-      fontSize: '42px',
+      fontSize: '34px',
       color: COLORS.accentText,
       fontStyle: 'bold',
     }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 8, true, true));
 
-    card.add(this.add.text(0, -36, t(item.nameKey), {
+    card.add(this.add.text(0, -26, t(item.nameKey), {
       fontFamily: 'Arial',
-      fontSize: '24px',
+      fontSize: '21px',
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5));
@@ -116,7 +141,7 @@ export class InventoryScene extends Phaser.Scene {
       fontSize: '17px',
       color: COLORS.accentText,
     }).setOrigin(0.5));
-    card.add(this.add.text(-122, 42, t(item.descriptionKey), {
+    card.add(this.add.text(-122, 38, t(item.descriptionKey), {
       fontFamily: 'Arial',
       fontSize: '15px',
       color: COLORS.muted,
@@ -124,6 +149,50 @@ export class InventoryScene extends Phaser.Scene {
       wordWrap: { width: 244 },
       align: 'center',
     }));
+  }
+
+  private renderCosmeticCard(x: number, y: number, cosmetic: CosmeticConfig): void {
+    const equipped = getProgress().equippedAttackEffect === cosmetic.id;
+    const card = this.add.container(x, y);
+
+    card.add(this.add.rectangle(0, 0, 304, 168, COLORS.panel, 0.96).setStrokeStyle(2, equipped ? 0x7fd7ff : COLORS.accent));
+    card.add(this.add.circle(-112, -28, 32, equipped ? 0x3b8dff : COLORS.accent, equipped ? 0.24 : 0.18).setStrokeStyle(2, equipped ? 0x7fd7ff : COLORS.accent));
+    const icon = this.add.text(-112, -30, cosmetic.icon, {
+      fontFamily: 'Arial',
+      fontSize: '32px',
+      color: equipped ? '#9fe7ff' : COLORS.accentText,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    icon.setShadow(0, 0, equipped ? '#9fe7ff' : COLORS.accentText, 10, true, true);
+    card.add(icon);
+
+    card.add(this.add.text(-70, -58, t(cosmetic.nameKey), {
+      fontFamily: 'Arial',
+      fontSize: '21px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }));
+    card.add(this.add.text(-70, -26, equipped ? t('inventory.equipped') : t('inventory.ownedPermanent'), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: equipped ? '#9fe7ff' : COLORS.accentText,
+    }));
+    card.add(this.add.text(-70, 0, t(cosmetic.descriptionKey), {
+      fontFamily: 'Arial',
+      fontSize: '14px',
+      color: COLORS.muted,
+      lineSpacing: 4,
+      wordWrap: { width: 196 },
+    }));
+
+    card.add(this.button(76, 40, 136, 40, equipped ? t('inventory.unequip') : t('inventory.equip'), () => {
+      if (equipped) {
+        unequipAttackEffect();
+      } else {
+        equipAttackEffect(cosmetic.id);
+      }
+      this.render();
+    }, '16px'));
   }
 
   private button(x: number, y: number, width: number, height: number, label: string, onClick: () => void, fontSize = '20px'): Phaser.GameObjects.Container {

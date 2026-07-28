@@ -22,7 +22,7 @@ export function scoreHand(cards: Card[]): ScoreResult {
       rawTotal,
       point: rawTotal % 10,
       resonance: 'strong',
-      multiplier: 3,
+      multiplier: cards.length,
       reason: sameRank ? t('score.reason.sameRank') : t('score.reason.sameSuit'),
     };
   }

@@ -11,8 +11,12 @@ export interface EconomyChange {
 }
 
 export function payBattleEntry(): EconomyChange {
+  return payEntryCost(BATTLE_ENTRY_COST);
+}
+
+export function payEntryCost(cost: number): EconomyChange {
   const currentCoins = getProgress().soulCoins;
-  const paid = Math.min(currentCoins, BATTLE_ENTRY_COST);
+  const paid = Math.min(currentCoins, Math.max(0, Math.floor(cost)));
   setSoulCoins(currentCoins - paid);
   return {
     amount: paid,
@@ -20,11 +24,12 @@ export function payBattleEntry(): EconomyChange {
   };
 }
 
-export function settleBattleEconomy(outcome: 'victory' | 'defeat', remainingHp: number): EconomyChange {
+export function settleBattleEconomy(outcome: 'victory' | 'defeat', remainingHp: number, rewardMultiplier = 1): EconomyChange {
   recordBattleResult(outcome);
 
   if (outcome === 'victory') {
-    const reward = BATTLE_WIN_BASE_REWARD + Math.max(0, Math.floor(remainingHp)) * HP_TO_COIN_RATE;
+    const baseReward = BATTLE_WIN_BASE_REWARD + Math.max(0, Math.floor(remainingHp)) * HP_TO_COIN_RATE;
+    const reward = Math.max(0, Math.floor(baseReward * Math.max(0, rewardMultiplier)));
     addSoulCoins(reward);
     return {
       amount: reward,

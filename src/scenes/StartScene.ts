@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import { preloadCardImages } from '../game/assets';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
-import { BATTLE_ENTRY_COST, payBattleEntry } from '../game/economy';
 import { t, toggleLanguage } from '../game/i18n';
 import { getProgress, resetProgress } from '../game/progress';
 
@@ -103,12 +102,8 @@ export class StartScene extends Phaser.Scene {
 
   private renderMenu(): void {
     this.add.container(640, 360).add([
-      this.menuButton(0, 0, 300, 58, t('start.game', { cost: BATTLE_ENTRY_COST }), () => {
-        const entry = payBattleEntry();
-        this.showStatus(entry.amount > 0
-          ? t('start.entryPaid', { cost: entry.amount, total: entry.total })
-          : t('start.entryFree'));
-        this.time.delayedCall(320, () => this.scene.start('BattleScene', {}));
+      this.menuButton(0, 0, 300, 58, t('start.game'), () => {
+        this.scene.start('TableSelectScene');
       }),
       this.menuButton(0, 70, 260, 56, t('start.story'), () => {
         this.scene.start('StorySelectScene');

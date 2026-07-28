@@ -4,6 +4,7 @@ import { t } from './i18n';
 import { scoreHand } from './scoring';
 import type { EnemyConfig, EnemyId } from './types/enemy';
 import type { LevelConfig } from './types/level';
+import type { TableThemeConfig } from './types/tableTheme';
 
 export type EnemyType = EnemyId;
 
@@ -17,9 +18,14 @@ export interface EnemyState extends EnemyDefinition {
   invited?: boolean;
   acceptedInvite?: boolean;
   invitedDrawCount?: 1 | 2;
+  passiveTriggered: boolean;
   passiveTriggeredThisRound: boolean;
   soulRedeemUsed: boolean;
   defeated: boolean;
+  attackBonus: number;
+  roundAttackBonus: number;
+  summoned: boolean;
+  summonCount: number;
 }
 
 export interface EnemyDecision {
@@ -33,8 +39,8 @@ export function createEnemies(): EnemyState[] {
   return createEnemiesForLevel();
 }
 
-export function createEnemiesForLevel(level?: LevelConfig): EnemyState[] {
-  const enemyIds = level?.enemyIds ?? ENEMIES.map((enemy) => enemy.id);
+export function createEnemiesForLevel(level?: LevelConfig, tableTheme?: TableThemeConfig): EnemyState[] {
+  const enemyIds = level?.enemyIds ?? tableTheme?.enemyIds ?? ENEMIES.map((enemy) => enemy.id);
   return enemyIds.map((enemyId) => {
     const enemyConfig = ENEMY_CONFIGS[enemyId];
     const baseEnemy = enemyConfig ? { id: enemyConfig.id, maxHp: enemyConfig.maxHp } : undefined;
@@ -50,9 +56,14 @@ export function createEnemiesForLevel(level?: LevelConfig): EnemyState[] {
       hand: [],
       revealed: false,
       compared: false,
+      passiveTriggered: false,
       passiveTriggeredThisRound: false,
       soulRedeemUsed: false,
       defeated: false,
+      attackBonus: 0,
+      roundAttackBonus: 0,
+      summoned: false,
+      summonCount: 0,
     };
   });
 }
@@ -90,6 +101,54 @@ export function decideInvite(enemy: EnemyState, playerPoint?: number): EnemyDeci
     }
 
     return chance(0.84, t('enemy.ai.gambler.low'));
+  }
+
+  if (enemy.id === 'viking_warrior') {
+    if (point >= 9) {
+      return chance(0.46, t('enemy.ai.viking.high'));
+    }
+
+    if (point >= 6) {
+      return chance(0.72, t('enemy.ai.viking.mid'));
+    }
+
+    return chance(0.88, t('enemy.ai.viking.low'));
+  }
+
+  if (enemy.id === 'rune_shaman') {
+    if (point >= 7) {
+      return chance(0.14, t('enemy.ai.runeShaman.high'));
+    }
+
+    if (point >= 5) {
+      return chance(0.28, t('enemy.ai.runeShaman.mid'));
+    }
+
+    return chance(0.5, t('enemy.ai.runeShaman.low'));
+  }
+
+  if (enemy.id === 'valkyrie') {
+    if (point >= 8) {
+      return chance(0.26, t('enemy.ai.valkyrie.high'));
+    }
+
+    if (point >= 6) {
+      return chance(0.5, t('enemy.ai.valkyrie.mid'));
+    }
+
+    return chance(0.66, t('enemy.ai.valkyrie.low'));
+  }
+
+  if (enemy.id === 'einherjar') {
+    if (point >= 8) {
+      return chance(0.2, t('enemy.ai.einherjar.high'));
+    }
+
+    if (point >= 5) {
+      return chance(0.44, t('enemy.ai.einherjar.mid'));
+    }
+
+    return chance(0.7, t('enemy.ai.einherjar.low'));
   }
 
   if (enemy.id === 'paladin') {

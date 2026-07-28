@@ -1,4 +1,5 @@
 import { CHAPTERS } from './data/chapters';
+import type { CosmeticId } from './types/cosmetic';
 
 export interface BattleStats {
   wins: number;
@@ -14,6 +15,8 @@ export interface StoryProgress {
 export interface GameProgress {
   soulCoins: number;
   ownedItems: Record<string, number>;
+  ownedCosmetics: CosmeticId[];
+  equippedAttackEffect?: CosmeticId;
   stats: BattleStats;
   story: StoryProgress;
 }
@@ -25,6 +28,8 @@ const DEFAULT_PROGRESS: GameProgress = {
   ownedItems: {
     heal_potion: 2,
   },
+  ownedCosmetics: [],
+  equippedAttackEffect: undefined,
   stats: {
     wins: 0,
     losses: 0,
@@ -91,6 +96,34 @@ export function consumeItem(itemId: string, count = 1): boolean {
 
   saveProgress();
   return true;
+}
+
+export function ownsCosmetic(cosmeticId: CosmeticId): boolean {
+  return progress.ownedCosmetics.includes(cosmeticId);
+}
+
+export function addCosmetic(cosmeticId: CosmeticId): void {
+  if (ownsCosmetic(cosmeticId)) {
+    return;
+  }
+
+  progress.ownedCosmetics.push(cosmeticId);
+  saveProgress();
+}
+
+export function equipAttackEffect(cosmeticId: CosmeticId): boolean {
+  if (!ownsCosmetic(cosmeticId)) {
+    return false;
+  }
+
+  progress.equippedAttackEffect = cosmeticId;
+  saveProgress();
+  return true;
+}
+
+export function unequipAttackEffect(): void {
+  progress.equippedAttackEffect = undefined;
+  saveProgress();
 }
 
 export function recordBattleResult(outcome: 'victory' | 'defeat'): void {
@@ -162,6 +195,8 @@ function normalizeProgress(value: Partial<GameProgress>): GameProgress {
   return {
     soulCoins: normalizeNumber(value.soulCoins, defaultProgress.soulCoins),
     ownedItems: normalizeItems(value.ownedItems),
+    ownedCosmetics: normalizeCosmetics(value.ownedCosmetics),
+    equippedAttackEffect: normalizeEquippedAttackEffect(value.equippedAttackEffect, value.ownedCosmetics),
     stats: {
       wins: normalizeNumber(value.stats?.wins, defaultProgress.stats.wins),
       losses: normalizeNumber(value.stats?.losses, defaultProgress.stats.losses),
@@ -169,6 +204,24 @@ function normalizeProgress(value: Partial<GameProgress>): GameProgress {
     },
     story: normalizeStoryProgress(value.story),
   };
+}
+
+function normalizeCosmetics(cosmetics: unknown): CosmeticId[] {
+  const validCosmetics: CosmeticId[] = ['thunder_hammer'];
+  if (!Array.isArray(cosmetics)) {
+    return [];
+  }
+
+  return uniqueStrings(cosmetics.filter((item): item is CosmeticId => validCosmetics.includes(item as CosmeticId))) as CosmeticId[];
+}
+
+function normalizeEquippedAttackEffect(value: unknown, ownedCosmetics: unknown): CosmeticId | undefined {
+  const owned = normalizeCosmetics(ownedCosmetics);
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  return owned.includes(value as CosmeticId) ? value as CosmeticId : undefined;
 }
 
 function normalizeItems(items: unknown): Record<string, number> {
@@ -248,6 +301,8 @@ function cloneProgress(value: GameProgress): GameProgress {
   return {
     soulCoins: value.soulCoins,
     ownedItems: { ...value.ownedItems },
+    ownedCosmetics: [...value.ownedCosmetics],
+    equippedAttackEffect: value.equippedAttackEffect,
     stats: { ...value.stats },
     story: cloneStoryProgress(value.story),
   };

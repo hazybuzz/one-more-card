@@ -32,9 +32,14 @@ export interface BattleEnemyState {
   invited?: boolean;
   acceptedInvite?: boolean;
   invitedDrawCount?: 1 | 2;
+  passiveTriggered: boolean;
   passiveTriggeredThisRound: boolean;
   soulRedeemUsed: boolean;
   defeated: boolean;
+  attackBonus: number;
+  roundAttackBonus: number;
+  summoned: boolean;
+  summonCount: number;
   score: ScoreResult;
 }
 
