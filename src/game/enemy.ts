@@ -24,6 +24,12 @@ export interface EnemyState extends EnemyDefinition {
   defeated: boolean;
   attackBonus: number;
   roundAttackBonus: number;
+  taoistTalismaned: boolean;
+  iaijutsuStacks: number;
+  smokeScreenArmed: boolean;
+  smokeScreenUsed: boolean;
+  hanamiFanTargetId?: EnemyId;
+  hanamiDamageBank: number;
   summoned: boolean;
   summonCount: number;
 }
@@ -62,6 +68,12 @@ export function createEnemiesForLevel(level?: LevelConfig, tableTheme?: TableThe
       defeated: false,
       attackBonus: 0,
       roundAttackBonus: 0,
+      taoistTalismaned: false,
+      iaijutsuStacks: 0,
+      smokeScreenArmed: false,
+      smokeScreenUsed: false,
+      hanamiFanTargetId: undefined,
+      hanamiDamageBank: 0,
       summoned: false,
       summonCount: 0,
     };
@@ -137,6 +149,78 @@ export function decideInvite(enemy: EnemyState, playerPoint?: number): EnemyDeci
     }
 
     return chance(0.66, t('enemy.ai.valkyrie.low'));
+  }
+
+  if (enemy.id === 'swordsman') {
+    if (point >= 9) {
+      return chance(0.38, t('enemy.ai.swordsman.high'));
+    }
+
+    if (point >= 6) {
+      return chance(0.68, t('enemy.ai.swordsman.mid'));
+    }
+
+    return chance(0.84, t('enemy.ai.swordsman.low'));
+  }
+
+  if (enemy.id === 'songstress') {
+    if (point >= 7) {
+      return chance(0.1, t('enemy.ai.songstress.high'));
+    }
+
+    if (point >= 5) {
+      return chance(0.28, t('enemy.ai.songstress.mid'));
+    }
+
+    return chance(0.48, t('enemy.ai.songstress.low'));
+  }
+
+  if (enemy.id === 'taoist') {
+    if (point >= 8) {
+      return chance(0.16, t('enemy.ai.taoist.high'));
+    }
+
+    if (point >= 5) {
+      return chance(0.46, t('enemy.ai.taoist.mid'));
+    }
+
+    return chance(0.66, t('enemy.ai.taoist.low'));
+  }
+
+  if (enemy.id === 'shogun_samurai') {
+    if (point >= 9) {
+      return chance(0.06, t('enemy.ai.samurai.high'));
+    }
+
+    if (point >= 7) {
+      return chance(0.22, t('enemy.ai.samurai.mid'));
+    }
+
+    return chance(0.62, t('enemy.ai.samurai.low'));
+  }
+
+  if (enemy.id === 'ninja') {
+    if (point >= 7) {
+      return chance(0.12, t('enemy.ai.ninja.high'));
+    }
+
+    if (point >= 5) {
+      return chance(0.3, t('enemy.ai.ninja.mid'));
+    }
+
+    return chance(0.54, t('enemy.ai.ninja.low'));
+  }
+
+  if (enemy.id === 'oiran') {
+    if (point >= 8) {
+      return chance(0.18, t('enemy.ai.oiran.high'));
+    }
+
+    if (point >= 5) {
+      return chance(0.44, t('enemy.ai.oiran.mid'));
+    }
+
+    return chance(0.64, t('enemy.ai.oiran.low'));
   }
 
   if (enemy.id === 'einherjar') {

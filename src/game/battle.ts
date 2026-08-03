@@ -26,6 +26,7 @@ export interface PlayerState {
   resonanceSummonCooldown: number;
   drawLocked: boolean;
   incomingDamageBonus: number;
+  shieldCharges: number;
   soulRedeemUsed: boolean;
 }
 
@@ -35,6 +36,10 @@ export interface BattleResult {
   playerScore: ScoreResult;
   outcome: 'win' | 'lose' | 'draw';
   damage: number;
+  evaded?: boolean;
+  shielded?: boolean;
+  originalDamage?: number;
+  guard?: DamageEvent['guard'];
 }
 
 export interface DamageEvent {
@@ -43,6 +48,17 @@ export interface DamageEvent {
   enemyId: EnemyType;
   amount: number;
   resonance?: ResonanceKind;
+  hpAfter?: number;
+  evaded?: boolean;
+  shielded?: boolean;
+  originalAmount?: number;
+  guard?: {
+    protectorEnemyId: EnemyType;
+    protectorEnemyIndex: number;
+    protectorHpAfter: number;
+    preventedDamage: number;
+    legacyAttackBonus?: number;
+  };
 }
 
 export interface SkillResult {
@@ -94,6 +110,7 @@ export class Battle {
       resonanceSummonCooldown: 0,
       drawLocked: false,
       incomingDamageBonus: 0,
+      shieldCharges: 0,
       soulRedeemUsed: false,
     };
     this.enemies = createEnemiesForLevel(this.levelConfig, this.tableThemeConfig);
@@ -166,8 +183,10 @@ export class Battle {
         ? [cardFromCode(fixedEnemy.drawCardOnAccept)]
         : this.drawCards(drawCount);
       enemy.hand.push(...cards);
+      this.applyHeavenlyInsightIfNeeded(enemy, cards[0]);
       this.logEvent(t('log.enemyAcceptInvite', { enemy: enemyName(enemy.id), reason: decision.reason }));
     } else {
+      this.applyIaijutsuChargeIfNeeded(enemy);
       this.logEvent(t('log.enemyRejectInvite', { enemy: enemyName(enemy.id), reason: decision.reason }));
     }
 
@@ -388,6 +407,7 @@ export class Battle {
         canUseResonanceSummon: this.canUseResonanceSummon(),
         drawLocked: this.player.drawLocked,
         incomingDamageBonus: this.player.incomingDamageBonus,
+        shieldCharges: this.player.shieldCharges,
         soulRedeemUsed: this.player.soulRedeemUsed,
         score: this.playerScore(),
       },
@@ -407,6 +427,12 @@ export class Battle {
         defeated: enemy.defeated,
         attackBonus: enemy.attackBonus,
         roundAttackBonus: enemy.roundAttackBonus,
+        taoistTalismaned: enemy.taoistTalismaned,
+        iaijutsuStacks: enemy.iaijutsuStacks,
+        smokeScreenArmed: enemy.smokeScreenArmed,
+        smokeScreenUsed: enemy.smokeScreenUsed,
+        hanamiFanTargetId: enemy.hanamiFanTargetId,
+        hanamiDamageBank: enemy.hanamiDamageBank,
         summoned: enemy.summoned,
         summonCount: enemy.summonCount,
         score: this.scoreFor(enemy.hand),
@@ -418,6 +444,9 @@ export class Battle {
         playerScore: result.playerScore,
         outcome: result.outcome,
         damage: result.damage,
+        evaded: result.evaded,
+        shielded: result.shielded,
+        originalDamage: result.originalDamage,
       })),
       logs: [...this.log],
     };
@@ -447,6 +476,16 @@ export class Battle {
     const beforeHp = this.player.hp;
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + Math.max(0, Math.floor(amount)));
     return this.player.hp - beforeHp;
+  }
+
+  activateHolyShield(charges = 2): boolean {
+    if (this.phase !== 'player-turn' || this.player.shieldCharges > 0) {
+      return false;
+    }
+
+    this.player.shieldCharges = Math.max(1, Math.floor(charges));
+    this.logEvent(t('itemEffect.holyShield.used', { charges: this.player.shieldCharges }));
+    return true;
   }
 
   addLog(message: string): void {
@@ -557,20 +596,57 @@ export class Battle {
     const enemyScore = this.scoreFor(enemy.hand);
     let outcome: BattleResult['outcome'] = 'draw';
     let damage = 0;
+    let evaded = false;
+    let shielded = false;
+    let originalDamage: number | undefined;
+    let guard: DamageEvent['guard'];
 
     const comparison = compareScores(playerScore, enemyScore);
 
     if (comparison > 0) {
       outcome = 'win';
       damage = playerScore.multiplier * fateDamageMultiplier;
+      originalDamage = damage;
+      const smokeEvaded = this.applySmokeSubstitutionIfNeeded(enemy, originalDamage);
+      evaded = smokeEvaded;
+      const bladeRescue = smokeEvaded ? undefined : this.applyBladeToRescueIfNeeded(enemy, damage);
+      damage = smokeEvaded ? 0 : (bladeRescue?.damageAfter ?? damage);
+      guard = bladeRescue?.guard;
       enemy.hp = Math.max(0, enemy.hp - damage);
-      this.damageEvents.push({ type: 'damage', attacker: 'player', enemyId: enemy.id, amount: damage, resonance: playerScore.resonance });
+      this.damageEvents.push({
+        type: 'damage',
+        attacker: 'player',
+        enemyId: enemy.id,
+        amount: damage,
+        resonance: playerScore.resonance,
+        hpAfter: enemy.hp,
+        evaded: smokeEvaded,
+        originalAmount: smokeEvaded ? originalDamage : undefined,
+        guard,
+      });
     } else if (comparison < 0) {
       outcome = 'lose';
-      damage = enemyScore.multiplier + this.player.incomingDamageBonus + this.enemyAttackBonus(enemy);
-      this.player.hp = Math.max(0, this.player.hp - damage);
-      this.applyPostDamagePassive(enemy, damage);
-      this.damageEvents.push({ type: 'damage', attacker: 'enemy', enemyId: enemy.id, amount: damage, resonance: enemyScore.resonance });
+      const iaijutsuBonus = this.consumeIaijutsuOnWin(enemy);
+      damage = enemyScore.multiplier + this.player.incomingDamageBonus + this.enemyAttackBonus(enemy) + iaijutsuBonus;
+      originalDamage = damage;
+      if (this.player.shieldCharges > 0 && damage > 0) {
+        this.player.shieldCharges -= 1;
+        shielded = true;
+        damage = 0;
+      } else {
+        this.player.hp = Math.max(0, this.player.hp - damage);
+        this.recordHanamiDamage(damage);
+        this.applyPostDamagePassive(enemy, damage);
+      }
+      this.damageEvents.push({
+        type: 'damage',
+        attacker: 'enemy',
+        enemyId: enemy.id,
+        amount: damage,
+        resonance: enemyScore.resonance,
+        shielded,
+        originalAmount: shielded ? originalDamage : undefined,
+      });
     } else {
       this.damageEvents.push({ type: 'clash', enemyId: enemy.id, amount: 0 });
     }
@@ -581,6 +657,10 @@ export class Battle {
       playerScore,
       outcome,
       damage,
+      evaded,
+      shielded,
+      originalDamage: evaded || shielded ? originalDamage : undefined,
+      guard,
     };
   }
 
@@ -613,7 +693,7 @@ export class Battle {
   private comparePendingEnemies(): void {
     const playerScore = this.scoreFor(this.player.hand);
     for (const enemy of this.aliveEnemies) {
-      if (enemy.compared) {
+      if (enemy.defeated || enemy.compared) {
         continue;
       }
 
@@ -682,14 +762,69 @@ export class Battle {
     this.enemies.forEach((enemy) => {
       enemy.roundAttackBonus = 0;
       enemy.passiveTriggeredThisRound = false;
+      enemy.taoistTalismaned = false;
     });
 
-    if (!this.hasMechanic('enemy_passives') || !this.isNorthernLonghouse()) {
+    if (!this.hasMechanic('enemy_passives')) {
       return;
     }
 
-    this.applyRuneBlessing();
-    this.applyEinherjarSummon();
+    if (this.isNorthernLonghouse()) {
+      this.applyRuneBlessing();
+      this.applyEinherjarSummon();
+      return;
+    }
+
+    if (this.isDragonGate()) {
+      this.applyRedSilkToast();
+      this.applyTaoistTalisman();
+      return;
+    }
+
+    if (this.isEdoTeahouse()) {
+      this.applyHanamiDance();
+      this.applySmokeScreenArm();
+    }
+  }
+
+  private applyBladeToRescueIfNeeded(enemy: EnemyState, damage: number): {
+    damageAfter: number;
+    guard: NonNullable<DamageEvent['guard']>;
+  } | undefined {
+    if (!this.hasMechanic('enemy_passives') || !this.isDragonGate() || damage < enemy.hp) {
+      return undefined;
+    }
+
+    const damageAfter = 0;
+
+    const swordsman = this.enemies.find((candidate) => (
+      candidate.id === 'swordsman'
+      && candidate !== enemy
+      && !candidate.defeated
+      && !candidate.passiveTriggeredThisRound
+    ));
+    if (!swordsman) {
+      return undefined;
+    }
+
+    swordsman.passiveTriggeredThisRound = true;
+    swordsman.hp = Math.max(0, swordsman.hp - damage);
+    const swordsmanDefeated = swordsman.hp <= 0;
+    if (swordsmanDefeated) {
+      this.applyDefeatAndReward(swordsman);
+      enemy.attackBonus += 2;
+      this.logEvent(t('log.chivalryLegacy', { enemy: enemyName(enemy.id) }));
+    }
+    return {
+      damageAfter,
+      guard: {
+        protectorEnemyId: swordsman.id,
+        protectorEnemyIndex: this.enemies.indexOf(swordsman),
+        protectorHpAfter: swordsman.hp,
+        preventedDamage: damage,
+        legacyAttackBonus: swordsmanDefeated ? 2 : undefined,
+      },
+    };
   }
 
   private applyRuneBlessing(): void {
@@ -750,6 +885,12 @@ export class Battle {
     defeatedSlot.defeated = false;
     defeatedSlot.attackBonus = 0;
     defeatedSlot.roundAttackBonus = 0;
+    defeatedSlot.taoistTalismaned = false;
+    defeatedSlot.iaijutsuStacks = 0;
+    defeatedSlot.smokeScreenArmed = false;
+    defeatedSlot.smokeScreenUsed = false;
+    defeatedSlot.hanamiFanTargetId = undefined;
+    defeatedSlot.hanamiDamageBank = 0;
     defeatedSlot.summoned = true;
     defeatedSlot.summonCount = 0;
     valkyrie.summonCount += 1;
@@ -774,12 +915,178 @@ export class Battle {
     this.logEvent(t('log.warHorn'));
   }
 
+  private applyRedSilkToast(): void {
+    const songstress = this.enemies.find((enemy) => enemy.id === 'songstress' && !enemy.defeated);
+    if (!songstress) {
+      return;
+    }
+
+    const candidates = this.aliveEnemies.filter((enemy) => enemy !== songstress && enemy.hp < 3);
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const lowestHp = Math.min(...candidates.map((enemy) => enemy.hp));
+    const lowestHpCandidates = candidates.filter((enemy) => enemy.hp === lowestHp);
+    const target = lowestHpCandidates[Math.floor(Math.random() * lowestHpCandidates.length)];
+    target.hp = Math.min(target.maxHp, target.hp + 1);
+    target.roundAttackBonus += 1;
+    songstress.passiveTriggeredThisRound = true;
+    this.pushPassiveEffect('red_silk_toast', songstress, [target], 'attack', 1);
+    this.logEvent(t('log.redSilkToast', { enemy: enemyName(target.id) }));
+  }
+
+  private applyTaoistTalisman(): void {
+    const taoist = this.enemies.find((enemy) => enemy.id === 'taoist' && !enemy.defeated);
+    if (!taoist) {
+      return;
+    }
+
+    const candidates = this.aliveEnemies;
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    target.taoistTalismaned = true;
+    taoist.passiveTriggeredThisRound = true;
+    this.pushPassiveEffect('heavenly_insight', taoist, [target], 'sense');
+    this.logEvent(t('log.heavenlyInsightMark', { enemy: enemyName(target.id) }));
+  }
+
+  private applyHeavenlyInsightIfNeeded(enemy: EnemyState, drawnCard: Card | undefined): void {
+    if (!drawnCard || !this.hasMechanic('enemy_passives') || !this.isDragonGate() || !enemy.taoistTalismaned) {
+      return;
+    }
+
+    enemy.taoistTalismaned = false;
+    if (this.scoreFor(enemy.hand).point >= 4) {
+      return;
+    }
+
+    const taoist = this.enemies.find((candidate) => candidate.id === 'taoist');
+    if (!taoist) {
+      return;
+    }
+
+    const replacement = this.deck.draw();
+    const cardIndex = enemy.hand.length - 1;
+    enemy.hand[cardIndex] = replacement;
+    this.pushPassiveEffect('heavenly_insight', taoist, [enemy], 'reroll', 1);
+    this.pushCardReplacementEvent(enemy, cardIndex, drawnCard, replacement);
+    this.logEvent(t('log.heavenlyInsight', { before: formatCard(drawnCard), after: formatCard(replacement) }));
+  }
+
+  private applyIaijutsuChargeIfNeeded(enemy: EnemyState): void {
+    if (!this.hasMechanic('enemy_passives') || !this.isEdoTeahouse() || enemy.id !== 'shogun_samurai' || enemy.defeated || enemy.iaijutsuStacks >= 2) {
+      return;
+    }
+
+    enemy.iaijutsuStacks += 1;
+    this.pushPassiveEffect('iaijutsu_charge', enemy, [enemy], 'charge', enemy.iaijutsuStacks);
+    this.logEvent(t('log.iaijutsuCharge', { stacks: enemy.iaijutsuStacks }));
+  }
+
+  private consumeIaijutsuOnWin(enemy: EnemyState): number {
+    if (!this.hasMechanic('enemy_passives') || !this.isEdoTeahouse() || enemy.id !== 'shogun_samurai' || enemy.iaijutsuStacks <= 0) {
+      return 0;
+    }
+
+    const bonus = enemy.iaijutsuStacks;
+    enemy.iaijutsuStacks = 0;
+    this.pushPassiveEffect('iaijutsu_charge', enemy, [enemy], 'release', bonus);
+    this.logEvent(t('log.iaijutsuRelease', { bonus }));
+    return bonus;
+  }
+
+  private applySmokeScreenArm(): void {
+    const ninja = this.enemies.find((enemy) => enemy.id === 'ninja' && !enemy.defeated);
+    if (!ninja || ninja.hp >= 3 || ninja.smokeScreenUsed || ninja.smokeScreenArmed) {
+      return;
+    }
+
+    ninja.smokeScreenArmed = true;
+    this.pushPassiveEffect('smoke_substitution', ninja, [ninja], 'arm');
+    this.logEvent(t('log.smokeScreenArmed'));
+  }
+
+  private applySmokeSubstitutionIfNeeded(enemy: EnemyState, damage: number): boolean {
+    if (!this.hasMechanic('enemy_passives') || !this.isEdoTeahouse() || enemy.id !== 'ninja' || !enemy.smokeScreenArmed || damage <= 0) {
+      return false;
+    }
+
+    enemy.smokeScreenArmed = false;
+    enemy.smokeScreenUsed = true;
+    return true;
+  }
+
+  private recordHanamiDamage(damage: number): void {
+    if (!this.hasMechanic('enemy_passives') || !this.isEdoTeahouse() || damage <= 0) {
+      return;
+    }
+
+    const oiran = this.enemies.find((enemy) => enemy.id === 'oiran' && !enemy.defeated);
+    if (!oiran || !oiran.hanamiFanTargetId) {
+      return;
+    }
+
+    oiran.hanamiDamageBank += damage;
+  }
+
+  private applyHanamiDance(): void {
+    const oiran = this.enemies.find((enemy) => enemy.id === 'oiran' && !enemy.defeated);
+    if (!oiran) {
+      return;
+    }
+
+    const previousTarget = oiran.hanamiFanTargetId
+      ? this.enemies.find((enemy) => enemy.id === oiran.hanamiFanTargetId && !enemy.defeated)
+      : undefined;
+    const rewardAmount = Math.min(2, oiran.hanamiDamageBank);
+    oiran.hanamiFanTargetId = undefined;
+    oiran.hanamiDamageBank = 0;
+
+    if (previousTarget && rewardAmount > 0) {
+      const canHeal = previousTarget.hp < previousTarget.maxHp;
+      const shouldHeal = canHeal && Math.random() < 0.5;
+      if (shouldHeal) {
+        const hpBefore = previousTarget.hp;
+        previousTarget.hp = Math.min(previousTarget.maxHp, previousTarget.hp + rewardAmount);
+        const healed = previousTarget.hp - hpBefore;
+        this.pushPassiveEffect('hanami_dance', oiran, [previousTarget], 'reward_heal', healed, 'round-start');
+        this.logEvent(t('log.hanamiRewardHeal', { enemy: enemyName(previousTarget.id), amount: healed }));
+      } else {
+        previousTarget.roundAttackBonus += rewardAmount;
+        this.pushPassiveEffect('hanami_dance', oiran, [previousTarget], 'reward_attack', rewardAmount, 'round-start');
+        this.logEvent(t('log.hanamiRewardAttack', { enemy: enemyName(previousTarget.id), amount: rewardAmount }));
+      }
+    }
+
+    const candidates = this.aliveEnemies.filter((enemy) => enemy !== oiran);
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    oiran.hanamiFanTargetId = target.id;
+    this.pushPassiveEffect('hanami_dance', oiran, [target], 'mark', undefined, 'round-start');
+    this.logEvent(t('log.hanamiMark', { enemy: enemyName(target.id) }));
+  }
+
   private enemyAttackBonus(enemy: EnemyState): number {
     return Math.max(0, enemy.attackBonus + enemy.roundAttackBonus);
   }
 
   private isNorthernLonghouse(): boolean {
     return this.tableThemeConfig?.id === 'northern_longhouse';
+  }
+
+  private isDragonGate(): boolean {
+    return this.tableThemeConfig?.id === 'dragon_gate';
+  }
+
+  private isEdoTeahouse(): boolean {
+    return this.tableThemeConfig?.id === 'edo_teahouse';
   }
 
   consumePassiveEffectEvents(): BattlePresentationEvent[] {
@@ -794,6 +1101,7 @@ export class Battle {
     targets: EnemyState[],
     effect: Extract<BattlePresentationEvent, { type: 'passive-effect' }>['effect'],
     amount?: number,
+    timing: 'round-start' | 'combat' = 'combat',
   ): void {
     this.passiveEffectEvents.push({
       type: 'passive-effect',
@@ -804,6 +1112,7 @@ export class Battle {
       targetEnemyIndexes: targets.map((target) => this.enemies.indexOf(target)),
       effect,
       amount,
+      timing,
     });
   }
 
@@ -813,6 +1122,17 @@ export class Battle {
       target: enemy.id,
       targetEnemyIndex: this.enemies.indexOf(enemy),
       count,
+    });
+  }
+
+  private pushCardReplacementEvent(enemy: EnemyState, cardIndex: number, previousCard: Card, replacementCard: Card): void {
+    this.passiveEffectEvents.push({
+      type: 'card-replaced',
+      target: enemy.id,
+      targetEnemyIndex: this.enemies.indexOf(enemy),
+      cardIndex,
+      previousCard,
+      replacementCard,
     });
   }
 
@@ -875,8 +1195,24 @@ export class Battle {
   private logCompareResult(result: BattleResult): void {
     const resonanceText = this.compareResonanceText(result);
     if (result.outcome === 'win') {
+      if (result.guard) {
+        this.logEvent(t('log.chivalryFullGuard', {
+          enemy: enemyName(result.enemy.id),
+          protector: enemyName(result.guard.protectorEnemyId),
+          damage: result.guard.preventedDamage,
+        }));
+        return;
+      }
+      if (result.evaded && this.isEdoTeahouse() && result.enemy.id === 'ninja') {
+        this.logEvent(t('log.smokeScreenEvaded', { damage: result.originalDamage ?? 0 }));
+        return;
+      }
       this.logEvent(t('log.enemyDefeated', { enemy: enemyName(result.enemy.id), resonance: resonanceText, damage: result.damage }));
     } else if (result.outcome === 'lose') {
+      if (result.shielded) {
+        this.logEvent(t('log.holyShieldBlocked', { enemy: enemyName(result.enemy.id), damage: result.originalDamage ?? 0 }));
+        return;
+      }
       this.logEvent(t('log.playerDefeated', { resonance: resonanceText, damage: result.damage }));
     } else {
       this.logEvent(t('log.compareDraw', { enemy: enemyName(result.enemy.id), resonance: resonanceText }));

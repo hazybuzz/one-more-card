@@ -12,6 +12,7 @@ export interface BattleUIRuntimeFlags {
   stageBannerPlaying: boolean;
   actionAnimationPlaying: boolean;
   ownedItemCount: number;
+  itemUsesRemaining: number;
 }
 
 export interface BattleActionButtonState {
@@ -73,7 +74,7 @@ export function createBattleUIState(state: BattleState, flags: BattleUIRuntimeFl
       summon: createSummonSkillState(state, inputLocked),
     },
     itemButton: {
-      enabled: hasMechanic(state, 'items') && flags.ownedItemCount > 0 && !inputLocked,
+      enabled: hasMechanic(state, 'items') && flags.ownedItemCount > 0 && flags.itemUsesRemaining > 0 && !inputLocked,
     },
     autoAdvanceRound: !inputLocked && state.phase === 'round-result',
   };
@@ -90,6 +91,10 @@ export function canUseBattleItemFromState(itemId: ItemId, state: BattleState): b
 
   if (itemId === 'cooling_charm') {
     return state.phase === 'player-turn';
+  }
+
+  if (itemId === 'holy_shield') {
+    return state.phase === 'player-turn' && state.player.shieldCharges <= 0;
   }
 
   return false;
@@ -197,7 +202,7 @@ function canUseAction(state: BattleState, action: BattleActionId): boolean {
 
 function createShiftSkillState(state: BattleState, inputLocked: boolean): SkillSlotState {
   const cooldown = state.player.resonanceShiftCooldown;
-  const visible = state.phase === 'player-turn' && hasMechanic(state, 'skills') && !inputLocked;
+  const visible = hasMechanic(state, 'skills');
   const canShift = state.phase === 'player-turn'
     && hasMechanic(state, 'skills')
     && !inputLocked
@@ -215,7 +220,7 @@ function createShiftSkillState(state: BattleState, inputLocked: boolean): SkillS
 
 function createSummonSkillState(state: BattleState, inputLocked: boolean): SkillSlotState {
   const cooldown = state.player.resonanceSummonCooldown;
-  const visible = state.phase === 'player-turn' && hasMechanic(state, 'skills') && !inputLocked;
+  const visible = hasMechanic(state, 'skills');
   const canSummon = state.phase === 'player-turn'
     && hasMechanic(state, 'skills')
     && !inputLocked

@@ -13,7 +13,7 @@ export const ITEM_CONFIGS: Record<ItemId, ItemConfig> = {
   },
   cooling_charm: {
     id: 'cooling_charm',
-    price: 5,
+    price: 10,
     icon: '?',
     nameKey: 'item.coolingCharm.name',
     descriptionKey: 'item.coolingCharm.desc',
@@ -30,6 +30,16 @@ export const ITEM_CONFIGS: Record<ItemId, ItemConfig> = {
     useTiming: 'unknown-hand',
     effectId: 'resonance_horn',
     resourceKey: 'item_resonance_horn',
+  },
+  holy_shield: {
+    id: 'holy_shield',
+    price: 15,
+    icon: '盾',
+    nameKey: 'item.holyShield.name',
+    descriptionKey: 'item.holyShield.desc',
+    useTiming: 'player-turn',
+    effectId: 'holy_shield',
+    resourceKey: 'item_holy_shield',
   },
 };
 

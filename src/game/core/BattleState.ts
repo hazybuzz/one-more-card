@@ -18,6 +18,7 @@ export interface BattlePlayerState {
   canUseResonanceSummon: boolean;
   drawLocked: boolean;
   incomingDamageBonus: number;
+  shieldCharges: number;
   soulRedeemUsed: boolean;
   score: ScoreResult;
 }
@@ -38,6 +39,12 @@ export interface BattleEnemyState {
   defeated: boolean;
   attackBonus: number;
   roundAttackBonus: number;
+  taoistTalismaned: boolean;
+  iaijutsuStacks: number;
+  smokeScreenArmed: boolean;
+  smokeScreenUsed: boolean;
+  hanamiFanTargetId?: EnemyType;
+  hanamiDamageBank: number;
   summoned: boolean;
   summonCount: number;
   score: ScoreResult;
@@ -49,6 +56,9 @@ export interface BattleResultState {
   playerScore: ScoreResult;
   outcome: 'win' | 'lose' | 'draw';
   damage: number;
+  evaded?: boolean;
+  shielded?: boolean;
+  originalDamage?: number;
 }
 
 export interface BattleState {

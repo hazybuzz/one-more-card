@@ -16,13 +16,14 @@ import { completeStoryLevelAndUnlockNext, getNextStoryLevel } from '../game/stor
 import type { BattleState } from '../game/core/BattleState';
 import type { BattleMechanicId } from '../game/types/level';
 import type { ItemId } from '../game/types/item';
-import type { TableThemeId, TableThemeVisualConfig } from '../game/types/tableTheme';
+import type { EntryStakeMultiplier, TableThemeId, TableThemeVisualConfig } from '../game/types/tableTheme';
 import { ActionPanel } from '../ui/components/ActionPanel';
 import { BlockingMessageModal } from '../ui/components/BlockingMessageModal';
 import { ItemBar } from '../ui/components/ItemBar';
 import { SkillBar } from '../ui/components/SkillBar';
 import { createCardView } from '../ui/presentation/CardView';
 import { createScoreBadge } from '../ui/presentation/ScoreBadge';
+import { renderBattleTableTheme, resolveTableThemeVisual } from '../ui/presentation/TableThemeRenderer';
 import { canUseBattleItemFromState, createBattleUIState, type BattleActionButtonState, type BattleUIState } from '../ui/state/UIState';
 
 const COLORS = {
@@ -56,6 +57,12 @@ const SKILL_COLORS = {
   rune_shaman: 0x79c9ff,
   valkyrie: 0xf7d889,
   einherjar: 0xaeb9c9,
+  swordsman: 0xf05f42,
+  songstress: 0xf29bc2,
+  taoist: 0x72d8b3,
+  shogun_samurai: 0xe15f58,
+  ninja: 0x8e78bb,
+  oiran: 0xf09ab5,
 };
 
 const SEATS = {
@@ -80,6 +87,8 @@ const PASSIVE_EFFECT_TIMING = {
   bloodReturn: 920,
 };
 
+const MAX_BATTLE_ITEM_USES = 3;
+
 export class BattleScene extends Phaser.Scene {
   private battle!: BattleEngine;
   private battleEconomySettled = false;
@@ -90,6 +99,7 @@ export class BattleScene extends Phaser.Scene {
   private confirmExitFormalGame = false;
   private itemFeedback?: { title: string; message: string; success: boolean };
   private temporaryItems: Partial<Record<ItemId, number>> = {};
+  private battleItemUses = 0;
   private grantedItemRoundIds = new Set<string>();
   private dealing = false;
   private playerRedealing = false;
@@ -102,6 +112,9 @@ export class BattleScene extends Phaser.Scene {
   private dealtEnemyCards = [0, 0, 0];
   private echoedResonanceRound = 0;
   private visualHpOverride?: { player: number; enemies: number[] };
+  private visualEnemyDefeated?: boolean[];
+  private hiddenRoundAttackBonusEnemyIds = new Set<string>();
+  private hiddenHanamiFanTargetIds = new Set<string>();
   private enemySpeech?: { enemyId: string; text: string };
   private playerHpText?: Phaser.GameObjects.Text;
   private enemyHpTexts = new Map<string, Phaser.GameObjects.Text>();
@@ -121,6 +134,7 @@ export class BattleScene extends Phaser.Scene {
   private shownChapter4ResonanceFeedbackIds = new Set<string>();
   private battleLevelId?: string;
   private tableThemeId?: TableThemeId;
+  private stakeMultiplier: EntryStakeMultiplier = 1;
 
   constructor() {
     super('BattleScene');
@@ -167,9 +181,10 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  init(data?: { levelId?: string; tableThemeId?: TableThemeId }): void {
+  init(data?: { levelId?: string; tableThemeId?: TableThemeId; stakeMultiplier?: EntryStakeMultiplier }): void {
     this.battleLevelId = data?.levelId;
     this.tableThemeId = data?.tableThemeId;
+    this.stakeMultiplier = data?.stakeMultiplier ?? 1;
   }
 
   create(): void {
@@ -186,6 +201,7 @@ export class BattleScene extends Phaser.Scene {
     this.confirmExitFormalGame = false;
     this.blockingMessage = undefined;
     this.temporaryItems = {};
+    this.battleItemUses = 0;
     this.grantedItemRoundIds.clear();
     this.shownLessonRoundIds.clear();
     this.shownCompareHintKeys.clear();
@@ -198,6 +214,8 @@ export class BattleScene extends Phaser.Scene {
     this.chapter3ConsecutiveLosses = 0;
     this.chapter3LossHintShown = false;
     this.shownChapter4ResonanceFeedbackIds.clear();
+    this.hiddenRoundAttackBonusEnemyIds.clear();
+    this.hiddenHanamiFanTargetIds.clear();
     this.playRoundStartBannerThenDeal();
   }
 
@@ -228,72 +246,11 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private addBackground(): void {
-    const visual = this.currentThemeVisual();
-    if (visual.motif === 'northern') {
-      this.addNorthernBackground(visual);
-      return;
-    }
-
-    this.addTavernBackground(visual);
-  }
-
-  private addTavernBackground(visual: TableThemeVisualConfig): void {
-    this.add.rectangle(640, 360, 1280, 720, visual.backgroundColor);
-    this.add.rectangle(640, 360, 1280, 720, 0x14161a);
-    this.add.circle(640, 350, 205, visual.tableColor, 0.95).setStrokeStyle(2, visual.lineColor);
-    this.add.circle(640, 350, 145, 0x101114, 0.5).setStrokeStyle(1, visual.tableRingColor);
-  }
-
-  private addNorthernBackground(visual: TableThemeVisualConfig): void {
-    this.add.rectangle(640, 360, 1280, 720, visual.backgroundColor);
-    this.add.rectangle(640, 90, 1280, 180, 0x0b1821, 0.86);
-    this.add.rectangle(640, 182, 1280, 16, 0x1c2b33, 0.82).setStrokeStyle(1, visual.lineColor, 0.42);
-    this.add.rectangle(640, 360, 1280, 720, 0x05080d, 0.22);
-
-    for (let i = 0; i < 8; i += 1) {
-      const x = 120 + i * 150;
-      this.add.rectangle(x, 84, 84, 18, 0x26343a, 0.74).setAngle(i % 2 === 0 ? -4 : 4);
-    }
-
-    this.add.circle(198, 454, 46, 0xff8a3d, 0.08).setStrokeStyle(2, 0xff8a3d, 0.35);
-    this.add.circle(1082, 454, 46, 0xff8a3d, 0.08).setStrokeStyle(2, 0xff8a3d, 0.35);
-    this.add.circle(198, 454, 15, 0xff8a3d, 0.38);
-    this.add.circle(1082, 454, 15, 0xff8a3d, 0.38);
-
-    this.add.circle(640, 350, 214, visual.tableColor, 0.95).setStrokeStyle(3, visual.tableRingColor, 0.55);
-    this.add.circle(640, 350, 154, 0x071018, 0.58).setStrokeStyle(2, visual.tableRingColor, 0.32);
-    this.add.circle(640, 350, 90, 0x79c9ff, 0.035).setStrokeStyle(2, visual.tableRingColor, 0.24);
-    ['I', 'V', 'X', 'R'].forEach((glyph, index) => {
-      const angle = (-90 + index * 90) * (Math.PI / 180);
-      const x = 640 + Math.cos(angle) * 178;
-      const y = 350 + Math.sin(angle) * 178;
-      const rune = this.add.text(x, y, glyph, {
-        fontFamily: 'Arial',
-        fontSize: '22px',
-        color: visual.glowColor,
-        fontStyle: 'bold',
-      }).setOrigin(0.5);
-      rune.setAlpha(0.45);
-      rune.setShadow(0, 0, visual.glowColor, 8, true, true);
-    });
-
-    for (let i = 0; i < 7; i += 1) {
-      this.add.rectangle(640, 236 + i * 34, 980 - i * 42, 1, visual.tableRingColor, 0.05 + i * 0.015);
-    }
+    renderBattleTableTheme(this, this.battle.tableThemeConfig?.visual);
   }
 
   private currentThemeVisual(): TableThemeVisualConfig {
-    return this.battle.tableThemeConfig?.visual ?? {
-      accentColor: COLORS.accent,
-      glowColor: COLORS.accentText,
-      backgroundColor: COLORS.bg,
-      panelColor: COLORS.panel,
-      panelAltColor: COLORS.panelAlt,
-      lineColor: COLORS.line,
-      tableColor: 0x191c22,
-      tableRingColor: 0x2b303c,
-      motif: 'tavern',
-    };
+    return resolveTableThemeVisual(this.battle.tableThemeConfig?.visual);
   }
 
   private renderEnemies(): void {
@@ -304,13 +261,14 @@ export class BattleScene extends Phaser.Scene {
       this.ui.push(container);
       this.seatContainers.set(enemy.id, container);
       const active = this.battle.currentEnemyIndex === index && this.battle.phase === 'enemy-turn';
-      const defeatedColor = enemy.defeated ? 0x24262b : visual.panelColor;
+      const displayDefeated = this.enemyDisplayDefeated(index);
+      const defeatedColor = displayDefeated ? 0x24262b : visual.panelColor;
       container.add(this.add.rectangle(0, 0, seat.width, seat.height, active ? visual.panelAltColor : defeatedColor).setStrokeStyle(2, active ? visual.accentColor : visual.lineColor));
-      container.add(this.add.text(-seat.width / 2 + 18, -seat.height / 2 + 18, enemyName(enemy.id), { fontFamily: 'Arial', fontSize: '22px', color: enemy.defeated ? COLORS.muted : COLORS.text }));
-      const hp = this.hpText(seat.width / 2 - 118, -seat.height / 2 + 18, t('common.hp', { hp: this.enemyDisplayHp(index), maxHp: enemy.maxHp }), enemy.defeated);
+      container.add(this.add.text(-seat.width / 2 + 18, -seat.height / 2 + 18, enemyName(enemy.id), { fontFamily: 'Arial', fontSize: '22px', color: displayDefeated ? COLORS.muted : COLORS.text }));
+      const hp = this.hpText(seat.width / 2 - 118, -seat.height / 2 + 18, t('common.hp', { hp: this.enemyDisplayHp(index), maxHp: enemy.maxHp }), displayDefeated);
       this.enemyHpTexts.set(enemy.id, hp);
       container.add(hp);
-      container.add(this.add.text(-seat.width / 2 + 18, -seat.height / 2 + 48, enemy.defeated ? t('common.defeated') : enemyPersonality(enemy.id), { fontFamily: 'Arial', fontSize: '15px', color: enemy.defeated ? COLORS.green : COLORS.muted }));
+      container.add(this.add.text(-seat.width / 2 + 18, -seat.height / 2 + 48, displayDefeated ? t('common.defeated') : enemyPersonality(enemy.id), { fontFamily: 'Arial', fontSize: '15px', color: displayDefeated ? COLORS.green : COLORS.muted }));
       this.renderEnemyCardRow(container, enemy, index, -seat.width / 2 + 20, -seat.height / 2 + 108);
 
       if (this.shouldShowEnemyScore(enemy)) {
@@ -334,7 +292,75 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const attackBonus = Math.max(0, enemy.attackBonus + enemy.roundAttackBonus);
+    if (enemy.id === 'shogun_samurai' && enemy.iaijutsuStacks > 0) {
+      const x = index === 1 ? -seat.width / 2 - 34 : -seat.width / 2 + 34;
+      const y = index === 1 ? -seat.height / 2 + 66 : -seat.height / 2 - 2;
+      const badge = this.add.container(x, y);
+      const bg = this.add.rectangle(0, 0, 76, 24, 0x4b2427, 0.92).setStrokeStyle(2, 0xe15f58, 0.98);
+      const text = this.add.text(0, 0, t('battle.status.iaijutsu', { amount: enemy.iaijutsuStacks }), {
+        fontFamily: 'Arial',
+        fontSize: '13px',
+        color: '#ffd19d',
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      text.setShadow(0, 0, '#e15f58', 9, true, true);
+      badge.add([bg, text]);
+      container.add(badge);
+    }
+
+    if (enemy.id === 'ninja' && enemy.smokeScreenArmed) {
+      const x = index === 1 ? -seat.width / 2 - 34 : -seat.width / 2 + 34;
+      const y = index === 1 ? -seat.height / 2 + 66 : -seat.height / 2 - 2;
+      const badge = this.add.container(x, y);
+      const bg = this.add.rectangle(0, 0, 64, 24, 0x2b2544, 0.92).setStrokeStyle(2, 0x8e78bb, 0.98);
+      const text = this.add.text(0, 0, t('battle.status.smokeScreen'), {
+        fontFamily: 'Arial',
+        fontSize: '13px',
+        color: '#d8cbff',
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      text.setShadow(0, 0, '#8e78bb', 9, true, true);
+      badge.add([bg, text]);
+      container.add(badge);
+    }
+
+    const oiran = this.battle.enemies.find((candidate) => candidate.id === 'oiran' && !candidate.defeated);
+    if (oiran?.hanamiFanTargetId === enemy.id && !this.hiddenHanamiFanTargetIds.has(enemy.id)) {
+      const x = index === 1 ? -seat.width / 2 - 34 : -seat.width / 2 + 34;
+      const hasOwnStatus = (enemy.id === 'shogun_samurai' && enemy.iaijutsuStacks > 0)
+        || (enemy.id === 'ninja' && enemy.smokeScreenArmed);
+      const y = (index === 1 ? -seat.height / 2 + 66 : -seat.height / 2 - 2) + (hasOwnStatus ? 30 : 0);
+      const badge = this.add.container(x, y);
+      const bg = this.add.rectangle(0, 0, 64, 24, 0x4b2944, 0.92).setStrokeStyle(2, 0xf09ab5, 0.98);
+      const text = this.add.text(0, 0, t('battle.status.hanamiFan'), {
+        fontFamily: 'Arial',
+        fontSize: '13px',
+        color: '#ffd2e3',
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      text.setShadow(0, 0, '#f09ab5', 9, true, true);
+      badge.add([bg, text]);
+      container.add(badge);
+    }
+
+    if (enemy.taoistTalismaned) {
+      const x = seat.width / 2 - 42;
+      const y = -seat.height / 2 + 54;
+      const badge = this.add.container(x, y);
+      const bg = this.add.rectangle(0, 0, 46, 26, 0x173a36, 0.92).setStrokeStyle(2, 0x72d8b3, 0.98);
+      const text = this.add.text(0, 0, t('battle.passive.talismaned'), {
+        fontFamily: 'Arial',
+        fontSize: '14px',
+        color: '#92f0cc',
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      text.setShadow(0, 0, '#72d8b3', 8, true, true);
+      badge.add([bg, text]);
+      container.add(badge);
+    }
+
+    const visibleRoundAttackBonus = this.hiddenRoundAttackBonusEnemyIds.has(enemy.id) ? 0 : enemy.roundAttackBonus;
+    const attackBonus = Math.max(0, enemy.attackBonus + visibleRoundAttackBonus);
     if (attackBonus <= 0) {
       return;
     }
@@ -416,6 +442,9 @@ export class BattleScene extends Phaser.Scene {
     this.playerHpText = this.hpText(seat.width / 2 - 132, -seat.height / 2 + 18, t('common.hp', { hp: this.playerDisplayHp(), maxHp: this.battle.player.maxHp }));
     container.add(this.playerHpText);
     this.renderPlayerCardRow(container, -seat.width / 2 + 22, -seat.height / 2 + 98);
+    if (this.battle.player.shieldCharges > 0) {
+      container.add(this.holyShieldAura(this.battle.player.shieldCharges));
+    }
 
     if (this.battle.phase !== 'choice' && !this.playerRedealing) {
       const score = this.battle.playerScore();
@@ -465,7 +494,7 @@ export class BattleScene extends Phaser.Scene {
         x: -seat.width / 2 - 42,
         y: 42,
         enabled: uiState.itemButton.enabled,
-        label: t('battle.itemButton'),
+        label: t('battle.itemButtonUsage', { used: this.battleItemUses, max: MAX_BATTLE_ITEM_USES }),
         colors: {
           accent: COLORS.accent,
           accentText: COLORS.accentText,
@@ -493,6 +522,7 @@ export class BattleScene extends Phaser.Scene {
       stageBannerPlaying: this.stageBannerPlaying,
       actionAnimationPlaying: this.actionAnimationPlaying,
       ownedItemCount,
+      itemUsesRemaining: this.remainingBattleItemUses(),
     });
   }
 
@@ -541,6 +571,10 @@ export class BattleScene extends Phaser.Scene {
     return Object.values(this.battleItemCounts()).reduce((total, count) => total + (count ?? 0), 0);
   }
 
+  private remainingBattleItemUses(): number {
+    return Math.max(0, MAX_BATTLE_ITEM_USES - this.battleItemUses);
+  }
+
   private consumeBattleItem(itemId: ItemId): void {
     const temporaryCount = this.temporaryItems[itemId] ?? 0;
     if (temporaryCount > 0) {
@@ -561,28 +595,39 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private startDealPresentation(): void {
-    this.dealing = true;
-    this.dealingRound = this.battle.round;
-    this.dealtPlayerCards = 0;
-    this.dealtEnemyCards = this.battle.enemies.map(() => 0);
-    this.itemModalOpen = false;
-    this.itemFeedback = undefined;
-    const dealEvents = this.battle.currentRoundDealEvents();
-    this.render();
-    this.playDealSequence(dealEvents, () => {
-      this.dealing = false;
-      this.dealtPlayerCards = this.battle.player.hand.length;
-      this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
+    const beginDeal = () => {
+      this.dealing = true;
+      this.dealingRound = this.battle.round;
+      this.dealtPlayerCards = 0;
+      this.dealtEnemyCards = this.battle.enemies.map(() => 0);
+      this.itemModalOpen = false;
+      this.itemFeedback = undefined;
+      const dealEvents = this.battle.currentRoundDealEvents();
       this.render();
-      if (this.showLevelIntroLessonIfNeeded(() => {
-        if (!this.showRoundLessonIfNeeded()) {
-          this.render();
+      this.playDealSequence(dealEvents, () => {
+        this.dealing = false;
+        this.dealtPlayerCards = this.battle.player.hand.length;
+        this.dealtEnemyCards = this.battle.enemies.map((enemy) => enemy.hand.length);
+        this.render();
+        if (this.showLevelIntroLessonIfNeeded(() => {
+          if (!this.showRoundLessonIfNeeded()) {
+            this.render();
+          }
+        })) {
+          return;
         }
-      })) {
-        return;
-      }
-      this.showRoundLessonIfNeeded();
-    });
+        this.showRoundLessonIfNeeded();
+      });
+    };
+
+    const roundStartEvents = this.battle.consumePresentationEvents();
+    if (roundStartEvents.length === 0) {
+      beginDeal();
+      return;
+    }
+
+    this.playImmediatePresentationEvents(roundStartEvents);
+    this.playPassiveEffectEvents(roundStartEvents, beginDeal);
   }
 
   private playRoundStartBannerThenDeal(): void {
@@ -596,7 +641,108 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playSoulRedeemBannerThen(onComplete: () => void): void {
-    this.playStageBanner(t('battle.banner.soulRedeem'), onComplete, false, COLORS.resonance, '#4b3000');
+    this.stageBannerPlaying = true;
+    this.itemModalOpen = false;
+    this.render();
+
+    const x = SEATS.player.x;
+    const y = SEATS.player.y;
+    const blocker = this.add.rectangle(640, 360, 1280, 720, 0x050608, 0.18).setDepth(68).setInteractive();
+    const playerShade = this.add.rectangle(x, y, SEATS.player.width, SEATS.player.height, 0x050608, 0.38).setDepth(69);
+    const soul = this.add.container(x, y + 14).setDepth(72).setAlpha(0).setScale(0.48);
+    const outerSoul = this.add.circle(0, 0, 28, 0xf6df96, 0.18).setStrokeStyle(3, 0xfff0bc, 0.9);
+    const innerSoul = this.add.circle(0, 0, 14, 0xe9f6ff, 0.82);
+    const glyph = this.add.text(0, -2, '✦', {
+      fontFamily: 'Arial',
+      fontSize: '28px',
+      color: '#fff7d1',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    glyph.setShadow(0, 0, '#ffe39a', 16, true, true);
+    soul.add([outerSoul, innerSoul, glyph]);
+
+    const title = this.add.text(x, y - 132, t('skill.soulRedeem.name'), {
+      fontFamily: 'Arial',
+      fontSize: '30px',
+      color: COLORS.resonance,
+      fontStyle: 'bold',
+      stroke: '#4b3000',
+      strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(73).setAlpha(0);
+    title.setShadow(0, 0, COLORS.resonance, 18, true, true);
+
+    this.sound.play('resonanceEcho', { volume: 0.44 });
+    this.playSoulRedeemParticles(x, y + 14, 8, 0xf6df96);
+    this.tweens.add({
+      targets: [soul, title],
+      alpha: 1,
+      duration: 240,
+      ease: 'Sine.easeOut',
+    });
+    this.tweens.add({
+      targets: soul,
+      y: y - 126,
+      scale: 1.12,
+      duration: 620,
+      ease: 'Sine.easeOut',
+      onComplete: () => {
+        this.playSoulRedeemParticles(soul.x, soul.y, 6, 0xe9f6ff);
+        this.time.delayedCall(180, () => {
+          this.tweens.add({
+            targets: soul,
+            y,
+            scale: 1.42,
+            duration: 480,
+            ease: 'Cubic.easeIn',
+            onComplete: () => {
+              const revivalRing = this.add.circle(x, y, 30, 0xf6df96, 0.2).setStrokeStyle(4, 0xfff5c8, 0.96).setDepth(72);
+              const revivalGlow = this.add.circle(x, y, 20, 0xe9f6ff, 0.36).setDepth(73);
+              this.playSoulRedeemParticles(x, y, 16, 0xffe7a2);
+              this.playHealGainText(x, y - 74, 3, 74);
+              this.tweens.add({
+                targets: [revivalRing, revivalGlow, soul, title, playerShade, blocker],
+                scale: 3.2,
+                alpha: 0,
+                duration: 620,
+                ease: 'Cubic.easeOut',
+                onComplete: () => {
+                  revivalRing.destroy();
+                  revivalGlow.destroy();
+                  soul.destroy(true);
+                  title.destroy();
+                  playerShade.destroy();
+                  blocker.destroy();
+                  this.stageBannerPlaying = false;
+                  onComplete();
+                },
+              });
+            },
+          });
+        });
+      },
+    });
+  }
+
+  private playSoulRedeemParticles(x: number, y: number, count: number, color: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const spark = this.add.circle(
+        x + Phaser.Math.Between(-26, 26),
+        y + Phaser.Math.Between(-18, 18),
+        Phaser.Math.Between(3, 6),
+        color,
+        0.9,
+      ).setDepth(71);
+      this.tweens.add({
+        targets: spark,
+        x: spark.x + Phaser.Math.Between(-54, 54),
+        y: spark.y + Phaser.Math.Between(-58, 34),
+        scale: 0.3,
+        alpha: 0,
+        duration: Phaser.Math.Between(440, 680),
+        ease: 'Sine.easeOut',
+        onComplete: () => spark.destroy(),
+      });
+    }
   }
 
   private playEnemySoulRedeemBannerThen(onComplete: () => void): void {
@@ -791,6 +937,14 @@ export class BattleScene extends Phaser.Scene {
     return new Phaser.Math.Vector2(
       seat.x - seat.width / 2 + 44 + cardIndex * 42,
       seat.y - seat.height / 2 + 94,
+    );
+  }
+
+  private enemyCardCenter(enemyIndex: number, cardIndex: number): Phaser.Math.Vector2 {
+    const seat = this.enemySeatForIndex(enemyIndex);
+    return new Phaser.Math.Vector2(
+      seat.x - seat.width / 2 + 55 + cardIndex * 54,
+      seat.y - seat.height / 2 + 108,
     );
   }
 
@@ -1029,19 +1183,21 @@ export class BattleScene extends Phaser.Scene {
       this.playImmediatePresentationEvents(events);
       this.playActionDealEvents(events, () => {
         this.playPassiveEffectEvents(events, () => {
-          const continueAfterInviteDialogue = () => {
-            if (this.showPlayerTurnLessonIfNeeded()) {
+          this.playCardReplacementEvents(events, () => {
+            const continueAfterInviteDialogue = () => {
+              if (this.showPlayerTurnLessonIfNeeded()) {
+                return;
+              }
+
+              this.render();
+            };
+
+            if (invitedEnemyId && this.showInviteDialogueIfNeeded(invitedEnemyId, continueAfterInviteDialogue)) {
               return;
             }
 
-            this.render();
-          };
-
-          if (invitedEnemyId && this.showInviteDialogueIfNeeded(invitedEnemyId, continueAfterInviteDialogue)) {
-            return;
-          }
-
-          continueAfterInviteDialogue();
+            continueAfterInviteDialogue();
+          });
         });
       });
       return;
@@ -1057,6 +1213,12 @@ export class BattleScene extends Phaser.Scene {
 
     this.autoAdvancingRound = true;
     this.time.delayedCall(900, () => {
+      if (this.isRoundTransitionBusy()) {
+        this.autoAdvancingRound = false;
+        this.time.delayedCall(120, () => this.scheduleNextRound());
+        return;
+      }
+
       this.autoAdvancingRound = false;
       if (this.battle.phase !== 'round-result' || this.battle.battleOutcome) {
         this.render();
@@ -1070,6 +1232,14 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
+  private isRoundTransitionBusy(): boolean {
+    return this.dealing
+      || this.playerRedealing
+      || this.actionDealing
+      || this.stageBannerPlaying
+      || this.actionAnimationPlaying;
+  }
+
   private settleEconomyIfNeeded(): void {
     if (this.battleEconomySettled || this.battle.phase !== 'battle-result' || !this.battle.battleOutcome) {
       return;
@@ -1079,7 +1249,7 @@ export class BattleScene extends Phaser.Scene {
     const economy = settleBattleEconomy(
       this.battle.battleOutcome,
       this.battle.player.hp,
-      this.battle.tableThemeConfig?.rewardMultiplier ?? 1,
+      (this.battle.tableThemeConfig?.rewardMultiplier ?? 1) * this.stakeMultiplier,
     );
     if (this.battle.battleOutcome === 'victory' && this.battle.levelConfig?.id) {
       completeStoryLevelAndUnlockNext(this.battle.levelConfig.id);
@@ -1707,17 +1877,20 @@ export class BattleScene extends Phaser.Scene {
     const container = this.add.container(640, 360).setDepth(80);
     this.ui.push(container);
     container.add(this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.62));
-    container.add(this.add.rectangle(0, 0, 640, 420, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.accent));
-    container.add(this.add.text(0, -170, t('battle.itemModal.title'), {
+    container.add(this.add.rectangle(0, 0, 640, 520, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.accent));
+    container.add(this.add.text(0, -220, t('battle.itemButtonUsage', { used: this.battleItemUses, max: MAX_BATTLE_ITEM_USES }), {
       fontFamily: 'Arial',
       fontSize: '32px',
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5));
-    container.add(this.add.text(0, -132, t('battle.itemModal.phaseHint'), {
+    const itemHint = this.remainingBattleItemUses() > 0
+      ? t('battle.itemModal.phaseHint')
+      : t('battle.itemModal.limitReached', { max: MAX_BATTLE_ITEM_USES });
+    container.add(this.add.text(0, -182, itemHint, {
       fontFamily: 'Arial',
       fontSize: '15px',
-      color: this.battle.phase === 'player-turn' || this.battle.phase === 'choice' ? COLORS.muted : COLORS.dangerText,
+      color: this.remainingBattleItemUses() > 0 && (this.battle.phase === 'player-turn' || this.battle.phase === 'choice') ? COLORS.muted : COLORS.dangerText,
     }).setOrigin(0.5));
 
     if (ownedItems.length === 0) {
@@ -1728,11 +1901,11 @@ export class BattleScene extends Phaser.Scene {
       }).setOrigin(0.5));
     } else {
       ownedItems.forEach((item, index) => {
-        container.add(this.itemModalRow(item, -260, -86 + index * 92));
+        container.add(this.itemModalRow(item, -260, -136 + index * 92));
       });
     }
 
-    container.add(this.button(-90, 152, 180, 48, t('battle.itemModal.close'), () => {
+    container.add(this.button(-90, 202, 180, 48, t('battle.itemModal.close'), () => {
       this.itemModalOpen = false;
       this.render();
     }));
@@ -1764,7 +1937,10 @@ export class BattleScene extends Phaser.Scene {
     if (canUse) {
       row.add(this.button(414, 10, 112, 46, t('battle.itemModal.use'), () => this.useItemFromModal(item), COLORS.button, '18px'));
     } else {
-      row.add(this.add.text(414, 33, t(this.itemTimingHintKey(item)), {
+      const unavailableHint = this.remainingBattleItemUses() <= 0
+        ? t('battle.itemModal.limitReached', { max: MAX_BATTLE_ITEM_USES })
+        : t(this.itemTimingHintKey(item));
+      row.add(this.add.text(414, 33, unavailableHint, {
         fontFamily: 'Arial',
         fontSize: '13px',
         color: COLORS.muted,
@@ -1784,10 +1960,16 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private useItemFromModal(item: ItemDefinition): void {
+    if (this.remainingBattleItemUses() <= 0) {
+      this.showSkillTooltip(640, 592, t('battle.itemModal.title'), t('battle.itemModal.limitReached', { max: MAX_BATTLE_ITEM_USES }));
+      return;
+    }
+
     const hpBefore = this.hpSnapshot();
     const result = useBattleItem(item.id, this.battle);
     if (result.used) {
       this.consumeBattleItem(item.id);
+      this.battleItemUses += 1;
       this.itemFeedback = result.feedback;
     }
 
@@ -1843,6 +2025,9 @@ export class BattleScene extends Phaser.Scene {
 
       showResult();
     });
+    if (result.used && result.shieldCharges) {
+      this.playHolyShieldActivation(result.shieldCharges);
+    }
     if (!result.used) {
       this.showSkillTooltip(640, 592, t(item.nameKey), result.message);
     }
@@ -1851,29 +2036,40 @@ export class BattleScene extends Phaser.Scene {
   private playBeerHealThenReveal(healed: number, hpBefore: { player: number; enemies: number[] }): void {
     this.itemModalOpen = false;
     this.itemFeedback = undefined;
+    this.actionAnimationPlaying = true;
+    this.visualHpOverride = hpBefore;
     this.render();
-    this.sound.play('beerBubble', { volume: 0.58 });
-    this.playHealGainText(SEATS.player.x, SEATS.player.y - 86, healed);
-    this.time.delayedCall(720, () => {
+
+    this.playFateBeerDrinkEffect(() => {
+      this.visualHpOverride = undefined;
+      this.render();
+      this.playFateBeerHealEffect(healed);
+
+      this.time.delayedCall(880, () => {
       this.battle.execute({ type: 'reveal-by-item' });
       this.playRoundResonanceEchoOnce();
       const events = this.battle.consumePresentationEvents();
       this.playImmediatePresentationEvents(events);
       const shouldDelayResultModal = this.shouldDelayOutcomeForPresentation(events);
       this.resultModalReady = !shouldDelayResultModal;
-      this.playPostActionAnimations(events, hpBefore, false, () => {
+      this.render();
+
+      this.time.delayedCall(620, () => this.playPostActionAnimations(events, hpBefore, true, () => {
         if (this.hasPendingSoulRedeem()) {
+          this.actionAnimationPlaying = false;
           this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
           return;
         }
 
         if (!shouldDelayResultModal) {
+          this.actionAnimationPlaying = false;
           this.render();
           return;
         }
 
         const showResult = () => {
           this.resultModalReady = true;
+          this.actionAnimationPlaying = false;
           this.render();
         };
 
@@ -1882,12 +2078,223 @@ export class BattleScene extends Phaser.Scene {
         }
 
         showResult();
+      }));
       });
     });
   }
 
+  private playFateBeerDrinkEffect(onComplete: () => void): void {
+    const startX = SEATS.player.x + 172;
+    const startY = SEATS.player.y - 16;
+    const drinkX = SEATS.player.x + 74;
+    const drinkY = SEATS.player.y - 62;
+    const beer = this.add.container(startX, startY).setDepth(62).setAlpha(0).setScale(0.72).setRotation(-0.32);
+    const handle = this.add.circle(23, 5, 0xe8b24a, 0.2).setStrokeStyle(4, 0xf7d36a, 0.95);
+    const handleCutout = this.add.circle(23, 5, 7, COLORS.panel, 1);
+    const glass = this.add.rectangle(0, 5, 42, 50, 0xd58a2e, 0.94).setStrokeStyle(3, 0xffdd7a, 1);
+    const beerFill = this.add.rectangle(0, 12, 34, 31, 0xb95b20, 0.9);
+    const foam = this.add.container(0, -21);
+    [-13, -5, 4, 12].forEach((x, index) => foam.add(this.add.circle(x, index % 2 === 0 ? 0 : -3, 8, 0xfff4c9, 0.96)));
+    beer.add([handle, handleCutout, glass, beerFill, foam]);
+
+    this.sound.play('beerBubble', { volume: 0.58 });
+    this.tweens.add({
+      targets: beer,
+      x: drinkX,
+      y: drinkY,
+      alpha: 1,
+      scale: 0.96,
+      rotation: -0.06,
+      duration: 340,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        this.playBeerBubbles(drinkX + 2, drinkY - 22);
+        this.tweens.add({
+          targets: beer,
+          y: drinkY - 12,
+          rotation: 0.48,
+          scale: 0.82,
+          duration: 300,
+          ease: 'Sine.easeInOut',
+          onComplete: () => {
+            this.tweens.add({
+              targets: beer,
+              alpha: 0,
+              x: drinkX + 18,
+              y: drinkY - 30,
+              duration: 180,
+              ease: 'Quad.easeOut',
+              onComplete: () => {
+                beer.destroy(true);
+                onComplete();
+              },
+            });
+          },
+        });
+      },
+    });
+  }
+
+  private playFateBeerHealEffect(amount: number): void {
+    const x = SEATS.player.x;
+    const y = SEATS.player.y;
+    const glow = this.add.circle(x, y, 58, 0x78d18a, 0.2).setStrokeStyle(4, 0x9dffae, 0.9).setDepth(58);
+    const innerGlow = this.add.circle(x, y, 26, 0xb9ffc2, 0.32).setDepth(59);
+    const halo = this.add.circle(x, y, 18, 0x78d18a, 0.1).setStrokeStyle(3, 0xd0ffd4, 0.95).setDepth(60);
+
+    this.sound.play('healSound', { volume: 0.56 });
+    this.playHealGainText(x, y - 86, amount, 64);
+    this.playBeerBubbles(x, y - 20, 0x9dffae);
+    this.tweens.add({
+      targets: glow,
+      scale: 2.25,
+      alpha: 0,
+      duration: 720,
+      ease: 'Cubic.easeOut',
+      onComplete: () => glow.destroy(),
+    });
+    this.tweens.add({
+      targets: innerGlow,
+      scale: 2.8,
+      alpha: 0,
+      duration: 620,
+      ease: 'Quad.easeOut',
+      onComplete: () => innerGlow.destroy(),
+    });
+    this.tweens.add({
+      targets: halo,
+      scale: 4,
+      alpha: 0,
+      duration: 820,
+      ease: 'Sine.easeOut',
+      onComplete: () => halo.destroy(),
+    });
+  }
+
+  private playBeerBubbles(x: number, y: number, color = 0xfff4c9): void {
+    [-18, -7, 6, 18].forEach((offset, index) => {
+      const bubble = this.add.circle(x + offset, y + (index % 2) * 7, 4 + (index % 2), color, 0.82).setDepth(63);
+      this.tweens.add({
+        targets: bubble,
+        y: bubble.y - 32 - index * 5,
+        x: bubble.x + (index - 1.5) * 8,
+        alpha: 0,
+        scale: 1.8,
+        duration: 440 + index * 70,
+        ease: 'Sine.easeOut',
+        onComplete: () => bubble.destroy(),
+      });
+    });
+  }
+
+  private holyShieldAura(charges: number): Phaser.GameObjects.Container {
+    const shield = this.add.container(0, 0);
+    const outer = this.add.circle(0, 0, 104, 0x4f9dff, 0.06).setStrokeStyle(3, 0x72c7ff, 0.74);
+    const inner = this.add.circle(0, 0, 82, 0x93dcff, 0.035).setStrokeStyle(1, 0xb9eeff, 0.5);
+    const label = this.add.text(0, -70, t('battle.holyShield.status', { charges }), {
+      fontFamily: 'Arial',
+      fontSize: '14px',
+      color: '#9fe7ff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    label.setShadow(0, 0, '#62c4ff', 10, true, true);
+    shield.add([outer, inner, label]);
+    this.tweens.add({
+      targets: [outer, inner],
+      alpha: { from: 0.34, to: 0.82 },
+      scale: { from: 0.96, to: 1.05 },
+      duration: 900,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    return shield;
+  }
+
+  private playHolyShieldActivation(charges: number): void {
+    const x = SEATS.player.x;
+    const y = SEATS.player.y;
+    const halo = this.add.circle(x, y, 44, 0x62c4ff, 0.18).setStrokeStyle(4, 0xbcefff, 0.92).setDepth(62);
+    const ring = this.add.circle(x, y, 22, 0x4f9dff, 0.14).setStrokeStyle(3, 0x72c7ff, 0.92).setDepth(63);
+    const label = this.add.text(x, y - 126, t('battle.holyShield.status', { charges }), {
+      fontFamily: 'Arial',
+      fontSize: '22px',
+      color: '#bcefff',
+      fontStyle: 'bold',
+      stroke: '#173c74',
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(64);
+    label.setShadow(0, 0, '#62c4ff', 14, true, true);
+    this.sound.play('resonanceEcho', { volume: 0.42 });
+    this.tweens.add({
+      targets: [halo, ring],
+      scale: 3.3,
+      alpha: 0,
+      duration: 680,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        halo.destroy();
+        ring.destroy();
+      },
+    });
+    this.tweens.add({
+      targets: label,
+      y: label.y - 24,
+      alpha: 0,
+      duration: 820,
+      delay: 220,
+      ease: 'Sine.easeOut',
+      onComplete: () => label.destroy(),
+    });
+  }
+
+  private playHolyShieldBlock(blockedDamage: number): void {
+    const x = SEATS.player.x;
+    const y = SEATS.player.y;
+    const dome = this.add.circle(x, y, 42, 0x4f9dff, 0.2).setStrokeStyle(5, 0xbcefff, 0.96).setDepth(62);
+    const inner = this.add.circle(x, y, 20, 0xa7e7ff, 0.28).setDepth(63);
+    const label = this.add.text(x, y - 118, t('battle.holyShield.blocked'), {
+      fontFamily: 'Arial',
+      fontSize: '21px',
+      color: '#c9f4ff',
+      fontStyle: 'bold',
+      stroke: '#173c74',
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(64);
+    const damage = this.add.text(x, y - 86, `-${blockedDamage}`, {
+      fontFamily: 'Arial',
+      fontSize: '20px',
+      color: '#9fe7ff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(64);
+    this.sound.play('resonanceEcho', { volume: 0.34 });
+    this.tweens.add({
+      targets: [dome, inner],
+      scale: 3.2,
+      alpha: 0,
+      duration: 620,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        dome.destroy();
+        inner.destroy();
+      },
+    });
+    this.tweens.add({
+      targets: [label, damage],
+      y: '-=24',
+      alpha: 0,
+      duration: 700,
+      delay: 160,
+      ease: 'Sine.easeOut',
+      onComplete: () => {
+        label.destroy();
+        damage.destroy();
+      },
+    });
+  }
+
   private canUseItemNow(item: ItemDefinition): boolean {
-    return canUseBattleItemFromState(item.id, this.battle.getState());
+    return this.remainingBattleItemUses() > 0 && canUseBattleItemFromState(item.id, this.battle.getState());
   }
 
   private playerPassiveIcon(seat: { width: number; height: number }): Phaser.GameObjects.Container {
@@ -1975,7 +2382,13 @@ export class BattleScene extends Phaser.Scene {
       || enemy.id === 'keeper'
       || enemy.id === 'viking_warrior'
       || enemy.id === 'rune_shaman'
-      || enemy.id === 'valkyrie';
+      || enemy.id === 'valkyrie'
+      || enemy.id === 'swordsman'
+      || enemy.id === 'songstress'
+      || enemy.id === 'taoist'
+      || enemy.id === 'shogun_samurai'
+      || enemy.id === 'ninja'
+      || enemy.id === 'oiran';
   }
 
   private enemyPassiveInfo(enemy: EnemyState): { name: string; icon: string; description: string; color: number; textColor: string } {
@@ -2039,6 +2452,66 @@ export class BattleScene extends Phaser.Scene {
       };
     }
 
+    if (enemy.id === 'swordsman') {
+      return {
+        name: t('skill.chivalry.name'),
+        icon: '侠',
+        description: t('skill.chivalry.tooltip'),
+        color: 0xf05f42,
+        textColor: '#ff9a72',
+      };
+    }
+
+    if (enemy.id === 'songstress') {
+      return {
+        name: t('skill.redSilkToast.name'),
+        icon: '绸',
+        description: t('skill.redSilkToast.tooltip'),
+        color: 0xf29bc2,
+        textColor: '#ffb8d6',
+      };
+    }
+
+    if (enemy.id === 'taoist') {
+      return {
+        name: t('skill.heavenlyInsight.name'),
+        icon: '道',
+        description: t('skill.heavenlyInsight.tooltip'),
+        color: 0x72d8b3,
+        textColor: '#92f0cc',
+      };
+    }
+
+    if (enemy.id === 'shogun_samurai') {
+      return {
+        name: t('skill.iaijutsuCharge.name'),
+        icon: '刀',
+        description: t('skill.iaijutsuCharge.tooltip'),
+        color: 0xe15f58,
+        textColor: '#ffd19d',
+      };
+    }
+
+    if (enemy.id === 'ninja') {
+      return {
+        name: t('skill.smokeSubstitution.name'),
+        icon: '影',
+        description: t('skill.smokeSubstitution.tooltip'),
+        color: 0x8e78bb,
+        textColor: '#d8cbff',
+      };
+    }
+
+    if (enemy.id === 'oiran') {
+      return {
+        name: t('skill.hanamiDance.name'),
+        icon: '扇',
+        description: t('skill.hanamiDance.tooltip'),
+        color: 0xf09ab5,
+        textColor: '#ffd2e3',
+      };
+    }
+
     return {
       name: t('skill.werewolfLifesteal.name'),
       icon: 'V',
@@ -2071,6 +2544,34 @@ export class BattleScene extends Phaser.Scene {
 
     if (enemy.id === 'valkyrie') {
       return enemy.hp < 4 && enemy.summonCount < 2 && !enemy.defeated;
+    }
+
+    if (enemy.id === 'swordsman') {
+      return this.battle.enemies.some((item) => item !== enemy && !item.defeated && item.hp <= 2)
+        && !enemy.passiveTriggeredThisRound
+        && !enemy.defeated;
+    }
+
+    if (enemy.id === 'songstress') {
+      return this.battle.enemies.some((item) => item !== enemy && !item.defeated && item.hp < 3)
+        && !enemy.passiveTriggeredThisRound
+        && !enemy.defeated;
+    }
+
+    if (enemy.id === 'taoist') {
+      return !enemy.passiveTriggeredThisRound && !enemy.defeated;
+    }
+
+    if (enemy.id === 'shogun_samurai') {
+      return !enemy.defeated;
+    }
+
+    if (enemy.id === 'ninja') {
+      return !enemy.smokeScreenUsed && !enemy.defeated;
+    }
+
+    if (enemy.id === 'oiran') {
+      return this.battle.enemies.some((candidate) => candidate !== enemy && !candidate.defeated);
     }
 
     return enemy.hp < 3 && !enemy.defeated;
@@ -2138,7 +2639,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private renderEnemyCardRow(container: Phaser.GameObjects.Container, enemy: EnemyState, enemyIndex: number, x: number, y: number): void {
-    if (enemy.defeated && enemy.hand.length === 0) {
+    if (this.enemyDisplayDefeated(enemyIndex) && enemy.hand.length === 0) {
       container.add(this.add.text(x, y - 12, t('battle.notParticipating'), {
         fontFamily: 'Arial',
         fontSize: '18px',
@@ -2161,7 +2662,7 @@ export class BattleScene extends Phaser.Scene {
       height: 96,
       spacing: 54,
       resonant: this.enemyHasResonance(enemy),
-      muted: enemy.defeated,
+      muted: this.enemyDisplayDefeated(enemyIndex),
     });
   }
 
@@ -2288,6 +2789,10 @@ export class BattleScene extends Phaser.Scene {
     return this.visualHpOverride?.enemies[index] ?? this.battle.enemies[index].hp;
   }
 
+  private enemyDisplayDefeated(index: number): boolean {
+    return this.visualEnemyDefeated?.[index] ?? this.battle.enemies[index].defeated;
+  }
+
   private playHealSoundIfHpIncreased(before: { player: number; enemies: number[] }): void {
     const playerHealed = this.battle.player.hp > before.player;
     const enemyHealed = this.battle.enemies.some((enemy, index) => enemy.hp > (before.enemies[index] ?? enemy.hp));
@@ -2318,17 +2823,28 @@ export class BattleScene extends Phaser.Scene {
     return events.filter((event): event is Extract<BattlePresentationEvent, { type: 'cards-redealt' }> => event.type === 'cards-redealt');
   }
 
+  private cardReplacementEvents(events: BattlePresentationEvent[]): Extract<BattlePresentationEvent, { type: 'card-replaced' }>[] {
+    return events.filter((event): event is Extract<BattlePresentationEvent, { type: 'card-replaced' }> => event.type === 'card-replaced');
+  }
+
   private preCombatPresentationEvents(events: BattlePresentationEvent[]): BattlePresentationEvent[] {
     return events.filter((event) => (
       (event.type === 'passive-effect' && event.passiveId === 'gambler_blessing')
+      || (event.type === 'passive-effect' && event.passiveId === 'heavenly_insight')
+      || (event.type === 'passive-effect' && event.passiveId === 'iaijutsu_charge' && event.effect === 'release')
       || event.type === 'cards-redealt'
+      || event.type === 'card-replaced'
     ));
   }
 
   private postCombatPresentationEvents(events: BattlePresentationEvent[]): BattlePresentationEvent[] {
     return events.filter((event) => !(
       (event.type === 'passive-effect' && event.passiveId === 'gambler_blessing')
+      || (event.type === 'passive-effect' && event.passiveId === 'heavenly_insight')
+      || (event.type === 'passive-effect' && event.passiveId === 'iaijutsu_charge' && event.effect === 'release')
+      || (event.type === 'passive-effect' && event.timing === 'round-start')
       || event.type === 'cards-redealt'
+      || event.type === 'card-replaced'
     ));
   }
 
@@ -2425,9 +2941,11 @@ export class BattleScene extends Phaser.Scene {
     const playWithDelayedHp = () => {
       this.actionAnimationPlaying = true;
       this.visualHpOverride = hpBefore;
+      this.visualEnemyDefeated = hpBefore.enemies.map((hp) => hp <= 0);
       this.render();
       this.playDamageAnimations(combatEvents, () => {
         this.visualHpOverride = undefined;
+        this.visualEnemyDefeated = undefined;
         this.actionAnimationPlaying = false;
         onComplete?.();
       });
@@ -2452,7 +2970,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.playPassiveEffectEvents(preEvents, () => {
-      this.playCardsRedealtEvents(preEvents, onComplete);
+      this.playCardsRedealtEvents(preEvents, () => this.playCardReplacementEvents(preEvents, onComplete));
     });
   }
 
@@ -2507,6 +3025,101 @@ export class BattleScene extends Phaser.Scene {
     };
 
     playCard(0);
+  }
+
+  private playCardReplacementEvents(events: BattlePresentationEvent[], onComplete: () => void): void {
+    const replacements = this.cardReplacementEvents(events);
+    if (replacements.length === 0) {
+      onComplete();
+      return;
+    }
+
+    const playStep = (index: number) => {
+      if (index >= replacements.length) {
+        onComplete();
+        return;
+      }
+
+      this.playEnemyCardReplacement(replacements[index], () => {
+        this.time.delayedCall(120, () => playStep(index + 1));
+      });
+    };
+
+    playStep(0);
+  }
+
+  private playEnemyCardReplacement(event: Extract<BattlePresentationEvent, { type: 'card-replaced' }>, onComplete: () => void): void {
+    const enemy = this.battle.enemies[event.targetEnemyIndex];
+    if (!enemy || enemy.id !== event.target || event.cardIndex < 0 || event.cardIndex >= enemy.hand.length) {
+      onComplete();
+      return;
+    }
+
+    this.actionDealing = true;
+    this.render();
+    const position = this.enemyCardCenter(event.targetEnemyIndex, event.cardIndex);
+    const oldCard = createCardView(this, {
+      x: position.x,
+      y: position.y,
+      card: event.previousCard,
+      width: 70,
+    }).setDepth(32);
+    const talisman = this.add.text(position.x, position.y, '符', {
+      fontFamily: 'Arial',
+      fontSize: '36px',
+      color: '#b6ffe2',
+      fontStyle: 'bold',
+      stroke: '#12352d',
+      strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(34);
+    talisman.setShadow(0, 0, '#72d8b3', 14, true, true);
+    this.sound.play('attackWind', { volume: 0.36 });
+    this.playTalismanBurn(position.x, position.y);
+    this.tweens.add({
+      targets: [oldCard, talisman],
+      alpha: 0,
+      scaleX: 1.28,
+      scaleY: 0.48,
+      duration: 560,
+      ease: 'Cubic.easeIn',
+      onComplete: () => {
+        oldCard.destroy(true);
+        talisman.destroy();
+        this.playDealCard(position, () => {
+          const replacement = createCardView(this, {
+            x: position.x,
+            y: position.y,
+            card: event.replacementCard,
+            width: 70,
+          }).setDepth(32).setAlpha(0);
+          this.sound.play('cardPlace', { volume: 0.46 });
+          this.tweens.add({
+            targets: replacement,
+            alpha: 1,
+            scaleX: 1.08,
+            scaleY: 1.08,
+            duration: 240,
+            yoyo: true,
+            ease: 'Back.easeOut',
+            onComplete: () => {
+              this.time.delayedCall(520, () => {
+                this.tweens.add({
+                  targets: replacement,
+                  alpha: 0,
+                  duration: 220,
+                  onComplete: () => {
+                    replacement.destroy(true);
+                    this.actionDealing = false;
+                    this.render();
+                    onComplete();
+                  },
+                });
+              });
+            },
+          });
+        });
+      },
+    });
   }
 
   private hasCombatEvents(events: BattlePresentationEvent[]): boolean {
@@ -2713,11 +3326,36 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    events.forEach((event, index) => {
-      this.time.delayedCall(index * 820, () => this.playCombatAnimation(event));
-    });
-    const totalDuration = (events.length - 1) * 820 + 640 + 760 + 120;
-    this.time.delayedCall(totalDuration, () => onComplete?.());
+    const playNext = (index: number) => {
+      if (index >= events.length) {
+        onComplete?.();
+        return;
+      }
+
+      const event = events[index];
+      this.playCombatAnimation(event);
+      this.time.delayedCall(this.combatPresentationDelay(event, index === events.length - 1), () => playNext(index + 1));
+    };
+
+    playNext(0);
+  }
+
+  private combatPresentationDelay(event: BattleCombatPresentationEvent, isLast: boolean): number {
+    if (event.type === 'damage' && event.guard) {
+      return event.guard.legacyAttackBonus ? 3000 : 2500;
+    }
+
+    if (
+      event.type === 'damage'
+      && event.attacker === 'player'
+      && (event.resonance === 'resonance' || event.resonance === 'strong')
+      && getProgress().equippedAttackEffect === 'sakura_slash'
+    ) {
+      const comboDuration = 840 + this.sakuraSlashCount(event.amount) * 270;
+      return isLast ? Math.max(1520, comboDuration + 320) : Math.max(820, comboDuration);
+    }
+
+    return isLast ? 1520 : 820;
   }
 
   private playPassiveEffectEvents(events: BattlePresentationEvent[], onComplete: () => void): void {
@@ -2727,10 +3365,18 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
+    passiveEvents
+      .filter((event) => event.passiveId === 'red_silk_toast' || (event.passiveId === 'hanami_dance' && event.effect === 'reward_attack'))
+      .forEach((event) => event.targetEnemyIds.forEach((enemyId) => this.hiddenRoundAttackBonusEnemyIds.add(enemyId)));
+    passiveEvents
+      .filter((event) => event.passiveId === 'hanami_dance' && event.effect === 'mark')
+      .forEach((event) => event.targetEnemyIds.forEach((enemyId) => this.hiddenHanamiFanTargetIds.add(enemyId)));
     this.actionAnimationPlaying = true;
     this.render();
     const playStep = (index: number) => {
       if (index >= passiveEvents.length) {
+        this.hiddenRoundAttackBonusEnemyIds.clear();
+        this.hiddenHanamiFanTargetIds.clear();
         this.actionAnimationPlaying = false;
         this.render();
         onComplete();
@@ -2771,7 +3417,242 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
+    if (event.passiveId === 'red_silk_toast') {
+      this.playRedSilkToastEffect(event, onComplete);
+      return;
+    }
+
+    if (event.passiveId === 'heavenly_insight') {
+      this.playHeavenlyInsightEffect(event, onComplete);
+      return;
+    }
+
+    if (event.passiveId === 'iaijutsu_charge') {
+      this.playIaijutsuChargeEffect(event, onComplete);
+      return;
+    }
+
+    if (event.passiveId === 'smoke_substitution') {
+      this.playSmokeScreenArmEffect(event, onComplete);
+      return;
+    }
+
+    if (event.passiveId === 'hanami_dance') {
+      this.playHanamiDanceEffect(event, onComplete);
+      return;
+    }
+
     this.playEinherjarSummonEffect(event, onComplete);
+  }
+
+  private playIaijutsuChargeEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    const amount = event.amount ?? 1;
+    const release = event.effect === 'release';
+    const color = 0xe15f58;
+    const textColor = '#ffd19d';
+    const label = release
+      ? t('battle.passive.iaijutsuRelease', { amount })
+      : t('battle.status.iaijutsu', { amount });
+
+    this.sound.play(release ? 'attackFire' : 'cardPlace', { volume: release ? 0.52 : 0.42 });
+    this.flashEnemySeat(event.sourceEnemyIndex, color, label, textColor);
+    if (release) {
+      this.playIaijutsuSlash(source.x, source.y, color, 0xf5d66b);
+    } else {
+      this.playIaijutsuSheath(source.x, source.y, color, amount);
+    }
+
+    this.time.delayedCall(release ? 1180 : 1040, onComplete);
+  }
+
+  private playSmokeScreenArmEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    this.sound.play('attackWind', { volume: 0.36 });
+    this.flashEnemySeat(event.sourceEnemyIndex, 0x8e78bb, t('battle.passive.smokeScreenArmed'), '#d8cbff');
+    this.playSmokeBurst(source.x, source.y, 0x8e78bb, '#e1d7ff');
+    this.time.delayedCall(1220, onComplete);
+  }
+
+  private playSmokeSubstitutionEvadeEffect(enemy: EnemyState, position: Phaser.Math.Vector2): void {
+    const enemyIndex = this.battle.enemies.indexOf(enemy);
+    this.sound.play('attackWind', { volume: 0.46 });
+    this.flashEnemySeat(enemyIndex, 0x8e78bb, t('battle.passive.smokeScreenEvaded'), '#d8cbff');
+    this.playSmokeBurst(position.x, position.y, 0x8e78bb, '#f0ebff', true);
+  }
+
+  private playHanamiDanceEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const targetIndex = event.targetEnemyIndexes[0];
+    if (targetIndex === undefined) {
+      onComplete();
+      return;
+    }
+
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    const target = this.enemySeatCenter(targetIndex);
+    const targetEnemy = this.battle.enemies[targetIndex];
+    const amount = event.amount ?? 0;
+    const marking = event.effect === 'mark';
+    const healing = event.effect === 'reward_heal';
+    const color = 0xf09ab5;
+
+    this.sound.play('attackWind', { volume: marking ? 0.34 : 0.42 });
+    this.flashEnemySeat(event.sourceEnemyIndex, color, marking ? t('battle.passive.hanamiDance') : t('battle.passive.hanamiReward'), '#ffd2e3');
+    this.playRedSilkRibbon(source, target);
+    this.playHanamiFanFlight(source, target, color, marking);
+
+    if (marking) {
+      this.time.delayedCall(620, () => {
+        const targetId = event.targetEnemyIds[0];
+        if (targetId) {
+          this.hiddenHanamiFanTargetIds.delete(targetId);
+        }
+        this.render();
+        this.flashEnemySeat(targetIndex, color, t('battle.status.hanamiFan'), '#ffd2e3');
+      });
+      this.time.delayedCall(1320, onComplete);
+      return;
+    }
+
+    if (healing && targetEnemy) {
+      const hpBefore = Math.max(0, targetEnemy.hp - amount);
+      this.enemyHpTexts.get(targetEnemy.id)?.setText(t('common.hp', { hp: hpBefore, maxHp: targetEnemy.maxHp }));
+      this.time.delayedCall(620, () => {
+        this.sound.play('healSound', { volume: 0.48 });
+        this.enemyHpTexts.get(targetEnemy.id)?.setText(t('common.hp', { hp: targetEnemy.hp, maxHp: targetEnemy.maxHp }));
+        this.flashEnemySeat(targetIndex, 0x78d18a, t('battle.passive.hpGain', { amount }), '#89f09f');
+        this.playShockwave(target.x, target.y, 0x78d18a, 150);
+      });
+    } else {
+      this.time.delayedCall(620, () => {
+        const targetId = event.targetEnemyIds[0];
+        if (targetId) {
+          this.hiddenRoundAttackBonusEnemyIds.delete(targetId);
+        }
+        this.render();
+        this.flashEnemySeat(targetIndex, 0xff4b5f, t('battle.status.attackBonus', { amount }), '#ff9aaf');
+        this.playShockwave(target.x, target.y, 0xf09ab5, 150);
+      });
+    }
+
+    this.time.delayedCall(1360, onComplete);
+  }
+
+  private playHanamiFanFlight(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, color: number, marking: boolean): void {
+    const fan = this.add.container(from.x, from.y).setDepth(29).setScale(0.72);
+    const glow = this.add.circle(0, 0, 30, color, 0.16);
+    const base = this.add.arc(0, 6, 32, 202, 338, false, color, 0.92).setStrokeStyle(2, 0xffe0ec, 0.92);
+    const handle = this.add.rectangle(0, 23, 5, 24, 0xe5ba63, 0.96).setStrokeStyle(1, 0x7c3f52, 0.9);
+    fan.add([glow, base, handle]);
+    for (let index = 0; index < 5; index += 1) {
+      const angle = -42 + index * 21;
+      fan.add(this.add.rectangle(0, -3, 2, 45, 0xffe5ef, 0.78).setOrigin(0.5, 1).setAngle(angle));
+    }
+
+    this.tweens.add({
+      targets: fan,
+      x: to.x,
+      y: to.y - 8,
+      angle: marking ? 460 : -380,
+      scale: marking ? 1.18 : 1.02,
+      duration: 620,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        this.playImpactBurst(to.x, to.y, color);
+        this.tweens.add({
+          targets: fan,
+          alpha: 0,
+          scale: 1.7,
+          duration: 280,
+          ease: 'Quad.easeOut',
+          onComplete: () => fan.destroy(true),
+        });
+      },
+    });
+  }
+
+  private playSmokeBurst(x: number, y: number, color: number, lightColor: string, large = false): void {
+    const count = large ? 10 : 7;
+    for (let index = 0; index < count; index += 1) {
+      const angle = (Math.PI * 2 * index) / count + Phaser.Math.FloatBetween(-0.22, 0.22);
+      const distance = Phaser.Math.Between(26, large ? 84 : 62);
+      const puff = this.add.circle(x + Math.cos(angle) * 12, y + Math.sin(angle) * 12, Phaser.Math.Between(10, large ? 20 : 16), color, 0.38).setDepth(27);
+      puff.setStrokeStyle(1, 0xffffff, 0.18);
+      this.tweens.add({
+        targets: puff,
+        x: x + Math.cos(angle) * distance,
+        y: y + Math.sin(angle) * distance,
+        scale: large ? 2.35 : 1.85,
+        alpha: 0,
+        duration: large ? 760 : 620,
+        ease: 'Cubic.easeOut',
+        delay: index * 24,
+        onComplete: () => puff.destroy(),
+      });
+    }
+
+    const core = this.add.circle(x, y, large ? 34 : 24, color, 0.3).setDepth(28).setStrokeStyle(3, Phaser.Display.Color.HexStringToColor(lightColor).color, 0.84);
+    this.tweens.add({
+      targets: core,
+      scale: large ? 3.6 : 2.7,
+      alpha: 0,
+      duration: large ? 760 : 620,
+      ease: 'Cubic.easeOut',
+      onComplete: () => core.destroy(),
+    });
+  }
+
+  private playIaijutsuSheath(x: number, y: number, color: number, stacks: number): void {
+    const seal = this.add.container(x, y).setDepth(27);
+    const ring = this.add.circle(0, 0, 30, color, 0.1).setStrokeStyle(3, color, 0.9);
+    const sheath = this.add.rectangle(0, 7, 78, 8, 0x31181d, 0.96).setStrokeStyle(2, 0xf5d66b, 0.82).setAngle(-18);
+    const blade = this.add.rectangle(-8, -5, 58, 4, 0xffe1c0, 0.94).setAngle(-18);
+    const stackText = this.add.text(0, -44, `${stacks}`, {
+      fontFamily: 'Arial',
+      fontSize: '22px',
+      color: '#ffd19d',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    stackText.setShadow(0, 0, '#e15f58', 10, true, true);
+    seal.add([ring, sheath, blade, stackText]);
+    this.playShockwave(x, y, color, 128 + stacks * 24);
+    this.tweens.add({
+      targets: seal,
+      scale: 1.62,
+      alpha: 0,
+      angle: -12,
+      duration: 940,
+      ease: 'Cubic.easeOut',
+      onComplete: () => seal.destroy(true),
+    });
+  }
+
+  private playIaijutsuSlash(x: number, y: number, color: number, gold: number): void {
+    const slash = this.add.graphics().setDepth(28);
+    slash.lineStyle(12, gold, 0.3);
+    slash.beginPath();
+    slash.moveTo(x - 72, y + 58);
+    slash.lineTo(x + 70, y - 56);
+    slash.strokePath();
+    slash.lineStyle(4, 0xffffff, 0.96);
+    slash.beginPath();
+    slash.moveTo(x - 76, y + 58);
+    slash.lineTo(x + 76, y - 58);
+    slash.strokePath();
+    slash.lineStyle(2, color, 1);
+    slash.beginPath();
+    slash.moveTo(x - 74, y + 58);
+    slash.lineTo(x + 74, y - 58);
+    slash.strokePath();
+    this.playShockwave(x, y, gold, 214);
+    this.tweens.add({
+      targets: slash,
+      alpha: 0,
+      scale: 1.45,
+      duration: 720,
+      ease: 'Cubic.easeOut',
+      onComplete: () => slash.destroy(),
+    });
   }
 
   private playGoblinInstinctEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
@@ -2841,6 +3722,218 @@ export class BattleScene extends Phaser.Scene {
       });
     });
     this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+  }
+
+  private playRedSilkToastEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const targetIndex = event.targetEnemyIndexes[0];
+    if (targetIndex === undefined) {
+      onComplete();
+      return;
+    }
+
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    const target = this.enemySeatCenter(targetIndex);
+    const targetEnemy = this.battle.enemies[targetIndex];
+    const hpBeforeToast = targetEnemy ? Math.max(0, targetEnemy.hp - 1) : undefined;
+    if (targetEnemy && hpBeforeToast !== undefined) {
+      this.enemyHpTexts.get(targetEnemy.id)?.setText(t('common.hp', { hp: hpBeforeToast, maxHp: targetEnemy.maxHp }));
+    }
+    this.sound.play('attackWind', { volume: 0.38 });
+    this.flashEnemySeat(event.sourceEnemyIndex, 0xf29bc2, t('battle.passive.redSilkToast'), '#ffb8d6');
+    this.playShockwave(source.x, source.y, 0xf29bc2, 165);
+    this.time.delayedCall(180, () => this.playRedSilkRibbon(source, target));
+    this.time.delayedCall(660, () => {
+      this.sound.play('healSound', { volume: 0.44 });
+      if (targetEnemy) {
+        this.enemyHpTexts.get(targetEnemy.id)?.setText(t('common.hp', { hp: targetEnemy.hp, maxHp: targetEnemy.maxHp }));
+      }
+      this.flashEnemySeat(targetIndex, 0x78d18a, t('battle.passive.hpUp'), '#89f09f');
+      this.playShockwave(target.x, target.y, 0x78d18a, 145);
+    });
+    this.time.delayedCall(1120, () => {
+      const targetEnemyId = event.targetEnemyIds[0];
+      if (targetEnemyId) {
+        this.hiddenRoundAttackBonusEnemyIds.delete(targetEnemyId);
+      }
+      this.render();
+      this.flashEnemySeat(targetIndex, 0xf4519d, t('battle.passive.attackUp'), '#ffb8d6');
+      this.playShockwave(target.x, target.y, 0xf4519d, 145);
+    });
+    this.time.delayedCall(1820, onComplete);
+  }
+
+  private playHeavenlyInsightEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    const targetIndex = event.targetEnemyIndexes[0] ?? event.sourceEnemyIndex;
+    const target = this.enemySeatCenter(targetIndex);
+    this.flashEnemySeat(event.sourceEnemyIndex, 0x72d8b3, t('battle.passive.heavenlyInsight'), '#92f0cc');
+    this.playTaoistRune(source.x, source.y, 0x72d8b3);
+
+    if (event.effect === 'sense') {
+      this.sound.play('cardPlace', { volume: 0.42 });
+      this.time.delayedCall(160, () => this.playTalismanFlight(source, target));
+      this.time.delayedCall(620, () => {
+        this.flashEnemySeat(targetIndex, 0x72d8b3, t('battle.passive.talismaned'), '#92f0cc');
+      });
+      this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+      return;
+    }
+
+    this.sound.play('attackWind', { volume: 0.4 });
+    this.time.delayedCall(180, () => {
+      this.flashEnemySeat(targetIndex, 0x72d8b3, t('battle.passive.talismanBurn'), '#d6ffec');
+      this.playShockwave(target.x, target.y, 0x72d8b3, 140);
+    });
+    this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+  }
+
+  private playRedSilkRibbon(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2): void {
+    const ribbon = this.add.graphics().setDepth(27);
+    const drawPath = () => {
+      ribbon.beginPath();
+      ribbon.moveTo(from.x, from.y);
+      const steps = 24;
+      for (let step = 1; step <= steps; step += 1) {
+        const progress = step / steps;
+        const x = Phaser.Math.Linear(from.x, to.x, progress);
+        const y = Phaser.Math.Linear(from.y, to.y, progress) + Math.sin(progress * Math.PI * 3) * 18;
+        ribbon.lineTo(x, y);
+      }
+      ribbon.strokePath();
+    };
+
+    ribbon.lineStyle(14, 0xf29bc2, 0.25);
+    drawPath();
+    ribbon.lineStyle(4, 0xffd8e8, 0.9);
+    drawPath();
+
+    const petals = Array.from({ length: 4 }, (_, index) => {
+      const petal = this.add.circle(from.x, from.y, 6, 0xffc6df, 0.95).setDepth(28);
+      petal.setStrokeStyle(1, 0xffffff, 0.9);
+      this.time.delayedCall(index * 85, () => {
+        this.tweens.add({
+          targets: petal,
+          x: to.x,
+          y: to.y + (index - 1.5) * 12,
+          alpha: 0,
+          scale: 1.55,
+          duration: 650,
+          ease: 'Sine.easeInOut',
+          onComplete: () => petal.destroy(),
+        });
+      });
+      return petal;
+    });
+
+    this.tweens.add({
+      targets: ribbon,
+      alpha: 0,
+      duration: 1540,
+      delay: 180,
+      ease: 'Sine.easeOut',
+      onComplete: () => {
+        petals.forEach((petal) => petal.destroy());
+        ribbon.destroy();
+      },
+    });
+  }
+
+  private playEnergyTransfer(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, color: number, textColor: number): void {
+    const line = this.add.line(0, 0, from.x, from.y, to.x, to.y, color, 0.72).setOrigin(0, 0).setDepth(27);
+    line.setLineWidth(4);
+    const orb = this.add.circle(from.x, from.y, 9, color, 0.88).setDepth(28);
+    orb.setStrokeStyle(2, textColor, 0.85);
+    this.tweens.add({
+      targets: line,
+      alpha: 0,
+      duration: 760,
+      ease: 'Sine.easeOut',
+      onComplete: () => line.destroy(),
+    });
+    this.tweens.add({
+      targets: orb,
+      x: to.x,
+      y: to.y,
+      scale: 1.45,
+      duration: 720,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        this.playImpactBurst(to.x, to.y, color);
+        orb.destroy();
+      },
+    });
+  }
+
+  private playTaoistRune(x: number, y: number, color: number): void {
+    const rune = this.add.container(x, y).setDepth(27);
+    const outer = this.add.circle(0, 0, 46, color, 0.08).setStrokeStyle(3, color, 0.8);
+    const inner = this.add.circle(0, 0, 24, 0x071d18, 0.1).setStrokeStyle(2, 0xffffff, 0.42);
+    const lineA = this.add.line(0, 0, -34, 0, 34, 0, color, 0.74).setOrigin(0, 0).setLineWidth(3);
+    const lineB = this.add.line(0, 0, 0, -34, 0, 34, color, 0.74).setOrigin(0, 0).setLineWidth(3);
+    rune.add([outer, inner, lineA, lineB]);
+    this.tweens.add({
+      targets: rune,
+      angle: 120,
+      scale: 1.34,
+      alpha: 0,
+      duration: 980,
+      ease: 'Sine.easeOut',
+      onComplete: () => rune.destroy(true),
+    });
+  }
+
+  private playTalismanFlight(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2): void {
+    const talisman = this.add.container(from.x, from.y).setDepth(29);
+    const paper = this.add.rectangle(0, 0, 30, 46, 0xd9f8de, 0.96).setStrokeStyle(2, 0x72d8b3, 1);
+    const seal = this.add.text(0, 0, '符', {
+      fontFamily: 'Arial',
+      fontSize: '24px',
+      color: '#1e8b6d',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    talisman.add([paper, seal]);
+    this.tweens.add({
+      targets: talisman,
+      x: to.x,
+      y: to.y,
+      angle: 320,
+      duration: 520,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        this.playShockwave(to.x, to.y, 0x72d8b3, 125);
+        this.tweens.add({
+          targets: talisman,
+          alpha: 0,
+          scale: 1.35,
+          duration: 360,
+          ease: 'Sine.easeOut',
+          onComplete: () => talisman.destroy(true),
+        });
+      },
+    });
+  }
+
+  private playTalismanBurn(x: number, y: number): void {
+    const flame = this.add.container(x, y).setDepth(33);
+    const paper = this.add.rectangle(0, 0, 36, 54, 0xd9f8de, 0.96).setStrokeStyle(2, 0x72d8b3, 1);
+    const seal = this.add.text(0, 0, '符', {
+      fontFamily: 'Arial',
+      fontSize: '28px',
+      color: '#1e8b6d',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    const glow = this.add.circle(0, 0, 24, 0x9cf3c5, 0.24);
+    flame.add([glow, paper, seal]);
+    this.tweens.add({
+      targets: flame,
+      scaleX: 1.52,
+      scaleY: 1.86,
+      alpha: 0,
+      angle: Phaser.Math.Between(-18, 18),
+      duration: 620,
+      ease: 'Cubic.easeOut',
+      onComplete: () => flame.destroy(true),
+    });
   }
 
   private enemySeatCenter(index: number): Phaser.Math.Vector2 {
@@ -2974,30 +4067,238 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const from = event.attacker === 'player' ? positions.player : positions.enemy;
-    const to = event.attacker === 'player' ? positions.enemy : positions.player;
-    const color = event.attacker === 'player' ? SKILL_COLORS.player : SKILL_COLORS[enemy.id];
-    const label = event.attacker === 'player' ? t('common.player') : enemyName(enemy.id);
+    if (event.attacker === 'player') {
+      if (event.guard) {
+        this.playBladeToRescueCombatAnimation(event, enemy, positions.player, positions.enemy);
+        return;
+      }
 
-    const resonantAttack = event.resonance === 'resonance' || event.resonance === 'strong';
-    if (event.attacker === 'player' && resonantAttack && getProgress().equippedAttackEffect === 'thunder_hammer') {
-      const hammerResonance = event.resonance === 'strong' ? 'strong' : 'resonance';
-      this.playThunderHammerAttack(to, hammerResonance, () => {
-        this.sound.play('damageExplosion', { volume: event.resonance === 'strong' ? 0.66 : 0.56 });
-        this.applyVisualDamage(event, enemy);
-        this.playImpactBurst(to.x, to.y, 0x7fd7ff);
-        this.playDamageText(to.x, to.y - 42, event.amount);
+      if (event.evaded) {
+        this.playPlayerAttackEffect(
+          positions.player,
+          positions.enemy,
+          event.resonance,
+          1,
+          () => undefined,
+          () => this.playSmokeSubstitutionEvadeEffect(enemy, positions.enemy),
+        );
+        return;
+      }
+
+      this.playPlayerAttackEffect(positions.player, positions.enemy, event.resonance, event.amount, (damage) => {
+        this.sound.play('damageExplosion', { volume: event.resonance === 'strong' ? 0.62 : 0.5 });
+        this.applyVisualDamage(event, enemy, damage);
+        this.playImpactBurst(positions.enemy.x, positions.enemy.y, event.resonance === 'strong' ? 0xf5d66b : SKILL_COLORS.player);
+        this.playDamageText(positions.enemy.x, positions.enemy.y - 42, damage);
         this.shakeSeat(enemy.id);
       });
       return;
     }
 
-    this.playProjectile(from, to, color, label, resonantAttack, () => {
+    if (event.shielded) {
+      this.playProjectile(positions.enemy, positions.player, SKILL_COLORS[enemy.id], enemyName(enemy.id), event.resonance === 'resonance' || event.resonance === 'strong', () => {
+        this.playHolyShieldBlock(event.originalAmount ?? 0);
+      });
+      return;
+    }
+
+    this.playProjectile(positions.enemy, positions.player, SKILL_COLORS[enemy.id], enemyName(enemy.id), event.resonance === 'resonance' || event.resonance === 'strong', () => {
       this.sound.play('damageExplosion', { volume: 0.5 });
       this.applyVisualDamage(event, enemy);
-      this.playImpactBurst(to.x, to.y, color);
-      this.playDamageText(to.x, to.y - 42, event.amount);
-      this.shakeSeat(event.attacker === 'player' ? enemy.id : 'player');
+      this.playImpactBurst(positions.player.x, positions.player.y, SKILL_COLORS[enemy.id]);
+      this.playDamageText(positions.player.x, positions.player.y - 42, event.amount);
+      this.shakeSeat('player');
+    });
+  }
+
+  private playPlayerAttackEffect(
+    from: Phaser.Math.Vector2,
+    to: Phaser.Math.Vector2,
+    resonance: ScoreResult['resonance'] | undefined,
+    damage: number,
+    onHit: (damage: number) => void,
+    onComplete?: () => void,
+  ): void {
+    const resonantAttack = resonance === 'resonance' || resonance === 'strong';
+    const equippedAttackEffect = getProgress().equippedAttackEffect;
+    const complete = onComplete ?? (() => undefined);
+    if (resonantAttack && equippedAttackEffect === 'sakura_slash') {
+      this.playSakuraSlashAttack(from, to, resonance === 'strong', damage, onHit, complete);
+      return;
+    }
+
+    if (resonantAttack && equippedAttackEffect === 'thunder_hammer') {
+      this.playThunderHammerAttack(to, resonance === 'strong' ? 'strong' : 'resonance', () => {
+        onHit(damage);
+        complete();
+      });
+      return;
+    }
+
+    if (resonantAttack && equippedAttackEffect === 'jade_sword_array') {
+      this.playJadeSwordArray(from, to, resonance === 'strong' ? 'strong' : 'resonance', () => {
+        onHit(damage);
+        complete();
+      });
+      return;
+    }
+
+    this.playProjectile(from, to, SKILL_COLORS.player, t('common.player'), resonantAttack, () => {
+      onHit(damage);
+      complete();
+    });
+  }
+
+  private playBladeToRescueCombatAnimation(
+    event: Extract<BattleCombatPresentationEvent, { type: 'damage' }>,
+    protectedEnemy: EnemyState,
+    playerPosition: Phaser.Math.Vector2,
+    protectedPosition: Phaser.Math.Vector2,
+  ): void {
+    const guard = event.guard;
+    if (!guard) {
+      return;
+    }
+
+    const protector = this.battle.enemies[guard.protectorEnemyIndex];
+    const protectorPanel = protector && this.seatContainers.get(protector.id);
+    if (!protector || !protectorPanel) {
+      return;
+    }
+
+    this.playBladeToRescueSequence(event, protectedEnemy, protector, protectorPanel, playerPosition, protectedPosition);
+  }
+
+  private playBladeToRescueSequence(
+    event: Extract<BattleCombatPresentationEvent, { type: 'damage' }>,
+    protectedEnemy: EnemyState,
+    protector: EnemyState,
+    protectorPanel: Phaser.GameObjects.Container,
+    playerPosition: Phaser.Math.Vector2,
+    protectedPosition: Phaser.Math.Vector2,
+  ): void {
+    const guard = event.guard;
+    if (!guard) {
+      return;
+    }
+
+    const red = 0xf05f42;
+    const gold = 0xf5d66b;
+    const protectorPosition = this.enemySeatCenter(guard.protectorEnemyIndex);
+    const homePosition = new Phaser.Math.Vector2(protectorPanel.x, protectorPanel.y);
+    const incomingDirection = new Phaser.Math.Vector2(
+      playerPosition.x - protectedPosition.x,
+      playerPosition.y - protectedPosition.y,
+    ).normalize();
+    const blockPosition = new Phaser.Math.Vector2(
+      protectedPosition.x + incomingDirection.x * 76,
+      protectedPosition.y + incomingDirection.y * 76,
+    );
+    const homeDepth = protectorPanel.depth;
+    let lastTrailAt = 0;
+
+    this.flashEnemySeat(guard.protectorEnemyIndex, red, t('battle.passive.chivalry'), '#ff9a72');
+    this.sound.play('attackWind', { volume: 0.56 });
+    protectorPanel.setDepth(27);
+    this.time.delayedCall(90, () => {
+      this.tweens.add({
+        targets: protectorPanel,
+        x: blockPosition.x,
+        y: blockPosition.y,
+        alpha: 1,
+        scaleX: 1.06,
+        scaleY: 1.06,
+        duration: 380,
+        ease: 'Cubic.easeIn',
+        onUpdate: () => {
+          if (this.time.now - lastTrailAt < 54) {
+            return;
+          }
+          lastTrailAt = this.time.now;
+          this.spawnTrail(protectorPanel.x, protectorPanel.y, red);
+        },
+      });
+    });
+
+    this.playPlayerAttackEffect(playerPosition, blockPosition, event.resonance, event.amount, () => undefined, () => {
+      this.playBladeGuardBurst(blockPosition.x, blockPosition.y, red, gold);
+      this.sound.play('damageExplosion', { volume: 0.5 });
+      this.flashEnemySeat(this.battle.enemies.indexOf(protectedEnemy), gold, t('battle.passive.chivalryBlocked'), '#ffe29a');
+
+      this.time.delayedCall(340, () => {
+        this.setEnemyVisualHp(guard.protectorEnemyIndex, guard.protectorHpAfter);
+        this.playDamageText(blockPosition.x, blockPosition.y - 48, guard.preventedDamage);
+        this.tweens.add({
+          targets: protectorPanel,
+          scaleX: 1.16,
+          scaleY: 1.16,
+          duration: 110,
+          yoyo: true,
+          ease: 'Sine.easeInOut',
+        });
+
+        if (!guard.legacyAttackBonus) {
+          this.time.delayedCall(220, () => {
+            this.tweens.add({
+              targets: protectorPanel,
+              x: homePosition.x,
+              y: homePosition.y,
+              scaleX: 1,
+              scaleY: 1,
+              duration: 480,
+              ease: 'Cubic.easeOut',
+              onComplete: () => protectorPanel.setDepth(homeDepth),
+            });
+          });
+          return;
+        }
+
+        this.flashEnemySeat(guard.protectorEnemyIndex, red, t('battle.passive.chivalry'), '#ff9a72');
+        this.tweens.add({
+          targets: protectorPanel,
+          scale: 1.28,
+          alpha: 0,
+          duration: 520,
+          ease: 'Cubic.easeOut',
+        });
+        this.time.delayedCall(520, () => {
+          this.playEnergyTransfer(protectorPosition, protectedPosition, red, gold);
+          this.flashEnemySeat(
+            this.battle.enemies.indexOf(protectedEnemy),
+            gold,
+            t('battle.passive.chivalryLegacy'),
+            '#ffe29a',
+          );
+        });
+      });
+    });
+  }
+
+  private playBladeGuardBurst(x: number, y: number, red: number, gold: number): void {
+    const burst = this.add.graphics().setDepth(29);
+    burst.lineStyle(8, gold, 0.95);
+    burst.beginPath();
+    burst.moveTo(x - 44, y + 36);
+    burst.lineTo(x + 44, y - 36);
+    burst.moveTo(x - 38, y - 42);
+    burst.lineTo(x + 38, y + 42);
+    burst.strokePath();
+    burst.lineStyle(3, 0xffffff, 0.94);
+    burst.beginPath();
+    burst.moveTo(x - 48, y);
+    burst.lineTo(x + 48, y);
+    burst.strokePath();
+    const ring = this.add.circle(x, y, 20, red, 0.16).setDepth(28).setStrokeStyle(4, gold, 0.9);
+    this.tweens.add({
+      targets: [burst, ring],
+      alpha: 0,
+      scale: 2.4,
+      duration: 520,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        burst.destroy();
+        ring.destroy();
+      },
     });
   }
 
@@ -3045,6 +4346,345 @@ export class BattleScene extends Phaser.Scene {
           ease: 'Quad.easeOut',
           onComplete: () => hammer.destroy(true),
         });
+      },
+    });
+  }
+
+  private playSakuraSlashAttack(
+    from: Phaser.Math.Vector2,
+    to: Phaser.Math.Vector2,
+    strong: boolean,
+    damage: number,
+    onHit: (damage: number) => void,
+    onComplete: () => void,
+  ): void {
+    const slashCount = this.sakuraSlashCount(damage);
+    const pink = 0xff79bd;
+    const softPink = 0xffb7dc;
+    const finalColor = 0xffefbd;
+    const travelAngle = Phaser.Math.RadToDeg(Phaser.Math.Angle.Between(from.x, from.y, to.x, to.y)) + 90;
+    const travelDirection = new Phaser.Math.Vector2(to.x - from.x, to.y - from.y).normalize();
+    const cutEnd = new Phaser.Math.Vector2(to.x, to.y).add(travelDirection.scale(112));
+    const katana = this.createSakuraKatana(from.x, from.y - 10, pink, finalColor, strong)
+      .setAngle(travelAngle - 82)
+      .setAlpha(0)
+      .setScale(0.94);
+    const launchGlow = this.add.circle(from.x, from.y - 14, strong ? 38 : 32, pink, strong ? 0.18 : 0.14)
+      .setDepth(22)
+      .setStrokeStyle(strong ? 3 : 2, softPink, 0.76);
+    let lastTrailAt = 0;
+
+    this.sound.play('attackWind', { volume: strong ? 0.72 : 0.62 });
+    this.playSakuraPetals(from.x, from.y - 14, strong ? 7 : 4, pink, strong);
+    this.tweens.add({
+      targets: launchGlow,
+      scale: strong ? 2.8 : 2.2,
+      alpha: 0,
+      duration: 330,
+      ease: 'Cubic.easeOut',
+      onComplete: () => launchGlow.destroy(),
+    });
+
+    this.tweens.add({
+      targets: katana,
+      x: cutEnd.x,
+      y: cutEnd.y - 10,
+      angle: travelAngle + 102,
+      alpha: 1,
+      scale: strong ? 1.22 : 1.12,
+      duration: 470,
+      ease: 'Cubic.easeIn',
+      onUpdate: () => {
+        if (this.time.now - lastTrailAt < 54) {
+          return;
+        }
+        lastTrailAt = this.time.now;
+        this.createSakuraKatanaAfterimage(katana.x, katana.y, katana.angle, pink, strong);
+      },
+      onComplete: () => {
+        katana.destroy(true);
+        this.playSakuraSlashCombo(to, strong, slashCount, pink, softPink, finalColor, onHit, onComplete);
+      },
+    });
+    this.time.delayedCall(360, () => this.playSakuraCutImpact(to.x, to.y, pink, softPink, strong, false));
+  }
+
+  private playSakuraSlashCombo(
+    to: Phaser.Math.Vector2,
+    strong: boolean,
+    slashCount: number,
+    pink: number,
+    softPink: number,
+    finalColor: number,
+    onHit: (damage: number) => void,
+    onComplete: () => void,
+  ): void {
+    for (let index = 0; index < slashCount; index += 1) {
+      const delay = index * 270;
+      const finalSlash = index === slashCount - 1;
+      this.time.delayedCall(delay, () => {
+        const direction = index % 2 === 0 ? 1 : -1;
+        const offsetX = direction * (finalSlash ? 12 : 24);
+        const offsetY = finalSlash ? -4 : direction * 14;
+        const slashColor = finalSlash ? finalColor : pink;
+        const slash = this.add.graphics().setPosition(to.x + offsetX, to.y + offsetY).setDepth(25);
+        const size = finalSlash ? (strong ? 92 : 76) : 64;
+        slash.lineStyle(finalSlash ? 7 : 5, slashColor, 0.96);
+        slash.beginPath();
+        slash.moveTo(-size * direction, size * 0.62);
+        slash.lineTo(size * direction, -size * 0.62);
+        slash.strokePath();
+        slash.lineStyle(finalSlash ? 3 : 2, 0xffffff, 0.94);
+        slash.beginPath();
+        slash.moveTo(-size * direction * 0.9, size * 0.46);
+        slash.lineTo(size * direction * 0.9, -size * 0.46);
+        slash.strokePath();
+
+        const glow = this.add.circle(to.x + offsetX, to.y + offsetY, finalSlash ? 28 : 20, slashColor, finalSlash ? 0.2 : 0.14)
+          .setDepth(24)
+          .setStrokeStyle(finalSlash ? 3 : 2, softPink, 0.78);
+        this.playSakuraPetals(to.x + offsetX, to.y + offsetY, finalSlash ? 9 : 5, slashColor, strong && finalSlash);
+
+        this.tweens.add({
+          targets: [slash, glow],
+          alpha: 0,
+          scale: finalSlash ? 1.8 : 1.5,
+          duration: finalSlash ? 380 : 280,
+          ease: 'Cubic.easeOut',
+          onComplete: () => {
+            slash.destroy();
+            glow.destroy();
+          },
+        });
+
+        this.time.delayedCall(148, () => {
+          this.playSakuraCutImpact(to.x, to.y, slashColor, softPink, strong, finalSlash);
+          onHit(1);
+          this.playImpactBurst(to.x, to.y, slashColor);
+          if (finalSlash && strong) {
+            this.playShockwave(to.x, to.y, finalColor, 108);
+          }
+        });
+      });
+    }
+
+    this.time.delayedCall((slashCount - 1) * 270 + 410, onComplete);
+  }
+
+  private createSakuraKatana(x: number, y: number, pink: number, gold: number, strong: boolean): Phaser.GameObjects.Container {
+    const katana = this.add.container(x, y).setDepth(25);
+    const glow = this.add.circle(0, -24, strong ? 42 : 35, pink, strong ? 0.23 : 0.18);
+    const trail = this.add.rectangle(0, 38, strong ? 24 : 20, strong ? 174 : 154, pink, 0.2);
+    const blade = this.add.rectangle(0, -34, strong ? 18 : 15, strong ? 142 : 126, 0xfdf4fa, 0.98)
+      .setStrokeStyle(strong ? 4 : 3, strong ? gold : pink);
+    const bladeCore = this.add.rectangle(0, -34, strong ? 5 : 4, strong ? 126 : 112, 0xffffff, 0.92);
+    const guard = this.add.rectangle(0, 38, strong ? 54 : 46, 9, gold, 0.96).setStrokeStyle(2, pink, 0.86);
+    const handle = this.add.rectangle(0, 72, 12, 52, 0x241923, 0.98).setStrokeStyle(2, pink, 0.9);
+    katana.add([glow, trail, blade, bladeCore, guard, handle]);
+    return katana;
+  }
+
+  private createSakuraKatanaAfterimage(x: number, y: number, angle: number, pink: number, strong: boolean): void {
+    const afterimage = this.add.rectangle(x, y, strong ? 18 : 15, strong ? 142 : 126, pink, strong ? 0.26 : 0.2)
+      .setDepth(23)
+      .setAngle(angle);
+    this.tweens.add({
+      targets: afterimage,
+      alpha: 0,
+      scaleY: 0.72,
+      duration: strong ? 300 : 240,
+      ease: 'Quad.easeOut',
+      onComplete: () => afterimage.destroy(),
+    });
+  }
+
+  private playSakuraCutImpact(x: number, y: number, pink: number, softPink: number, strong: boolean, finalSlash: boolean): void {
+    const size = finalSlash ? (strong ? 72 : 58) : 44;
+    const scars = this.add.graphics().setDepth(29);
+    scars.lineStyle(finalSlash ? 7 : 5, finalSlash ? 0xfff3d5 : pink, 0.96);
+    scars.beginPath();
+    scars.moveTo(x - size, y + size * 0.64);
+    scars.lineTo(x + size, y - size * 0.64);
+    scars.strokePath();
+    scars.lineStyle(finalSlash ? 3 : 2, softPink, 0.96);
+    scars.beginPath();
+    scars.moveTo(x - size * 0.66, y - size * 0.62);
+    scars.lineTo(x + size * 0.66, y + size * 0.62);
+    scars.strokePath();
+
+    const flash = this.add.circle(x, y, finalSlash ? 30 : 20, 0xffffff, finalSlash ? 0.22 : 0.16).setDepth(28);
+    const ring = this.add.circle(x, y, finalSlash ? 28 : 18, pink, finalSlash ? 0.18 : 0.13)
+      .setDepth(27)
+      .setStrokeStyle(finalSlash ? 4 : 3, softPink, 0.88);
+    this.tweens.add({
+      targets: [scars, flash, ring],
+      alpha: 0,
+      scale: finalSlash ? 2.35 : 1.85,
+      duration: finalSlash ? 430 : 300,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        scars.destroy();
+        flash.destroy();
+        ring.destroy();
+      },
+    });
+
+    if (finalSlash) {
+      this.playSakuraPetals(x, y, strong ? 12 : 8, pink, strong);
+    }
+  }
+
+  private sakuraSlashCount(damage: number): number {
+    return Math.max(1, Math.floor(damage));
+  }
+
+  private playSakuraPetals(x: number, y: number, count: number, color: number, strong: boolean): void {
+    for (let index = 0; index < count; index += 1) {
+      const petal = this.add.ellipse(
+        x + Phaser.Math.Between(-18, 18),
+        y + Phaser.Math.Between(-18, 18),
+        strong ? 10 : 8,
+        strong ? 18 : 14,
+        color,
+        strong ? 0.9 : 0.78,
+      ).setDepth(26).setAngle(Phaser.Math.Between(-50, 50));
+      const angle = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+      const distance = Phaser.Math.Between(strong ? 48 : 30, strong ? 112 : 76);
+      this.tweens.add({
+        targets: petal,
+        x: petal.x + Math.cos(angle) * distance,
+        y: petal.y + Math.sin(angle) * distance - Phaser.Math.Between(6, 28),
+        angle: petal.angle + Phaser.Math.Between(-150, 150),
+        alpha: 0,
+        duration: strong ? 520 : 400,
+        ease: 'Sine.easeOut',
+        onComplete: () => petal.destroy(),
+      });
+    }
+  }
+
+  private playJadeSwordArray(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, resonance: 'resonance' | 'strong' | undefined, onHit: () => void): void {
+    const strong = resonance === 'strong';
+    const jade = 0x65dfbd;
+    const gold = 0xf5d66b;
+    const swordCount = 5;
+    const seal = this.add.circle(from.x, from.y - 24, strong ? 34 : 26, jade, 0.14)
+      .setDepth(21)
+      .setStrokeStyle(strong ? 4 : 3, strong ? gold : jade, strong ? 0.9 : 0.76);
+    const sealGlyph = this.add.text(from.x, from.y - 24, '剑', {
+      fontFamily: 'Arial',
+      fontSize: strong ? '27px' : '22px',
+      color: strong ? '#f8edb3' : '#d7fff0',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(22);
+    sealGlyph.setShadow(0, 0, strong ? '#f5d66b' : '#65dfbd', 12, true, true);
+
+    this.tweens.add({
+      targets: [seal, sealGlyph],
+      scale: strong ? 2.4 : 2,
+      alpha: 0,
+      angle: strong ? 90 : 54,
+      duration: strong ? 620 : 480,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        seal.destroy();
+        sealGlyph.destroy();
+      },
+    });
+
+    this.sound.play('attackWind', { volume: strong ? 0.68 : 0.54 });
+    let completed = 0;
+    for (let index = 0; index < swordCount; index += 1) {
+      const spread = index / (swordCount - 1) - 0.5;
+      const startX = from.x + spread * (strong ? 126 : 88);
+      const startY = from.y - 56 - Math.abs(spread) * (strong ? 54 : 38);
+      const targetX = to.x + spread * (strong ? 84 : 56);
+      const targetY = to.y - 8 + Math.abs(spread) * (strong ? 34 : 22);
+      const sword = this.createJadeSword(startX, startY, jade, gold, strong && index === swordCount - 1);
+      let lastTrailAt = 0;
+
+      this.tweens.add({
+        targets: sword,
+        x: targetX,
+        y: targetY,
+        angle: 68 + spread * 36,
+        alpha: 1,
+        duration: strong ? 430 : 340,
+        delay: 90 + index * (strong ? 74 : 48),
+        ease: 'Cubic.easeIn',
+        onUpdate: () => {
+          if (this.time.now - lastTrailAt < 64) {
+            return;
+          }
+          lastTrailAt = this.time.now;
+          this.createSwordAfterimage(sword.x, sword.y, sword.angle, jade, strong);
+        },
+        onComplete: () => {
+          this.playSwordImpact(targetX, targetY, jade, gold, strong && index === swordCount - 1);
+          sword.destroy(true);
+          completed += 1;
+          if (completed === swordCount) {
+            onHit();
+          }
+        },
+      });
+    }
+  }
+
+  private createJadeSword(x: number, y: number, jade: number, gold: number, gilded: boolean): Phaser.GameObjects.Container {
+    const sword = this.add.container(x, y).setDepth(24).setAlpha(0).setAngle(-58);
+    const glow = this.add.circle(0, -12, gilded ? 28 : 23, gilded ? gold : jade, gilded ? 0.2 : 0.16);
+    const trail = this.add.rectangle(0, 26, gilded ? 16 : 12, gilded ? 72 : 58, jade, 0.16);
+    const blade = this.add.rectangle(0, -18, gilded ? 11 : 9, gilded ? 66 : 58, 0xd8fff1, 0.96)
+      .setStrokeStyle(gilded ? 3 : 2, gilded ? gold : jade);
+    const guard = this.add.rectangle(0, 16, gilded ? 34 : 28, 6, gold, 0.92);
+    const handle = this.add.rectangle(0, 34, 7, 24, 0x264b45, 0.95).setStrokeStyle(1, gold, 0.72);
+    sword.add([glow, trail, blade, guard, handle]);
+    return sword;
+  }
+
+  private createSwordAfterimage(x: number, y: number, angle: number, jade: number, strong: boolean): void {
+    const afterimage = this.add.rectangle(x, y, strong ? 10 : 8, strong ? 64 : 52, jade, strong ? 0.2 : 0.16)
+      .setDepth(22)
+      .setAngle(angle);
+    this.tweens.add({
+      targets: afterimage,
+      alpha: 0,
+      scaleY: 0.62,
+      duration: strong ? 260 : 210,
+      ease: 'Quad.easeOut',
+      onComplete: () => afterimage.destroy(),
+    });
+  }
+
+  private playSwordImpact(x: number, y: number, jade: number, gold: number, gilded: boolean): void {
+    const impact = this.add.graphics().setDepth(25);
+    const size = gilded ? 42 : 32;
+    impact.lineStyle(gilded ? 6 : 4, gold, 0.96);
+    impact.beginPath();
+    impact.moveTo(x - size, y + size * 0.72);
+    impact.lineTo(x + size, y - size * 0.72);
+    impact.moveTo(x - size * 0.72, y - size);
+    impact.lineTo(x + size * 0.72, y + size);
+    impact.strokePath();
+    impact.lineStyle(gilded ? 3 : 2, 0xe9fff5, 0.96);
+    impact.beginPath();
+    impact.moveTo(x - size * 0.9, y + size * 0.64);
+    impact.lineTo(x + size * 0.9, y - size * 0.64);
+    impact.strokePath();
+
+    const ring = this.add.circle(x, y, gilded ? 24 : 18, jade, gilded ? 0.18 : 0.14)
+      .setDepth(23)
+      .setStrokeStyle(gilded ? 4 : 3, gold, 0.84);
+    this.tweens.add({
+      targets: [impact, ring],
+      alpha: 0,
+      scale: gilded ? 2.6 : 2.1,
+      duration: gilded ? 410 : 300,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        impact.destroy();
+        ring.destroy();
       },
     });
   }
@@ -3149,20 +4789,32 @@ export class BattleScene extends Phaser.Scene {
     graphics.strokePath();
   }
 
-  private applyVisualDamage(event: Extract<BattleCombatPresentationEvent, { type: 'damage' }>, enemy: EnemyState): void {
+  private applyVisualDamage(event: Extract<BattleCombatPresentationEvent, { type: 'damage' }>, enemy: EnemyState, amount = event.amount): void {
     if (!this.visualHpOverride) {
       return;
     }
 
     if (event.attacker === 'player') {
       const enemyIndex = this.battle.enemies.indexOf(enemy);
-      this.visualHpOverride.enemies[enemyIndex] = enemy.hp;
-      this.enemyHpTexts.get(enemy.id)?.setText(t('common.hp', { hp: enemy.hp, maxHp: enemy.maxHp }));
+      const hpAfterHit = Math.max(0, this.visualHpOverride.enemies[enemyIndex] - amount);
+      this.setEnemyVisualHp(enemyIndex, hpAfterHit);
       return;
     }
 
-    this.visualHpOverride.player = this.battle.player.hp;
-    this.playerHpText?.setText(t('common.hp', { hp: this.battle.player.hp, maxHp: this.battle.player.maxHp }));
+    const hpAfterHit = Math.max(0, this.visualHpOverride.player - amount);
+    this.visualHpOverride.player = hpAfterHit;
+    this.playerHpText?.setText(t('common.hp', { hp: hpAfterHit, maxHp: this.battle.player.maxHp }));
+  }
+
+  private setEnemyVisualHp(enemyIndex: number, hp: number): void {
+    const enemy = this.battle.enemies[enemyIndex];
+    if (!enemy || !this.visualHpOverride) {
+      return;
+    }
+
+    this.visualHpOverride.enemies[enemyIndex] = hp;
+    this.visualEnemyDefeated![enemyIndex] = hp <= 0;
+    this.enemyHpTexts.get(enemy.id)?.setText(t('common.hp', { hp, maxHp: enemy.maxHp }));
   }
 
   private combatPositions(enemy: EnemyState): { player: Phaser.Math.Vector2; enemy: Phaser.Math.Vector2 } {
@@ -3285,7 +4937,7 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private playHealGainText(x: number, y: number, amount: number): void {
+  private playHealGainText(x: number, y: number, amount: number, depth = 21): void {
     const text = this.add.text(x, y, `+${amount} HP`, {
       fontFamily: 'Arial',
       fontSize: '30px',
@@ -3293,7 +4945,7 @@ export class BattleScene extends Phaser.Scene {
       stroke: '#101114',
       strokeThickness: 4,
       fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(21);
+    }).setOrigin(0.5).setDepth(depth);
     text.setShadow(0, 0, COLORS.green, 12, true, true);
 
     this.tweens.add({

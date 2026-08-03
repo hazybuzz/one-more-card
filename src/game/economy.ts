@@ -10,6 +10,10 @@ export interface EconomyChange {
   total: number;
 }
 
+export interface EntryPaymentResult extends EconomyChange {
+  paid: boolean;
+}
+
 export function payBattleEntry(): EconomyChange {
   return payEntryCost(BATTLE_ENTRY_COST);
 }
@@ -20,6 +24,25 @@ export function payEntryCost(cost: number): EconomyChange {
   setSoulCoins(currentCoins - paid);
   return {
     amount: paid,
+    total: getProgress().soulCoins,
+  };
+}
+
+export function tryPayEntryCost(cost: number): EntryPaymentResult {
+  const normalizedCost = Math.max(0, Math.floor(cost));
+  const currentCoins = getProgress().soulCoins;
+  if (currentCoins < normalizedCost) {
+    return {
+      paid: false,
+      amount: 0,
+      total: currentCoins,
+    };
+  }
+
+  setSoulCoins(currentCoins - normalizedCost);
+  return {
+    paid: true,
+    amount: normalizedCost,
     total: getProgress().soulCoins,
   };
 }

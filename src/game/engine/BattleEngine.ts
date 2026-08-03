@@ -75,6 +75,11 @@ export class BattleEngine extends Battle {
           enemyId: event.enemyId,
           amount: event.amount,
           resonance: event.resonance,
+          hpAfter: event.hpAfter,
+          evaded: event.evaded,
+          shielded: event.shielded,
+          originalAmount: event.originalAmount,
+          guard: event.guard,
         };
       }),
     ];

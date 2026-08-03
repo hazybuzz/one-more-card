@@ -7,6 +7,7 @@ export interface ItemUseResult {
   used: boolean;
   message: string;
   healed?: number;
+  shieldCharges?: number;
   revealAfterFeedback?: boolean;
   feedback?: {
     title: string;
@@ -59,6 +60,22 @@ export function useBattleItem(itemId: ItemId, battle: Battle): ItemUseResult {
     const message = t('itemEffect.fateReroll.used', { cards: cards.map(formatCard).join(' ') });
     battle.addLog(message);
     return { used: true, message };
+  }
+
+  if (itemId === 'holy_shield') {
+    if (battle.player.shieldCharges > 0) {
+      return { used: false, message: t('itemEffect.holyShield.active') };
+    }
+
+    if (!battle.activateHolyShield()) {
+      return { used: false, message: t('itemEffect.unavailablePhase') };
+    }
+
+    return {
+      used: true,
+      message: t('itemEffect.holyShield.used', { charges: battle.player.shieldCharges }),
+      shieldCharges: battle.player.shieldCharges,
+    };
   }
 
   return { used: false, message: t('itemEffect.unavailablePhase') };

@@ -207,7 +207,7 @@ function normalizeProgress(value: Partial<GameProgress>): GameProgress {
 }
 
 function normalizeCosmetics(cosmetics: unknown): CosmeticId[] {
-  const validCosmetics: CosmeticId[] = ['thunder_hammer'];
+  const validCosmetics: CosmeticId[] = ['thunder_hammer', 'jade_sword_array', 'sakura_slash'];
   if (!Array.isArray(cosmetics)) {
     return [];
   }

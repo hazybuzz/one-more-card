@@ -1,4 +1,4 @@
-export type CosmeticId = 'thunder_hammer';
+export type CosmeticId = 'thunder_hammer' | 'jade_sword_array' | 'sakura_slash';
 export type CosmeticType = 'attack_effect';
 
 export interface CosmeticConfig {
