@@ -23,7 +23,7 @@ export const ITEM_CONFIGS: Record<ItemId, ItemConfig> = {
   },
   resonance_dust: {
     id: 'resonance_dust',
-    price: 10,
+    price: 20,
     icon: '!',
     nameKey: 'item.resonanceDust.name',
     descriptionKey: 'item.resonanceDust.desc',
@@ -33,12 +33,13 @@ export const ITEM_CONFIGS: Record<ItemId, ItemConfig> = {
   },
   holy_shield: {
     id: 'holy_shield',
-    price: 15,
+    price: 25,
     icon: '盾',
     nameKey: 'item.holyShield.name',
     descriptionKey: 'item.holyShield.desc',
     useTiming: 'player-turn',
     effectId: 'holy_shield',
+    maxUsesPerBattle: 1,
     resourceKey: 'item_holy_shield',
   },
 };

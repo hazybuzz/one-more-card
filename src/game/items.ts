@@ -3,12 +3,13 @@ import type { ItemConfig, ItemId as ConfigItemId } from './types/item';
 
 export type ItemId = ConfigItemId;
 
-export type ItemDefinition = Pick<ItemConfig, 'id' | 'price' | 'icon' | 'nameKey' | 'descriptionKey'>;
+export type ItemDefinition = Pick<ItemConfig, 'id' | 'price' | 'icon' | 'nameKey' | 'descriptionKey' | 'maxUsesPerBattle'>;
 
-export const ITEMS: ItemDefinition[] = ITEM_CONFIGS.map(({ id, price, icon, nameKey, descriptionKey }) => ({
+export const ITEMS: ItemDefinition[] = ITEM_CONFIGS.map(({ id, price, icon, nameKey, descriptionKey, maxUsesPerBattle }) => ({
   id,
   price,
   icon,
   nameKey,
   descriptionKey,
+  maxUsesPerBattle,
 }));

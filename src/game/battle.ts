@@ -1,6 +1,7 @@
 import { Card, RANKS, SUITS, cardFromCode, formatCard, isJoker } from './card';
 import type { BattleState } from './core/BattleState';
 import { getLevelById } from './data/levelRegistry';
+import { getStakeDifficulty } from './data/stakeDifficulties';
 import { enemyName, t } from './i18n';
 import { Deck } from './deck';
 import { EnemyState, createEnemiesForLevel, decideInvite } from './enemy';
@@ -9,7 +10,7 @@ import { ResonanceKind, ScoreResult, scoreHand } from './scoring';
 import { chooseResonanceShift, chooseResonanceSummonTarget, isResonanceSummonMatch } from './skills/resonanceSkills';
 import type { BattlePresentationEvent } from './engine/BattleEvents';
 import type { BattleMechanicId, FixedRoundConfig, FixedRoundEnemyConfig, LevelConfig } from './types/level';
-import type { TableThemeConfig } from './types/tableTheme';
+import type { EntryStakeMultiplier, StakeDifficultyConfig, TableThemeConfig } from './types/tableTheme';
 
 export type BattlePhase = 'choice' | 'enemy-turn' | 'player-turn' | 'round-result' | 'battle-result';
 export type BattleOutcome = 'victory' | 'defeat' | undefined;
@@ -71,6 +72,7 @@ export interface BattleInitOptions {
   levelId?: string;
   levelConfig?: LevelConfig;
   tableThemeConfig?: TableThemeConfig;
+  stakeMultiplier?: EntryStakeMultiplier;
 }
 
 export class Battle {
@@ -79,6 +81,8 @@ export class Battle {
   readonly log: string[];
   readonly levelConfig?: LevelConfig;
   readonly tableThemeConfig?: TableThemeConfig;
+  readonly stakeMultiplier?: EntryStakeMultiplier;
+  readonly stakeDifficulty?: StakeDifficultyConfig;
 
   phase: BattlePhase;
   battleOutcome: BattleOutcome;
@@ -97,6 +101,8 @@ export class Battle {
     this.deck = new Deck();
     this.levelConfig = options.levelConfig ?? (options.levelId ? getLevelById(options.levelId) : undefined);
     this.tableThemeConfig = options.tableThemeConfig;
+    this.stakeMultiplier = options.tableThemeConfig ? options.stakeMultiplier : undefined;
+    this.stakeDifficulty = this.stakeMultiplier ? getStakeDifficulty(this.stakeMultiplier) : undefined;
     const playerHp = this.levelConfig?.playerHp ?? this.tableThemeConfig?.playerHp ?? 12;
     this.player = {
       hp: playerHp,
@@ -113,7 +119,11 @@ export class Battle {
       shieldCharges: 0,
       soulRedeemUsed: false,
     };
-    this.enemies = createEnemiesForLevel(this.levelConfig, this.tableThemeConfig);
+    this.enemies = createEnemiesForLevel(
+      this.levelConfig,
+      this.tableThemeConfig,
+      this.stakeDifficulty?.enemyHpModifier ?? 0,
+    );
     this.log = [];
     this.phase = 'choice';
     this.battleOutcome = undefined;
@@ -162,7 +172,12 @@ export class Battle {
     }
 
     const drawCount = 1;
-    if (this.hasMechanic('enemy_passives') && enemy.id === 'goblin' && enemy.hp < 3 && !enemy.passiveTriggeredThisRound) {
+    if (
+      this.hasMechanic('enemy_passives')
+      && enemy.id === 'goblin'
+      && enemy.hp < this.enemyPassiveHpThreshold(enemy.id)
+      && !enemy.passiveTriggeredThisRound
+    ) {
       enemy.passiveTriggeredThisRound = true;
       this.pushPassiveEffect('goblin_instinct', enemy, [enemy], 'sense');
       this.logEvent(t('log.goblinInstinct'));
@@ -174,7 +189,7 @@ export class Battle {
         accepts: fixedEnemy.scriptedInviteResult === 'accept',
         reason: fixedEnemy.scriptedInviteReasonKey ? t(fixedEnemy.scriptedInviteReasonKey) : t('enemy.ai.goblin.mid'),
       }
-      : decideInvite(enemy, this.playerScore().point);
+      : decideInvite(enemy, this.playerScore().point, this.enemyPassiveHpThreshold(enemy.id));
     enemy.invited = true;
     enemy.invitedDrawCount = drawCount;
     enemy.acceptedInvite = decision.accepts;
@@ -710,7 +725,12 @@ export class Battle {
   }
 
   private applyPreComparePassive(enemy: EnemyState): void {
-    if (!this.hasMechanic('enemy_passives') || enemy.id !== 'gambler' || enemy.hp >= 3 || enemy.passiveTriggeredThisRound) {
+    if (
+      !this.hasMechanic('enemy_passives')
+      || enemy.id !== 'gambler'
+      || enemy.hp >= this.enemyPassiveHpThreshold(enemy.id)
+      || enemy.passiveTriggeredThisRound
+    ) {
       return;
     }
 
@@ -728,7 +748,12 @@ export class Battle {
   }
 
   private applyPostDamagePassive(enemy: EnemyState, damage: number): void {
-    if (!this.hasMechanic('enemy_passives') || enemy.id !== 'werewolf' || enemy.hp >= 3 || damage <= 0) {
+    if (
+      !this.hasMechanic('enemy_passives')
+      || enemy.id !== 'werewolf'
+      || enemy.hp >= this.enemyPassiveHpThreshold(enemy.id)
+      || damage <= 0
+    ) {
       return;
     }
 
@@ -752,6 +777,11 @@ export class Battle {
     }
 
     enemy.defeated = true;
+    if (enemy.summoned) {
+      this.logEvent(t('log.summonedEnemyDefeated', { enemy: enemyName(enemy.id) }));
+      return;
+    }
+
     const beforeHeal = this.player.hp;
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
     const healed = this.player.hp - beforeHeal;
@@ -829,7 +859,7 @@ export class Battle {
 
   private applyRuneBlessing(): void {
     const shaman = this.enemies.find((enemy) => enemy.id === 'rune_shaman' && !enemy.defeated);
-    if (!shaman || shaman.hp >= 3) {
+    if (!shaman || shaman.hp >= this.enemyPassiveHpThreshold(shaman.id)) {
       return;
     }
 
@@ -857,7 +887,7 @@ export class Battle {
 
   private applyEinherjarSummon(): void {
     const valkyrie = this.enemies.find((enemy) => enemy.id === 'valkyrie' && !enemy.defeated);
-    if (!valkyrie || valkyrie.hp >= 4 || valkyrie.summonCount >= 2) {
+    if (!valkyrie || valkyrie.hp >= this.enemyPassiveHpThreshold(valkyrie.id) || valkyrie.summonCount >= 2) {
       return;
     }
 
@@ -900,7 +930,7 @@ export class Battle {
   }
 
   private applyWarHornIfNeeded(enemy: EnemyState): void {
-    if (!this.hasMechanic('enemy_passives') || !this.isNorthernLonghouse() || enemy.id !== 'viking_warrior' || enemy.summoned || enemy.hp >= 3 || enemy.passiveTriggered) {
+    if (!this.hasMechanic('enemy_passives') || !this.isNorthernLonghouse() || enemy.id !== 'viking_warrior' || enemy.summoned || enemy.hp >= this.enemyPassiveHpThreshold(enemy.id) || enemy.passiveTriggered) {
       return;
     }
 
@@ -921,7 +951,8 @@ export class Battle {
       return;
     }
 
-    const candidates = this.aliveEnemies.filter((enemy) => enemy !== songstress && enemy.hp < 3);
+    const threshold = this.enemyPassiveHpThreshold(songstress.id);
+    const candidates = this.aliveEnemies.filter((enemy) => enemy !== songstress && enemy.hp < threshold);
     if (candidates.length === 0) {
       return;
     }
@@ -1001,7 +1032,7 @@ export class Battle {
 
   private applySmokeScreenArm(): void {
     const ninja = this.enemies.find((enemy) => enemy.id === 'ninja' && !enemy.defeated);
-    if (!ninja || ninja.hp >= 3 || ninja.smokeScreenUsed || ninja.smokeScreenArmed) {
+    if (!ninja || ninja.hp >= this.enemyPassiveHpThreshold(ninja.id) || ninja.smokeScreenUsed || ninja.smokeScreenArmed) {
       return;
     }
 
@@ -1087,6 +1118,11 @@ export class Battle {
 
   private isEdoTeahouse(): boolean {
     return this.tableThemeConfig?.id === 'edo_teahouse';
+  }
+
+  enemyPassiveHpThreshold(enemyId: EnemyType): number {
+    const baseThreshold = this.tableThemeConfig?.passiveHpThresholds?.[enemyId] ?? 3;
+    return Math.max(1, baseThreshold + (this.stakeDifficulty?.passiveHpThresholdModifier ?? 0));
   }
 
   consumePassiveEffectEvents(): BattlePresentationEvent[] {

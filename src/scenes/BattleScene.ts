@@ -3,14 +3,16 @@ import { BattleEngine, type BattleCombatPresentationEvent, type BattlePresentati
 import { preloadCardImages } from '../game/assets';
 import { playBattleMusic, preloadBattleMusic, stopBattleMusic, stopLobbyMusic } from '../game/audio';
 import { Card, formatCard } from '../game/card';
+import { DEFAULT_ENEMY_IDS } from '../game/data/enemies';
+import { getLevelById } from '../game/data/levelRegistry';
 import { introIdForLevel } from '../game/data/levelIntros';
 import { getTableThemeById } from '../game/data/tableThemes';
-import { EconomyChange, settleBattleEconomy } from '../game/economy';
+import { EconomyChange, settleBattleEconomy, settleReliefBattleEconomy, settleStoryBattleEconomy } from '../game/economy';
 import { EnemyState } from '../game/enemy';
-import { enemyName, enemyPersonality, t } from '../game/i18n';
+import { enemyName, t } from '../game/i18n';
 import { useBattleItem } from '../game/itemEffects';
 import { ITEMS, ItemDefinition } from '../game/items';
-import { consumeItem, getProgress } from '../game/progress';
+import { consumeItem, getProgress, isStoryLevelCompleted } from '../game/progress';
 import { ScoreResult, scoreHand } from '../game/scoring';
 import { completeStoryLevelAndUnlockNext, getNextStoryLevel } from '../game/storyProgress';
 import type { BattleState } from '../game/core/BattleState';
@@ -18,10 +20,32 @@ import type { BattleMechanicId } from '../game/types/level';
 import type { ItemId } from '../game/types/item';
 import type { EntryStakeMultiplier, TableThemeId, TableThemeVisualConfig } from '../game/types/tableTheme';
 import { ActionPanel } from '../ui/components/ActionPanel';
+import { AbilityOrbit } from '../ui/components/AbilityOrbit';
+import { AbilitySlot } from '../ui/components/AbilitySlot';
 import { BlockingMessageModal } from '../ui/components/BlockingMessageModal';
+import { CharacterFrame } from '../ui/components/CharacterFrame';
+import { HandView } from '../ui/components/HandView';
+import { HeartMeter } from '../ui/components/HeartMeter';
 import { ItemBar } from '../ui/components/ItemBar';
 import { SkillBar } from '../ui/components/SkillBar';
+import { StatusIconRow, type StatusIconState } from '../ui/components/StatusIconRow';
+import { ScrollableGrid } from '../ui/catalog';
+import {
+  configureBattleArtTextures,
+  getBattleThemeArt,
+  getEnemyCharacterArt,
+  preloadBattleArt,
+  type BattleArtSelection,
+  type CharacterArtPose,
+} from '../ui/art';
+import { resolveBattleLayout, type BattleLayoutConfig } from '../ui/layout';
 import { createCardView } from '../ui/presentation/CardView';
+import { applyCharacterPortraitPose, createCharacterPortrait } from '../ui/presentation/CharacterPortrait';
+import {
+  applyPlayerPortraitPose,
+  createPlayerPortrait,
+  type PlayerPortraitPose,
+} from '../ui/presentation/PlayerPortrait';
 import { createScoreBadge } from '../ui/presentation/ScoreBadge';
 import { renderBattleTableTheme, resolveTableThemeVisual } from '../ui/presentation/TableThemeRenderer';
 import { canUseBattleItemFromState, createBattleUIState, type BattleActionButtonState, type BattleUIState } from '../ui/state/UIState';
@@ -65,15 +89,6 @@ const SKILL_COLORS = {
   oiran: 0xf09ab5,
 };
 
-const SEATS = {
-  player: { x: 640, y: 550, width: 520, height: 176 },
-  enemy: [
-    { x: 190, y: 326, width: 360, height: 178 },
-    { x: 640, y: 126, width: 420, height: 190 },
-    { x: 1090, y: 326, width: 360, height: 178 },
-  ],
-};
-
 const PASSIVE_EFFECT_TIMING = {
   stepGap: 150,
   flashIn: 190,
@@ -90,16 +105,24 @@ const PASSIVE_EFFECT_TIMING = {
 const MAX_BATTLE_ITEM_USES = 3;
 
 export class BattleScene extends Phaser.Scene {
+  private battleLayout: BattleLayoutConfig = resolveBattleLayout({ width: 1280, height: 720, target: 'pc' });
+  private battleArtSelection: BattleArtSelection = {
+    themeId: 'evernight_tavern',
+    enemyIds: DEFAULT_ENEMY_IDS,
+  };
   private battle!: BattleEngine;
   private battleEconomySettled = false;
   private economyResult?: EconomyChange;
   private resultModalReady = true;
   private itemModalOpen = false;
+  private battleLogOpen = false;
+  private battleLogGrid?: ScrollableGrid<{ message: string; empty?: boolean }>;
   private confirmReturnToStorySelect = false;
   private confirmExitFormalGame = false;
   private itemFeedback?: { title: string; message: string; success: boolean };
   private temporaryItems: Partial<Record<ItemId, number>> = {};
   private battleItemUses = 0;
+  private battleItemUseCounts: Partial<Record<ItemId, number>> = {};
   private grantedItemRoundIds = new Set<string>();
   private dealing = false;
   private playerRedealing = false;
@@ -107,6 +130,7 @@ export class BattleScene extends Phaser.Scene {
   private autoAdvancingRound = false;
   private stageBannerPlaying = false;
   private actionAnimationPlaying = false;
+  private presentationSequencePlaying = false;
   private dealingRound = 0;
   private dealtPlayerCards = 0;
   private dealtEnemyCards = [0, 0, 0];
@@ -116,8 +140,15 @@ export class BattleScene extends Phaser.Scene {
   private hiddenRoundAttackBonusEnemyIds = new Set<string>();
   private hiddenHanamiFanTargetIds = new Set<string>();
   private enemySpeech?: { enemyId: string; text: string };
-  private playerHpText?: Phaser.GameObjects.Text;
-  private enemyHpTexts = new Map<string, Phaser.GameObjects.Text>();
+  private playerHeartMeter?: HeartMeter;
+  private playerPortrait?: Phaser.GameObjects.Image;
+  private playerPortraitPose: PlayerPortraitPose = 'idle';
+  private playerPortraitResetTimer?: Phaser.Time.TimerEvent;
+  private enemyPortraits = new Map<number, Phaser.GameObjects.Image>();
+  private enemyPortraitPoses = new Map<number, CharacterArtPose>();
+  private enemyPortraitResetTimers = new Map<number, Phaser.Time.TimerEvent>();
+  private enemyPortraitEnemyIds = new Map<number, EnemyState['id']>();
+  private enemyHeartMeters = new Map<string, HeartMeter>();
   private ui: Phaser.GameObjects.Container[] = [];
   private seatContainers = new Map<string, Phaser.GameObjects.Container>();
   private blockingMessage?: { title: string; body: string; buttonLabel: string; onClose?: () => void };
@@ -135,6 +166,7 @@ export class BattleScene extends Phaser.Scene {
   private battleLevelId?: string;
   private tableThemeId?: TableThemeId;
   private stakeMultiplier: EntryStakeMultiplier = 1;
+  private reliefMode = false;
 
   constructor() {
     super('BattleScene');
@@ -143,6 +175,8 @@ export class BattleScene extends Phaser.Scene {
   preload(): void {
     preloadBattleMusic(this);
     preloadCardImages(this);
+    this.battleArtSelection = this.resolveBattleArtSelection();
+    preloadBattleArt(this, this.battleArtSelection);
 
     if (!this.cache.audio.exists('cardSlide')) {
       this.load.audio('cardSlide', '/audio/card-slide-2.ogg');
@@ -168,6 +202,10 @@ export class BattleScene extends Phaser.Scene {
       this.load.audio('damageExplosion', '/audio/explosion.wav');
     }
 
+    if (!this.cache.audio.exists('sakuraCut')) {
+      this.load.audio('sakuraCut', '/audio/Socapex - new_hits.wav');
+    }
+
     if (!this.cache.audio.exists('resonanceEcho')) {
       this.load.audio('resonanceEcho', '/audio/echo.wav');
     }
@@ -181,27 +219,43 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  init(data?: { levelId?: string; tableThemeId?: TableThemeId; stakeMultiplier?: EntryStakeMultiplier }): void {
+  init(data?: { levelId?: string; tableThemeId?: TableThemeId; stakeMultiplier?: EntryStakeMultiplier; reliefMode?: boolean }): void {
     this.battleLevelId = data?.levelId;
     this.tableThemeId = data?.tableThemeId;
     this.stakeMultiplier = data?.stakeMultiplier ?? 1;
+    this.reliefMode = data?.reliefMode ?? false;
   }
 
   create(): void {
+    this.battleLayout = resolveBattleLayout({
+      width: Number(this.scale.gameSize.width),
+      height: Number(this.scale.gameSize.height),
+      target: 'auto',
+    });
     stopLobbyMusic(this);
     playBattleMusic(this);
+    configureBattleArtTextures(this, this.battleArtSelection);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => stopBattleMusic(this));
     const tableThemeConfig = this.tableThemeId ? getTableThemeById(this.tableThemeId) : undefined;
-    this.battle = new BattleEngine({ levelId: this.battleLevelId, tableThemeConfig });
+    this.battle = new BattleEngine({
+      levelId: this.battleLevelId,
+      tableThemeConfig,
+      stakeMultiplier: tableThemeConfig ? this.stakeMultiplier : undefined,
+    });
     this.battleEconomySettled = false;
     this.economyResult = undefined;
     this.resultModalReady = true;
     this.autoAdvancingRound = false;
+    this.presentationSequencePlaying = false;
     this.confirmReturnToStorySelect = false;
     this.confirmExitFormalGame = false;
+    this.battleLogOpen = false;
+    this.battleLogGrid?.destroy();
+    this.battleLogGrid = undefined;
     this.blockingMessage = undefined;
     this.temporaryItems = {};
     this.battleItemUses = 0;
+    this.battleItemUseCounts = {};
     this.grantedItemRoundIds.clear();
     this.shownLessonRoundIds.clear();
     this.shownCompareHintKeys.clear();
@@ -216,301 +270,491 @@ export class BattleScene extends Phaser.Scene {
     this.shownChapter4ResonanceFeedbackIds.clear();
     this.hiddenRoundAttackBonusEnemyIds.clear();
     this.hiddenHanamiFanTargetIds.clear();
+    this.playerPortraitPose = 'idle';
+    this.playerPortraitResetTimer?.remove(false);
+    this.playerPortraitResetTimer = undefined;
+    this.enemyPortraitResetTimers.forEach((timer) => timer.remove(false));
+    this.enemyPortraitResetTimers.clear();
+    this.enemyPortraitPoses.clear();
+    this.enemyPortraits.clear();
+    this.enemyPortraitEnemyIds.clear();
     this.playRoundStartBannerThenDeal();
   }
 
   private render(): void {
     this.settleEconomyIfNeeded();
     this.grantFixedRoundItemsIfNeeded();
+    this.battleLogGrid?.destroy();
+    this.battleLogGrid = undefined;
     this.children.removeAll(true);
     this.ui.forEach((item) => item.destroy(true));
     this.ui = [];
     this.seatContainers.clear();
-    this.playerHpText = undefined;
-    this.enemyHpTexts.clear();
+    this.playerHeartMeter = undefined;
+    this.playerPortrait = undefined;
+    this.enemyPortraits.clear();
+    this.enemyHeartMeters.clear();
 
     this.addBackground();
     this.renderEnemies();
     this.renderCenterInfo();
     this.renderPlayer();
-    this.renderLog();
+    this.renderBattleLogButton();
     this.renderStoryReturnButton();
     this.renderFormalExitButton();
-    this.renderActions();
+    this.renderPlayerCommandBar();
     this.renderItemModal();
     this.renderItemFeedback();
     this.renderResultModal();
     this.renderStoryReturnConfirmModal();
     this.renderFormalExitConfirmModal();
     this.renderBlockingMessage();
+    this.renderBattleLogModal();
   }
 
   private addBackground(): void {
-    renderBattleTableTheme(this, this.battle.tableThemeConfig?.visual);
+    renderBattleTableTheme(
+      this,
+      this.battle.tableThemeConfig?.visual,
+      getBattleThemeArt(this.battleArtSelection.themeId),
+    );
   }
 
   private currentThemeVisual(): TableThemeVisualConfig {
     return resolveTableThemeVisual(this.battle.tableThemeConfig?.visual);
   }
 
+  private resolveBattleArtSelection(): BattleArtSelection {
+    const tableTheme = this.tableThemeId ? getTableThemeById(this.tableThemeId) : undefined;
+    const level = this.battleLevelId ? getLevelById(this.battleLevelId) : undefined;
+    return {
+      themeId: tableTheme?.id ?? 'evernight_tavern',
+      enemyIds: [...(level?.enemyIds ?? tableTheme?.enemyIds ?? DEFAULT_ENEMY_IDS)],
+    };
+  }
+
   private renderEnemies(): void {
     const visual = this.currentThemeVisual();
+    const themeArt = getBattleThemeArt(this.battleArtSelection.themeId);
     this.battle.enemies.forEach((enemy, index) => {
       const seat = this.enemySeatForIndex(index);
+      const hud = this.enemyHudLayout(index);
       const container = this.add.container(seat.x, seat.y);
       this.ui.push(container);
       this.seatContainers.set(enemy.id, container);
       const active = this.battle.currentEnemyIndex === index && this.battle.phase === 'enemy-turn';
       const displayDefeated = this.enemyDisplayDefeated(index);
-      const defeatedColor = displayDefeated ? 0x24262b : visual.panelColor;
-      container.add(this.add.rectangle(0, 0, seat.width, seat.height, active ? visual.panelAltColor : defeatedColor).setStrokeStyle(2, active ? visual.accentColor : visual.lineColor));
-      container.add(this.add.text(-seat.width / 2 + 18, -seat.height / 2 + 18, enemyName(enemy.id), { fontFamily: 'Arial', fontSize: '22px', color: displayDefeated ? COLORS.muted : COLORS.text }));
-      const hp = this.hpText(seat.width / 2 - 118, -seat.height / 2 + 18, t('common.hp', { hp: this.enemyDisplayHp(index), maxHp: enemy.maxHp }), displayDefeated);
-      this.enemyHpTexts.set(enemy.id, hp);
-      container.add(hp);
-      container.add(this.add.text(-seat.width / 2 + 18, -seat.height / 2 + 48, displayDefeated ? t('common.defeated') : enemyPersonality(enemy.id), { fontFamily: 'Arial', fontSize: '15px', color: displayDefeated ? COLORS.green : COLORS.muted }));
-      this.renderEnemyCardRow(container, enemy, index, -seat.width / 2 + 20, -seat.height / 2 + 108);
 
-      if (this.shouldShowEnemyScore(enemy)) {
-        this.renderScoreBadge(container, seat.width / 2 - 84, 34, this.scoreEnemy(enemy).point);
-        if (this.hasMechanic('resonance')) {
-          container.add(this.resonanceLabel(-seat.width / 2 + 20, seat.height / 2 - 26, this.scoreEnemy(enemy)));
+      const frame = new CharacterFrame(this, {
+        x: hud.portrait.x,
+        y: hud.portrait.y,
+        width: hud.portrait.width,
+        height: hud.portrait.height,
+        accentColor: visual.enemyFrameColor,
+        skin: themeArt.enemyFrame,
+        active,
+        muted: displayDefeated,
+      });
+      container.add(frame.container);
+
+      const portraitArt = getEnemyCharacterArt(enemy.id);
+      let portraitRendered = false;
+      if (portraitArt) {
+        if (this.enemyPortraitEnemyIds.get(index) !== enemy.id) {
+          this.enemyPortraitResetTimers.get(index)?.remove(false);
+          this.enemyPortraitResetTimers.delete(index);
+          this.enemyPortraitPoses.set(index, 'idle');
+          this.enemyPortraitEnemyIds.set(index, enemy.id);
+        }
+        const portraitPose = displayDefeated ? 'hurt' : (this.enemyPortraitPoses.get(index) ?? 'idle');
+        const portrait = createCharacterPortrait(
+          this,
+          portraitArt,
+          portraitPose,
+          0,
+          0,
+        );
+        if (portrait) {
+          portrait.setAlpha(displayDefeated ? 0.52 : 1);
+          this.enemyPortraits.set(index, portrait);
+          frame.addPortrait(portrait);
+          portraitRendered = true;
         }
       }
 
-      this.renderEnemySpeech(container, enemy, seat);
+      if (!portraitRendered) {
+        const fallback = this.add.text(0, 0, enemyName(enemy.id).slice(0, 1), {
+          fontFamily: 'Arial',
+          fontSize: '40px',
+          color: displayDefeated ? COLORS.muted : visual.glowColor,
+          fontStyle: 'bold',
+        }).setOrigin(0.5);
+        if (!displayDefeated) {
+          fallback.setShadow(0, 0, visual.glowColor, 10, true, true);
+        }
+        frame.addPortrait(fallback);
+      }
+
+      const name = this.add.text(hud.name.x, hud.name.y, enemyName(enemy.id), {
+        fontFamily: 'Arial',
+        fontSize: '14px',
+        color: displayDefeated ? COLORS.muted : visual.glowColor,
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      if (!displayDefeated) {
+        name.setShadow(0, 0, visual.glowColor, 6, true, true);
+      }
+      container.add(name);
+
+      const heartMeter = new HeartMeter(this, {
+        x: hud.health.x,
+        y: hud.health.y,
+        hp: this.enemyDisplayHp(index),
+        maxHp: enemy.maxHp,
+        muted: displayDefeated,
+        onShowTooltip: () => this.showSkillTooltip(
+          seat.x + hud.health.x,
+          seat.y + hud.health.y - 68,
+          t('common.health'),
+          t('common.hp', { hp: this.enemyDisplayHp(index), maxHp: enemy.maxHp }),
+        ),
+        onHideTooltip: () => this.hideSkillTooltip(),
+      });
+      this.enemyHeartMeters.set(enemy.id, heartMeter);
+      container.add(heartMeter.container);
+
+      const hand = this.renderEnemyCardRow(container, enemy, index, hud.hand.x, hud.hand.y);
+
+      if (this.shouldShowEnemyScore(enemy)) {
+        const direction = hud.scoreSide === 'right' ? 1 : -1;
+        const scoreX = hud.hand.x + direction * ((hand?.rightEdge ?? 0) + hud.scoreGap);
+        this.renderScoreBadge(container, scoreX, hud.hand.y, this.scoreEnemy(enemy).point, true);
+        if (this.hasMechanic('resonance')) {
+          container.add(this.resonanceLabel(scoreX, hud.hand.y + 34, this.scoreEnemy(enemy), '13px').setOrigin(0.5));
+        }
+      }
+
+      this.renderEnemySpeech(container, enemy, hud.speech);
 
       if (this.hasMechanic('enemy_passives') && this.enemyHasPassiveInfo(enemy)) {
-        container.add(this.enemyPassiveIcon(enemy, index, seat));
+        const orbit = new AbilityOrbit(this, {
+          x: hud.portrait.x,
+          y: hud.portrait.y,
+          radiusX: hud.orbitRadiusX,
+          radiusY: hud.orbitRadiusY,
+        });
+        orbit.addContainer(hud.passivePosition, this.enemyPassiveIcon(enemy, index, hud));
+        container.add(orbit.container);
       }
-      this.renderEnemyStatusBadges(container, enemy, index, seat);
+      this.renderEnemyStatusBadges(container, enemy, index, hud);
     });
   }
 
-  private renderEnemyStatusBadges(container: Phaser.GameObjects.Container, enemy: EnemyState, index: number, seat: { width: number; height: number }): void {
+  private renderEnemyStatusBadges(
+    container: Phaser.GameObjects.Container,
+    enemy: EnemyState,
+    index: number,
+    layout: BattleLayoutConfig['enemyHud']['left'],
+  ): void {
     if (enemy.defeated) {
       return;
     }
 
+    const statuses: StatusIconState[] = [];
     if (enemy.id === 'shogun_samurai' && enemy.iaijutsuStacks > 0) {
-      const x = index === 1 ? -seat.width / 2 - 34 : -seat.width / 2 + 34;
-      const y = index === 1 ? -seat.height / 2 + 66 : -seat.height / 2 - 2;
-      const badge = this.add.container(x, y);
-      const bg = this.add.rectangle(0, 0, 76, 24, 0x4b2427, 0.92).setStrokeStyle(2, 0xe15f58, 0.98);
-      const text = this.add.text(0, 0, t('battle.status.iaijutsu', { amount: enemy.iaijutsuStacks }), {
-        fontFamily: 'Arial',
-        fontSize: '13px',
-        color: '#ffd19d',
-        fontStyle: 'bold',
-      }).setOrigin(0.5);
-      text.setShadow(0, 0, '#e15f58', 9, true, true);
-      badge.add([bg, text]);
-      container.add(badge);
+      statuses.push({
+        id: 'iaijutsu',
+        icon: '刀',
+        color: 0xe15f58,
+        textColor: '#ffd19d',
+        title: t('battle.status.iaijutsu', { amount: enemy.iaijutsuStacks }),
+        description: t('skill.iaijutsuCharge.tooltip'),
+        badge: `${enemy.iaijutsuStacks}`,
+      });
     }
 
     if (enemy.id === 'ninja' && enemy.smokeScreenArmed) {
-      const x = index === 1 ? -seat.width / 2 - 34 : -seat.width / 2 + 34;
-      const y = index === 1 ? -seat.height / 2 + 66 : -seat.height / 2 - 2;
-      const badge = this.add.container(x, y);
-      const bg = this.add.rectangle(0, 0, 64, 24, 0x2b2544, 0.92).setStrokeStyle(2, 0x8e78bb, 0.98);
-      const text = this.add.text(0, 0, t('battle.status.smokeScreen'), {
-        fontFamily: 'Arial',
-        fontSize: '13px',
-        color: '#d8cbff',
-        fontStyle: 'bold',
-      }).setOrigin(0.5);
-      text.setShadow(0, 0, '#8e78bb', 9, true, true);
-      badge.add([bg, text]);
-      container.add(badge);
+      statuses.push({
+        id: 'smoke-screen',
+        icon: '影',
+        color: 0x8e78bb,
+        textColor: '#d8cbff',
+        title: t('battle.status.smokeScreen'),
+        description: t('skill.smokeSubstitution.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
+      });
     }
 
     const oiran = this.battle.enemies.find((candidate) => candidate.id === 'oiran' && !candidate.defeated);
     if (oiran?.hanamiFanTargetId === enemy.id && !this.hiddenHanamiFanTargetIds.has(enemy.id)) {
-      const x = index === 1 ? -seat.width / 2 - 34 : -seat.width / 2 + 34;
-      const hasOwnStatus = (enemy.id === 'shogun_samurai' && enemy.iaijutsuStacks > 0)
-        || (enemy.id === 'ninja' && enemy.smokeScreenArmed);
-      const y = (index === 1 ? -seat.height / 2 + 66 : -seat.height / 2 - 2) + (hasOwnStatus ? 30 : 0);
-      const badge = this.add.container(x, y);
-      const bg = this.add.rectangle(0, 0, 64, 24, 0x4b2944, 0.92).setStrokeStyle(2, 0xf09ab5, 0.98);
-      const text = this.add.text(0, 0, t('battle.status.hanamiFan'), {
-        fontFamily: 'Arial',
-        fontSize: '13px',
-        color: '#ffd2e3',
-        fontStyle: 'bold',
-      }).setOrigin(0.5);
-      text.setShadow(0, 0, '#f09ab5', 9, true, true);
-      badge.add([bg, text]);
-      container.add(badge);
+      statuses.push({
+        id: 'hanami-fan',
+        icon: '扇',
+        color: 0xf09ab5,
+        textColor: '#ffd2e3',
+        title: t('battle.status.hanamiFan'),
+        description: t('skill.hanamiDance.tooltip'),
+      });
     }
 
     if (enemy.taoistTalismaned) {
-      const x = seat.width / 2 - 42;
-      const y = -seat.height / 2 + 54;
-      const badge = this.add.container(x, y);
-      const bg = this.add.rectangle(0, 0, 46, 26, 0x173a36, 0.92).setStrokeStyle(2, 0x72d8b3, 0.98);
-      const text = this.add.text(0, 0, t('battle.passive.talismaned'), {
-        fontFamily: 'Arial',
-        fontSize: '14px',
-        color: '#92f0cc',
-        fontStyle: 'bold',
-      }).setOrigin(0.5);
-      text.setShadow(0, 0, '#72d8b3', 8, true, true);
-      badge.add([bg, text]);
-      container.add(badge);
+      statuses.push({
+        id: 'taoist-talisman',
+        icon: '符',
+        color: 0x72d8b3,
+        textColor: '#92f0cc',
+        title: t('battle.passive.talismaned'),
+        description: t('skill.heavenlyInsight.tooltip'),
+      });
     }
 
     const visibleRoundAttackBonus = this.hiddenRoundAttackBonusEnemyIds.has(enemy.id) ? 0 : enemy.roundAttackBonus;
     const attackBonus = Math.max(0, enemy.attackBonus + visibleRoundAttackBonus);
-    if (attackBonus <= 0) {
+    if (attackBonus > 0) {
+      const title = t('battle.status.attackBonus', { amount: attackBonus });
+      statuses.push({
+        id: 'attack-bonus',
+        icon: '↑',
+        color: 0xff4b5f,
+        textColor: '#ff8d94',
+        title,
+        description: title,
+        badge: `+${attackBonus}`,
+      });
+    }
+
+    if (statuses.length === 0) {
       return;
     }
 
-    const x = index === 1 ? -seat.width / 2 + 38 : -seat.width / 2 + 100;
-    const y = index === 1 ? -seat.height / 2 + 84 : -seat.height / 2 - 31;
-    const badge = this.add.container(x, y);
-    const width = 76;
-    const bg = this.add.rectangle(0, 0, width, 24, 0x461f27, 0.86).setStrokeStyle(2, 0xff4b5f, 0.95);
-    const text = this.add.text(0, 0, t('battle.status.attackBonus', { amount: attackBonus }), {
-      fontFamily: 'Arial',
-      fontSize: '13px',
-      color: '#ff6f6f',
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    text.setShadow(0, 0, '#ff4b5f', 9, true, true);
-    badge.add([bg, text]);
-    container.add(badge);
+    const seat = this.enemySeatForIndex(index);
+    const row = new StatusIconRow(this, {
+      x: layout.statuses.x,
+      y: layout.statuses.y,
+      statuses,
+      variant: 'tag',
+      onShowTooltip: (x, y, title, description) => this.showSkillTooltip(seat.x + x, seat.y + y, title, description),
+      onHideTooltip: () => this.hideSkillTooltip(),
+    });
+    container.add(row.container);
   }
 
   private renderCenterInfo(): void {
     const visual = this.currentThemeVisual();
     const battleState = this.battle.getState();
-    const uiState = this.createUIState(battleState);
-    const container = this.add.container(640, 342);
+    const container = this.add.container(this.battleLayout.centerInfo.x, this.battleLayout.centerInfo.y);
     this.ui.push(container);
 
-    container.add(this.add.text(0, -86, t('battle.title', { round: battleState.round }), { fontFamily: 'Arial', fontSize: '28px', color: COLORS.text }).setOrigin(0.5));
-    container.add(this.add.text(0, -44, this.phaseText(uiState), { fontFamily: 'Arial', fontSize: '17px', color: COLORS.muted, align: 'center', wordWrap: { width: 430 } }).setOrigin(0.5));
-
-    const targetText = t('battle.target', { target: battleState.currentEnemyId && battleState.phase === 'enemy-turn' ? enemyName(battleState.currentEnemyId) : t('battle.targetNone') });
-    const target = this.add.text(0, 18, targetText, { fontFamily: 'Arial', fontSize: '21px', color: visual.glowColor }).setOrigin(0.5);
-    target.setShadow(0, 0, visual.glowColor, 7, true, true);
-    container.add(target);
-
-    const tutorialText = this.currentTutorialText(battleState);
-    if (tutorialText) {
-      const tutorial = this.add.text(0, 82, tutorialText, {
-        fontFamily: 'Arial',
-        fontSize: '15px',
-        color: COLORS.text,
-        align: 'center',
-        lineSpacing: 5,
-        wordWrap: { width: 540 },
-      }).setOrigin(0.5);
-      tutorial.setShadow(0, 0, visual.glowColor, 6, true, true);
-      container.add(tutorial);
-      return;
-    }
-
-    const aliveText = t('battle.aliveInfo', { alive: battleState.aliveEnemyIds.length, total: battleState.enemies.length });
-    container.add(this.add.text(0, 58, aliveText, { fontFamily: 'Arial', fontSize: '14px', color: COLORS.muted }).setOrigin(0.5));
-  }
-
-  private currentTutorialText(state: BattleState): string {
-    if (state.currentFixedRoundId) {
-      return '';
-    }
-
-    if (state.phase === 'choice' && state.currentLessonKey) {
-      return t(state.currentLessonKey);
-    }
-
-    if (state.phase === 'enemy-turn' && state.currentTutorialBeforeCompareKey) {
-      return t(state.currentTutorialBeforeCompareKey);
-    }
-
-    return '';
+    const lineLeft = this.add.rectangle(-108, 0, 70, 1, visual.accentColor, 0.48);
+    const lineRight = this.add.rectangle(108, 0, 70, 1, visual.accentColor, 0.48);
+    const round = this.add.text(0, 0, t('battle.roundLabel', { round: battleState.round }), {
+      fontFamily: 'Arial',
+      fontSize: '16px',
+      color: visual.glowColor,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    round.setShadow(0, 0, visual.glowColor, 6, true, true);
+    container.add([lineLeft, lineRight, round]);
   }
 
   private renderPlayer(): void {
-    const seat = SEATS.player;
+    const seat = this.battleLayout.seats.player;
+    const hud = this.battleLayout.playerHud;
+    const visual = this.currentThemeVisual();
     const container = this.add.container(seat.x, seat.y);
     this.ui.push(container);
     this.seatContainers.set('player', container);
 
-    container.add(this.add.rectangle(0, 0, seat.width, seat.height, COLORS.panel).setStrokeStyle(2, COLORS.line));
-    container.add(this.add.text(-seat.width / 2 + 20, -seat.height / 2 + 18, t('common.playerDealer'), { fontFamily: 'Arial', fontSize: '24px', color: COLORS.text }));
-    this.playerHpText = this.hpText(seat.width / 2 - 132, -seat.height / 2 + 18, t('common.hp', { hp: this.playerDisplayHp(), maxHp: this.battle.player.maxHp }));
-    container.add(this.playerHpText);
-    this.renderPlayerCardRow(container, -seat.width / 2 + 22, -seat.height / 2 + 98);
-    if (this.battle.player.shieldCharges > 0) {
-      container.add(this.holyShieldAura(this.battle.player.shieldCharges));
+    const frame = new CharacterFrame(this, {
+      x: hud.portrait.x,
+      y: hud.portrait.y,
+      width: hud.portrait.width,
+      height: hud.portrait.height,
+      accentColor: visual.accentColor,
+      skin: getBattleThemeArt(this.battleArtSelection.themeId).playerFrame,
+      active: this.battle.phase === 'player-turn',
+      muted: this.playerDisplayHp() <= 0,
+    });
+    container.add(frame.container);
+    const visiblePose: PlayerPortraitPose = this.playerDisplayHp() <= 0 ? 'hurt' : this.playerPortraitPose;
+    this.playerPortrait = createPlayerPortrait(this, visiblePose, 0, 0);
+    frame.addPortrait(this.playerPortrait);
+
+    const name = this.add.text(hud.name.x, hud.name.y, t('common.playerDealer'), {
+      fontFamily: 'Arial',
+      fontSize: '14px',
+      color: visual.glowColor,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    name.setShadow(0, 0, visual.glowColor, 6, true, true);
+    container.add(name);
+
+    this.playerHeartMeter = new HeartMeter(this, {
+      x: hud.health.x,
+      y: hud.health.y,
+      hp: this.playerDisplayHp(),
+      maxHp: this.battle.player.maxHp,
+      onShowTooltip: () => this.showSkillTooltip(
+        seat.x + hud.health.x,
+        seat.y + hud.health.y - 74,
+        t('common.health'),
+        t('common.hp', { hp: this.playerDisplayHp(), maxHp: this.battle.player.maxHp }),
+      ),
+      onHideTooltip: () => this.hideSkillTooltip(),
+    });
+    container.add(this.playerHeartMeter.container);
+
+    const statuses = this.playerStatusStates();
+    if (statuses.length > 0) {
+      const statusRow = new StatusIconRow(this, {
+        x: hud.statuses.x,
+        y: hud.statuses.y,
+        statuses,
+        variant: 'tag',
+        onShowTooltip: (x, y, title, description) => this.showSkillTooltip(seat.x + x, seat.y + y, title, description),
+        onHideTooltip: () => this.hideSkillTooltip(),
+      });
+      container.add(statusRow.container);
     }
 
+    const hand = this.renderPlayerCardRow(container, hud.hand.x, hud.hand.y);
+    if (this.battle.player.shieldCharges > 0) {
+      container.add(this.holyShieldAura(this.battle.player.shieldCharges).setPosition(hud.portrait.x, hud.portrait.y));
+    }
+
+    const scoreX = hud.hand.x + hand.rightEdge + hud.scoreGap;
     if (this.battle.phase !== 'choice' && !this.playerRedealing) {
       const score = this.battle.playerScore();
-      this.renderScoreBadge(container, seat.width / 2 - 86, 28, score.point);
+      this.renderScoreBadge(container, scoreX, hud.hand.y, score.point, true);
       if (this.hasMechanic('resonance')) {
-        container.add(this.resonanceLabel(-seat.width / 2 + 22, seat.height / 2 - 28, score, '18px'));
+        const resonance = this.resonanceLabel(scoreX, hud.hand.y + 34, score, '13px').setOrigin(0.5);
+        container.add(resonance);
       }
     } else if (this.battle.phase === 'choice') {
-      container.add(this.add.text(-seat.width / 2 + 22, seat.height / 2 - 32, t('battle.handHidden'), { fontFamily: 'Arial', fontSize: '18px', color: COLORS.muted }));
+      container.add(this.add.text(scoreX, hud.hand.y, t('battle.handHidden'), {
+        fontFamily: 'Arial',
+        fontSize: '13px',
+        color: COLORS.muted,
+      }).setOrigin(0.5));
+    }
+  }
+
+  private setPlayerPortraitPose(pose: PlayerPortraitPose, resetAfterMs?: number): void {
+    this.playerPortraitResetTimer?.remove(false);
+    this.playerPortraitResetTimer = undefined;
+    this.playerPortraitPose = pose;
+    if (this.playerPortrait?.active) {
+      applyPlayerPortraitPose(this.playerPortrait, pose);
     }
 
-    const uiState = this.createUIState();
-    if (this.hasMechanic('skills')) {
-      container.add(SkillBar.render(this, {
-        x: seat.width / 2 + 54,
-        y: -42,
-        skills: uiState.skills,
-        colors: {
-          cooldown: COLORS.dangerText,
-          line: COLORS.line,
-          muted: COLORS.muted,
-          resonance: COLORS.resonance,
-          text: COLORS.text,
-        },
-        tooltipOrigin: { x: SEATS.player.x, y: SEATS.player.y },
-        onShowTooltip: (x, y, title, body) => this.showSkillTooltip(x, y, title, body),
-        onHideTooltip: () => this.hideSkillTooltip(),
-        onUse: (kind, title, tooltip, tooltipX, tooltipY) => {
-          this.playClickSound();
-          this.runAction(() => {
-            const result = this.battle.execute({
-              type: 'use-skill',
-              skill: kind === 'shift' ? 'resonance-shift' : 'resonance-summon',
-            });
-            if (!result?.used) {
-              this.showSkillTooltip(tooltipX, tooltipY, title, result?.message ?? tooltip);
-            }
-          });
-        },
-      }));
+    if (resetAfterMs === undefined) {
+      return;
     }
-    if (this.hasMechanic('soul_redeem')) {
-      container.add(this.playerPassiveIcon(seat));
+
+    this.playerPortraitResetTimer = this.time.delayedCall(resetAfterMs, () => {
+      this.playerPortraitResetTimer = undefined;
+      const nextPose: PlayerPortraitPose = this.playerDisplayHp() <= 0 ? 'hurt' : 'idle';
+      this.playerPortraitPose = nextPose;
+      if (this.playerPortrait?.active) {
+        applyPlayerPortraitPose(this.playerPortrait, nextPose);
+      }
+    });
+  }
+
+  private setEnemyPortraitPose(enemyIndex: number, pose: CharacterArtPose, resetAfterMs?: number): void {
+    const enemy = this.battle.enemies[enemyIndex];
+    const portraitArt = enemy ? getEnemyCharacterArt(enemy.id) : undefined;
+    if (!enemy || !portraitArt) {
+      return;
     }
-    if (this.hasMechanic('items')) {
-      container.add(ItemBar.render(this, {
-        x: -seat.width / 2 - 42,
-        y: 42,
-        enabled: uiState.itemButton.enabled,
-        label: t('battle.itemButtonUsage', { used: this.battleItemUses, max: MAX_BATTLE_ITEM_USES }),
-        colors: {
-          accent: COLORS.accent,
-          accentText: COLORS.accentText,
-          line: COLORS.line,
-          muted: COLORS.muted,
-          panelEnabled: 0x2a2e38,
-          panelDisabled: 0x20232a,
-          text: COLORS.text,
-        },
-        onOpen: () => {
-          this.playClickSound();
-          this.itemModalOpen = true;
-          this.render();
-        },
-      }));
+
+    this.enemyPortraitResetTimers.get(enemyIndex)?.remove(false);
+    this.enemyPortraitResetTimers.delete(enemyIndex);
+    const visiblePose: CharacterArtPose = this.enemyDisplayDefeated(enemyIndex) ? 'hurt' : pose;
+    this.enemyPortraitPoses.set(enemyIndex, visiblePose);
+    const portrait = this.enemyPortraits.get(enemyIndex);
+    if (portrait?.active) {
+      applyCharacterPortraitPose(portrait, portraitArt, visiblePose);
     }
+
+    if (resetAfterMs === undefined || (visiblePose === 'hurt' && this.enemyDisplayDefeated(enemyIndex))) {
+      return;
+    }
+
+    const timer = this.time.delayedCall(resetAfterMs, () => {
+      this.enemyPortraitResetTimers.delete(enemyIndex);
+      const nextEnemy = this.battle.enemies[enemyIndex];
+      const nextArt = nextEnemy ? getEnemyCharacterArt(nextEnemy.id) : undefined;
+      if (!nextEnemy || !nextArt) {
+        return;
+      }
+
+      const nextPose: CharacterArtPose = this.enemyDisplayDefeated(enemyIndex) ? 'hurt' : 'idle';
+      this.enemyPortraitPoses.set(enemyIndex, nextPose);
+      const currentPortrait = this.enemyPortraits.get(enemyIndex);
+      if (currentPortrait?.active) {
+        applyCharacterPortraitPose(currentPortrait, nextArt, nextPose);
+      }
+    });
+    this.enemyPortraitResetTimers.set(enemyIndex, timer);
+  }
+
+  private playPlayerPortraitAttackMotion(): void {
+    const portrait = this.playerPortrait;
+    if (!portrait?.active) {
+      return;
+    }
+
+    const startY = portrait.y;
+    this.tweens.killTweensOf(portrait);
+    this.tweens.add({
+      targets: portrait,
+      y: startY - 12,
+      scaleX: 1.08,
+      scaleY: 1.08,
+      duration: 170,
+      yoyo: true,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        if (!portrait.active) {
+          return;
+        }
+        portrait.y = startY;
+        portrait.setScale(1);
+      },
+    });
+  }
+
+  private playEnemyPortraitAttackMotion(enemyIndex: number): void {
+    const portrait = this.enemyPortraits.get(enemyIndex);
+    if (!portrait?.active) {
+      return;
+    }
+
+    const seat = this.enemySeatForIndex(enemyIndex);
+    const direction = new Phaser.Math.Vector2(
+      this.battleLayout.seats.player.x - seat.x,
+      this.battleLayout.seats.player.y - seat.y,
+    ).normalize().scale(12);
+    const startX = portrait.x;
+    const startY = portrait.y;
+    this.tweens.killTweensOf(portrait);
+    this.tweens.add({
+      targets: portrait,
+      x: startX + direction.x,
+      y: startY + direction.y,
+      scaleX: 1.08,
+      scaleY: 1.08,
+      duration: 170,
+      yoyo: true,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        if (!portrait.active) {
+          return;
+        }
+        portrait.setPosition(startX, startY);
+        portrait.setScale(1);
+      },
+    });
   }
 
   private createUIState(state: BattleState = this.battle.getState()): BattleUIState {
@@ -520,7 +764,7 @@ export class BattleScene extends Phaser.Scene {
       playerRedealing: this.playerRedealing,
       actionDealing: this.actionDealing,
       stageBannerPlaying: this.stageBannerPlaying,
-      actionAnimationPlaying: this.actionAnimationPlaying,
+      actionAnimationPlaying: this.actionAnimationPlaying || this.presentationSequencePlaying,
       ownedItemCount,
       itemUsesRemaining: this.remainingBattleItemUses(),
     });
@@ -591,6 +835,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private hasMechanic(mechanic: BattleMechanicId): boolean {
+    if (this.reliefMode && mechanic === 'items') {
+      return false;
+    }
     return this.battle.hasMechanic(mechanic);
   }
 
@@ -643,12 +890,13 @@ export class BattleScene extends Phaser.Scene {
   private playSoulRedeemBannerThen(onComplete: () => void): void {
     this.stageBannerPlaying = true;
     this.itemModalOpen = false;
+    this.setPlayerPortraitPose('hurt');
     this.render();
 
-    const x = SEATS.player.x;
-    const y = SEATS.player.y;
+    const x = this.battleLayout.seats.player.x;
+    const y = this.battleLayout.seats.player.y;
     const blocker = this.add.rectangle(640, 360, 1280, 720, 0x050608, 0.18).setDepth(68).setInteractive();
-    const playerShade = this.add.rectangle(x, y, SEATS.player.width, SEATS.player.height, 0x050608, 0.38).setDepth(69);
+    const playerShade = this.add.rectangle(x, y, this.battleLayout.seats.player.width, this.battleLayout.seats.player.height, 0x050608, 0.38).setDepth(69);
     const soul = this.add.container(x, y + 14).setDepth(72).setAlpha(0).setScale(0.48);
     const outerSoul = this.add.circle(0, 0, 28, 0xf6df96, 0.18).setStrokeStyle(3, 0xfff0bc, 0.9);
     const innerSoul = this.add.circle(0, 0, 14, 0xe9f6ff, 0.82);
@@ -695,6 +943,7 @@ export class BattleScene extends Phaser.Scene {
             duration: 480,
             ease: 'Cubic.easeIn',
             onComplete: () => {
+              this.setPlayerPortraitPose('idle');
               const revivalRing = this.add.circle(x, y, 30, 0xf6df96, 0.2).setStrokeStyle(4, 0xfff5c8, 0.96).setDepth(72);
               const revivalGlow = this.add.circle(x, y, 20, 0xe9f6ff, 0.36).setDepth(73);
               this.playSoulRedeemParticles(x, y, 16, 0xffe7a2);
@@ -780,8 +1029,15 @@ export class BattleScene extends Phaser.Scene {
       this.render();
     }
 
-    const container = this.add.container(640, 342).setDepth(70);
-    const blocker = this.add.rectangle(0, 18, 1280, 720, 0x000000, 0.01).setInteractive();
+    const container = this.add.container(this.battleLayout.stageBanner.x, this.battleLayout.stageBanner.y).setDepth(70);
+    const blocker = this.add.rectangle(
+      0,
+      18,
+      this.battleLayout.canvas.width,
+      this.battleLayout.canvas.height,
+      0x000000,
+      0.01,
+    ).setInteractive();
     const text = this.add.text(0, 0, label, {
       fontFamily: 'Arial',
       fontSize: '104px',
@@ -925,31 +1181,43 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private dealTargetForPlayer(cardIndex: number): Phaser.Math.Vector2 {
-    const seat = SEATS.player;
+    const seat = this.battleLayout.seats.player;
+    const hud = this.battleLayout.playerHud;
+    const count = Math.max(this.battle.player.hand.length, cardIndex + 1);
+    const width = this.battleLayout.cards.width + (count - 1) * this.battleLayout.cards.spacing;
+    const firstCenter = -width / 2 + this.battleLayout.cards.width / 2;
     return new Phaser.Math.Vector2(
-      seat.x - seat.width / 2 + 46 + cardIndex * 44,
-      seat.y - seat.height / 2 + 76,
+      seat.x + hud.hand.x + firstCenter + cardIndex * this.battleLayout.cards.spacing,
+      seat.y + hud.hand.y,
     );
   }
 
   private dealTargetForEnemy(enemyIndex: number, cardIndex: number): Phaser.Math.Vector2 {
     const seat = this.enemySeatForIndex(enemyIndex);
+    const layout = this.enemyHudLayout(enemyIndex);
+    const count = Math.max(this.battle.enemies[enemyIndex]?.hand.length ?? 0, cardIndex + 1);
+    const width = this.battleLayout.cards.width + (count - 1) * this.battleLayout.cards.spacing;
+    const firstCenter = -width / 2 + this.battleLayout.cards.width / 2;
     return new Phaser.Math.Vector2(
-      seat.x - seat.width / 2 + 44 + cardIndex * 42,
-      seat.y - seat.height / 2 + 94,
+      seat.x + layout.hand.x + firstCenter + cardIndex * this.battleLayout.cards.spacing,
+      seat.y + layout.hand.y,
     );
   }
 
   private enemyCardCenter(enemyIndex: number, cardIndex: number): Phaser.Math.Vector2 {
     const seat = this.enemySeatForIndex(enemyIndex);
+    const layout = this.enemyHudLayout(enemyIndex);
+    const count = Math.max(this.battle.enemies[enemyIndex]?.hand.length ?? 0, cardIndex + 1);
+    const width = this.battleLayout.cards.width + (count - 1) * this.battleLayout.cards.spacing;
+    const firstCenter = -width / 2 + this.battleLayout.cards.width / 2;
     return new Phaser.Math.Vector2(
-      seat.x - seat.width / 2 + 55 + cardIndex * 54,
-      seat.y - seat.height / 2 + 108,
+      seat.x + layout.hand.x + firstCenter + cardIndex * this.battleLayout.cards.spacing,
+      seat.y + layout.hand.y,
     );
   }
 
   private playDealCard(to: Phaser.Math.Vector2, onComplete: () => void): void {
-    const card = this.add.container(640, 350).setDepth(30);
+    const card = this.add.container(this.battleLayout.dealOrigin.x, this.battleLayout.dealOrigin.y).setDepth(30);
     card.add(this.add.rectangle(0, 0, 34, 48, 0xf2f2ed, 0.96).setStrokeStyle(2, COLORS.accent));
     card.add(this.add.rectangle(0, 0, 24, 36, 0x2b303c, 0.18).setStrokeStyle(1, 0x2b303c, 0.45));
     card.add(this.add.text(0, 0, '?', {
@@ -1002,30 +1270,188 @@ export class BattleScene extends Phaser.Scene {
     playStep(0);
   }
 
-  private renderLog(): void {
-    const container = this.add.container(24, 520);
-    this.ui.push(container);
-
-    container.add(this.add.text(0, 0, t('battle.logTitle'), { fontFamily: 'Arial', fontSize: '20px', color: COLORS.text }));
-    this.battle.log.slice(0, 4).forEach((message, index) => {
-      container.add(this.add.text(0, 30 + index * 26, message, {
-        fontFamily: 'Arial',
-        fontSize: '14px',
-        color: index === 0 ? '#f4df91' : COLORS.muted,
-        wordWrap: { width: 330 },
-      }));
-    });
-  }
-
-  private renderActions(): void {
-    if (this.blockingMessage || this.confirmReturnToStorySelect || this.confirmExitFormalGame) {
+  private renderBattleLogButton(): void {
+    if (this.battleLogOpen || this.battle.phase === 'battle-result') {
       return;
     }
 
-    const uiState = this.createUIState();
+    const container = this.add.container(this.battleLayout.hud.logButton.x, this.battleLayout.hud.logButton.y).setDepth(40);
+    this.ui.push(container);
+    container.add(this.button(0, 0, 118, 40, t('battle.logButton'), () => {
+      if (this.blockingMessage
+        || this.itemModalOpen
+        || this.itemFeedback
+        || this.confirmReturnToStorySelect
+        || this.confirmExitFormalGame
+        || this.isPresentationBusy()) {
+        return;
+      }
 
-    if (uiState.inputLocked) {
+      this.battleLogOpen = true;
+      this.render();
+    }, COLORS.button, '16px'));
+  }
+
+  private renderBattleLogModal(): void {
+    if (!this.battleLogOpen) {
       return;
+    }
+
+    const container = this.add.container(640, 360).setDepth(140);
+    this.ui.push(container);
+    const blocker = this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.78).setInteractive();
+    const panel = this.add.rectangle(0, 0, 760, 530, COLORS.panel, 0.99).setStrokeStyle(2, COLORS.accent, 0.9);
+    const title = this.add.text(0, -224, t('battle.logTitle'), {
+      fontFamily: 'Arial',
+      fontSize: '28px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    title.setShadow(0, 0, COLORS.accentText, 8, true, true);
+    container.add([blocker, panel, title]);
+
+    const entries = this.battle.log.length > 0
+      ? this.battle.log.map((message) => ({ message }))
+      : [{ message: t('battle.logEmpty'), empty: true }];
+    this.battleLogGrid = new ScrollableGrid(this, {
+      x: 310,
+      y: 174,
+      width: 660,
+      height: 330,
+      columns: 1,
+      cellWidth: 628,
+      cellHeight: 56,
+      rowGap: 8,
+      wheelStep: 64,
+      scrollbar: {
+        trackColor: COLORS.panelAlt,
+        thumbColor: COLORS.accent,
+        thumbHoverColor: 0xf4df91,
+      },
+    });
+    this.battleLogGrid.container.setDepth(141);
+    this.battleLogGrid.setItems(entries, (scene, entry, index) => {
+      const row = scene.add.container(0, 0);
+      const isNewest = index === 0 && !entry.empty;
+      const background = scene.add.rectangle(0, 0, 628, 56, isNewest ? 0x292719 : COLORS.panelAlt, 0.76)
+        .setStrokeStyle(1, isNewest ? COLORS.accent : COLORS.line, isNewest ? 0.72 : 0.55);
+      const accent = scene.add.rectangle(-307, 0, 3, 38, isNewest ? COLORS.accent : COLORS.line, isNewest ? 0.95 : 0.5);
+      const message = scene.add.text(-294, 0, entry.message, {
+        fontFamily: 'Arial',
+        fontSize: '15px',
+        color: entry.empty ? COLORS.muted : (isNewest ? '#f4df91' : COLORS.text),
+        wordWrap: { width: 574, useAdvancedWrap: true },
+      }).setOrigin(0, 0.5);
+      row.add([background, accent, message]);
+      return row;
+    });
+
+    container.add(this.button(-78, 202, 156, 44, t('battle.logClose'), () => {
+      this.battleLogOpen = false;
+      this.render();
+    }, COLORS.button, '17px'));
+  }
+
+  private renderPlayerCommandBar(): void {
+    const uiState = this.createUIState();
+    const showItems = this.hasMechanic('items');
+    const showSkills = this.hasMechanic('skills');
+    const inputBlocked = Boolean(
+      this.blockingMessage
+      || this.battleLogOpen
+      || this.itemModalOpen
+      || this.itemFeedback
+      || this.confirmReturnToStorySelect
+      || this.confirmExitFormalGame,
+    );
+    const playerSeat = this.battleLayout.seats.player;
+    const hud = this.battleLayout.playerHud;
+    const controls = this.add.container(playerSeat.x, playerSeat.y);
+    this.ui.push(controls);
+    const orbit = new AbilityOrbit(this, {
+      x: hud.portrait.x,
+      y: hud.portrait.y,
+      radiusX: hud.orbitRadiusX,
+      radiusY: hud.orbitRadiusY,
+    });
+    controls.add(orbit.container);
+
+    if (this.hasMechanic('soul_redeem')) {
+      orbit.addContainer('top-left', this.playerPassiveIcon());
+    }
+
+    if (showItems) {
+      const itemUsesRemaining = this.remainingBattleItemUses();
+      const itemUsesExhausted = itemUsesRemaining <= 0;
+      const itemTooltipX = playerSeat.x + hud.portrait.x - hud.orbitRadiusX - 110;
+      const itemTooltipY = playerSeat.y + hud.portrait.y + hud.orbitRadiusY - 90;
+      orbit.addContainer('bottom-left', ItemBar.render(this, {
+        x: 0,
+        y: 0,
+        enabled: uiState.itemButton.enabled && !inputBlocked && !itemUsesExhausted,
+        label: t('battle.itemButtonRemaining', { remaining: itemUsesRemaining, max: MAX_BATTLE_ITEM_USES }),
+        badge: `${itemUsesRemaining}`,
+        colors: {
+          accent: COLORS.accent,
+          accentText: COLORS.accentText,
+          line: COLORS.line,
+          muted: COLORS.muted,
+          panelEnabled: 0x2a2e38,
+          panelDisabled: 0x20232a,
+          text: COLORS.text,
+        },
+        onShowTooltip: () => this.showSkillTooltip(
+          itemTooltipX,
+          itemTooltipY,
+          t('battle.itemButton'),
+          t('battle.itemButtonRemaining', { remaining: itemUsesRemaining, max: MAX_BATTLE_ITEM_USES }),
+        ),
+        onHideTooltip: () => this.hideSkillTooltip(),
+        onOpen: () => {
+          this.playClickSound();
+          this.itemModalOpen = true;
+          this.render();
+        },
+      }));
+    }
+
+    if (showSkills) {
+      const skills = {
+        shift: { ...uiState.skills.shift, enabled: uiState.skills.shift.enabled && !inputBlocked },
+        summon: { ...uiState.skills.summon, enabled: uiState.skills.summon.enabled && !inputBlocked },
+      };
+      controls.add(SkillBar.render(this, {
+        x: hud.portrait.x + hud.orbitRadiusX,
+        y: hud.portrait.y - hud.orbitRadiusY,
+        skills,
+        direction: 'vertical',
+        slotGap: hud.orbitRadiusY * 2,
+        colors: {
+          cooldown: COLORS.dangerText,
+          line: COLORS.line,
+          muted: COLORS.muted,
+          resonance: COLORS.resonance,
+          text: COLORS.text,
+        },
+        tooltipOrigin: { x: playerSeat.x, y: playerSeat.y },
+        onShowTooltip: (x, y, title, body) => this.showSkillTooltip(x, y, title, body),
+        onHideTooltip: () => this.hideSkillTooltip(),
+        onUse: (kind, title, tooltip, tooltipX, tooltipY) => {
+          this.playClickSound();
+          this.runAction(() => {
+            const result = this.battle.execute({
+              type: 'use-skill',
+              skill: kind === 'shift' ? 'resonance-shift' : 'resonance-summon',
+            });
+            if (result?.used) {
+              this.setPlayerPortraitPose('cast', 1050);
+            }
+            if (!result?.used) {
+              this.showSkillTooltip(tooltipX, tooltipY, title, result?.message ?? tooltip);
+            }
+          });
+        },
+      }));
     }
 
     if (uiState.autoAdvanceRound) {
@@ -1033,9 +1459,13 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    this.ui.push(ActionPanel.render(this, {
-      x: 448,
-      y: 648,
+    if (uiState.inputLocked || inputBlocked) {
+      return;
+    }
+
+    controls.add(ActionPanel.render(this, {
+      x: hud.actions.x,
+      y: hud.actions.y,
       buttons: uiState.actionButtons,
       colors: {
         button: COLORS.button,
@@ -1043,6 +1473,7 @@ export class BattleScene extends Phaser.Scene {
       },
       createButton: (x, y, width, height, label, onClick, fill, fontSize, sound) => this.button(x, y, width, height, label, onClick, fill, fontSize, sound),
       onAction: (buttonState) => this.handleActionButton(buttonState),
+      centered: true,
     }));
   }
 
@@ -1051,10 +1482,10 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const container = this.add.container(1128, 116).setDepth(40);
+    const container = this.add.container(this.battleLayout.hud.exitButton.x, this.battleLayout.hud.exitButton.y).setDepth(40);
     this.ui.push(container);
     container.add(this.button(0, 0, 118, 40, t('battle.storyReturn.button'), () => {
-      if (this.blockingMessage || this.itemModalOpen || this.itemFeedback || this.actionAnimationPlaying || this.dealing || this.actionDealing || this.playerRedealing) {
+      if (this.blockingMessage || this.itemModalOpen || this.itemFeedback || this.presentationSequencePlaying || this.actionAnimationPlaying || this.dealing || this.actionDealing || this.playerRedealing) {
         return;
       }
 
@@ -1068,10 +1499,10 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const container = this.add.container(1128, 116).setDepth(40);
+    const container = this.add.container(this.battleLayout.hud.exitButton.x, this.battleLayout.hud.exitButton.y).setDepth(40);
     this.ui.push(container);
     container.add(this.button(0, 0, 118, 40, t('battle.formalExit.button'), () => {
-      if (this.blockingMessage || this.itemModalOpen || this.itemFeedback || this.actionAnimationPlaying || this.dealing || this.actionDealing || this.playerRedealing) {
+      if (this.blockingMessage || this.itemModalOpen || this.itemFeedback || this.presentationSequencePlaying || this.actionAnimationPlaying || this.dealing || this.actionDealing || this.playerRedealing) {
         return;
       }
 
@@ -1105,7 +1536,7 @@ export class BattleScene extends Phaser.Scene {
       color: COLORS.muted,
       align: 'center',
       lineSpacing: 8,
-      wordWrap: { width: 390 },
+      wordWrap: { width: 390, useAdvancedWrap: true },
     }).setOrigin(0.5);
 
     container.add([
@@ -1135,19 +1566,19 @@ export class BattleScene extends Phaser.Scene {
     container.add(blocker);
     container.add(this.add.rectangle(0, 0, 520, 270, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.danger));
 
-    const title = this.add.text(0, -84, t('battle.formalExit.title'), {
+    const title = this.add.text(0, -84, t(this.reliefMode ? 'battle.reliefExit.title' : 'battle.formalExit.title'), {
       fontFamily: 'Arial',
       fontSize: '28px',
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5);
-    const body = this.add.text(0, -22, t('battle.formalExit.body'), {
+    const body = this.add.text(0, -22, t(this.reliefMode ? 'battle.reliefExit.body' : 'battle.formalExit.body'), {
       fontFamily: 'Arial',
       fontSize: '18px',
       color: COLORS.muted,
       align: 'center',
       lineSpacing: 8,
-      wordWrap: { width: 410 },
+      wordWrap: { width: 410, useAdvancedWrap: true },
     }).setOrigin(0.5);
 
     container.add([
@@ -1159,7 +1590,7 @@ export class BattleScene extends Phaser.Scene {
       }),
       this.button(22, 62, 184, 46, t('battle.formalExit.confirm'), () => {
         this.confirmExitFormalGame = false;
-        this.scene.start('StartScene');
+        this.scene.start(this.reliefMode ? 'TableSelectScene' : 'StartScene');
       }, COLORS.danger, '17px'),
     ]);
   }
@@ -1237,7 +1668,8 @@ export class BattleScene extends Phaser.Scene {
       || this.playerRedealing
       || this.actionDealing
       || this.stageBannerPlaying
-      || this.actionAnimationPlaying;
+      || this.actionAnimationPlaying
+      || this.presentationSequencePlaying;
   }
 
   private settleEconomyIfNeeded(): void {
@@ -1246,18 +1678,29 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.battleEconomySettled = true;
-    const economy = settleBattleEconomy(
-      this.battle.battleOutcome,
-      this.battle.player.hp,
-      (this.battle.tableThemeConfig?.rewardMultiplier ?? 1) * this.stakeMultiplier,
-    );
-    if (this.battle.battleOutcome === 'victory' && this.battle.levelConfig?.id) {
-      completeStoryLevelAndUnlockNext(this.battle.levelConfig.id);
+    const levelConfig = this.battle.levelConfig;
+    const economy = levelConfig
+      ? settleStoryBattleEconomy(
+        this.battle.battleOutcome,
+        levelConfig.rewards,
+        !isStoryLevelCompleted(levelConfig.id),
+        levelConfig.id,
+      )
+      : this.reliefMode
+        ? settleReliefBattleEconomy(this.battle.battleOutcome)
+      : settleBattleEconomy(
+        this.battle.battleOutcome,
+        this.battle.player.hp,
+        (this.battle.tableThemeConfig?.entryCost ?? 20) * this.stakeMultiplier,
+        this.battle.tableThemeConfig?.payoutMultiplier ?? 1.5,
+        this.tableThemeId,
+        this.stakeMultiplier,
+      );
+    if (this.battle.battleOutcome === 'victory' && levelConfig) {
+      completeStoryLevelAndUnlockNext(levelConfig.id);
     }
     this.economyResult = economy;
-    this.battle.log.unshift(this.battle.battleOutcome === 'victory'
-      ? t('log.economyVictory', { amount: economy.amount, total: economy.total })
-      : t('log.economyDefeat', { total: economy.total }));
+    this.battle.log.unshift(this.economyLogText(economy));
   }
 
   private renderResultModal(): void {
@@ -1290,7 +1733,7 @@ export class BattleScene extends Phaser.Scene {
     }).setOrigin(0.5);
     title.setShadow(0, 0, titleColor, 12, true, true);
 
-    const goldText = this.add.text(0, storyResultText ? -90 : -24, t('battle.result.goldGained', { amount: this.economyResult.amount }), {
+    const goldText = this.add.text(0, storyResultText ? -90 : -24, this.economyResultText(this.economyResult), {
       fontFamily: 'Arial',
       fontSize: '22px',
       color: '#e8cf73',
@@ -1310,11 +1753,12 @@ export class BattleScene extends Phaser.Scene {
         color: COLORS.text,
         align: 'center',
         lineSpacing: 7,
-        wordWrap: { width: 430 },
+        wordWrap: { width: 430, useAdvancedWrap: true },
       }).setOrigin(0.5));
     }
     const buttonY = storyResultText ? 134 : 68;
-    children.push(this.button(-230, buttonY, 200, 50, t('battle.result.continue'), () => {
+    const continueLabel = this.reliefMode && !isVictory ? t('battle.result.retry') : t('battle.result.continue');
+    children.push(this.button(-230, buttonY, 200, 50, continueLabel, () => {
       this.continueAfterResult();
     }));
     children.push(this.button(30, buttonY, 200, 50, t('battle.result.returnLobby'), () => {
@@ -1323,8 +1767,61 @@ export class BattleScene extends Phaser.Scene {
     container.add(children);
   }
 
+  private economyResultText(economy: EconomyChange): string {
+    if (this.battle.levelConfig) {
+      if (economy.rewardStatus === 'granted') {
+        return t('battle.result.storyFirstClearGold', { amount: economy.amount });
+      }
+      if (economy.rewardStatus === 'already-claimed') {
+        return t('battle.result.storyRewardClaimed');
+      }
+      return t('battle.result.storyNoGold');
+    }
+
+    if (this.reliefMode) {
+      return this.battle.battleOutcome === 'victory'
+        ? t('battle.result.reliefGold', { amount: economy.amount, total: economy.total })
+        : t('battle.result.reliefNoGold');
+    }
+
+    return this.battle.battleOutcome === 'victory'
+      ? t('battle.result.goldGained', { amount: economy.amount })
+      : t('battle.result.noGoldGained');
+  }
+
+  private economyLogText(economy: EconomyChange): string {
+    if (this.battle.levelConfig) {
+      if (economy.rewardStatus === 'granted') {
+        return t('log.storyFirstClearGold', { amount: economy.amount, total: economy.total });
+      }
+      if (economy.rewardStatus === 'already-claimed') {
+        return t('log.storyRewardClaimed', { total: economy.total });
+      }
+      return t('log.storyDefeat', { total: economy.total });
+    }
+
+    if (this.reliefMode) {
+      return this.battle.battleOutcome === 'victory'
+        ? t('log.reliefVictory', { amount: economy.amount, total: economy.total })
+        : t('log.reliefDefeat', { total: economy.total });
+    }
+
+    return this.battle.battleOutcome === 'victory'
+      ? t('log.economyVictory', { amount: economy.amount, total: economy.total })
+      : t('log.economyDefeat', { total: economy.total });
+  }
+
   private continueAfterResult(): void {
     const levelId = this.battle.levelConfig?.id;
+    if (this.reliefMode && this.battle.battleOutcome === 'defeat' && this.tableThemeId) {
+      this.scene.start('BattleScene', {
+        tableThemeId: this.tableThemeId,
+        stakeMultiplier: 1,
+        reliefMode: true,
+      });
+      return;
+    }
+
     if (!levelId && this.tableThemeId) {
       this.scene.start('TableSelectScene');
       return;
@@ -1816,7 +2313,7 @@ export class BattleScene extends Phaser.Scene {
         color: COLORS.text,
         align: 'center',
         lineSpacing: 8,
-        wordWrap: { width: 340 },
+        wordWrap: { width: 340, useAdvancedWrap: true },
       }).setOrigin(0.5),
       this.button(-90, 72, 180, 48, t('battle.itemFeedback.confirm'), () => {
         this.itemFeedback = undefined;
@@ -1898,6 +2395,8 @@ export class BattleScene extends Phaser.Scene {
         fontFamily: 'Arial',
         fontSize: '22px',
         color: COLORS.muted,
+        align: 'center',
+        wordWrap: { width: 460, useAdvancedWrap: true },
       }).setOrigin(0.5));
     } else {
       ownedItems.forEach((item, index) => {
@@ -1932,12 +2431,14 @@ export class BattleScene extends Phaser.Scene {
       fontFamily: 'Arial',
       fontSize: '13px',
       color: COLORS.muted,
-      wordWrap: { width: 310 },
+      wordWrap: { width: 310, useAdvancedWrap: true },
     }));
     if (canUse) {
       row.add(this.button(414, 10, 112, 46, t('battle.itemModal.use'), () => this.useItemFromModal(item), COLORS.button, '18px'));
     } else {
-      const unavailableHint = this.remainingBattleItemUses() <= 0
+      const unavailableHint = this.itemUseLimitReached(item)
+        ? t('battle.itemModal.itemLimitReached', { max: item.maxUsesPerBattle ?? 0 })
+        : this.remainingBattleItemUses() <= 0
         ? t('battle.itemModal.limitReached', { max: MAX_BATTLE_ITEM_USES })
         : t(this.itemTimingHintKey(item));
       row.add(this.add.text(414, 33, unavailableHint, {
@@ -1945,7 +2446,7 @@ export class BattleScene extends Phaser.Scene {
         fontSize: '13px',
         color: COLORS.muted,
         align: 'center',
-        wordWrap: { width: 112 },
+        wordWrap: { width: 112, useAdvancedWrap: true },
       }).setOrigin(0.5));
     }
     return row;
@@ -1960,6 +2461,11 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private useItemFromModal(item: ItemDefinition): void {
+    if (this.itemUseLimitReached(item)) {
+      this.showSkillTooltip(640, 592, t(item.nameKey), t('battle.itemModal.itemLimitReached', { max: item.maxUsesPerBattle ?? 0 }));
+      return;
+    }
+
     if (this.remainingBattleItemUses() <= 0) {
       this.showSkillTooltip(640, 592, t('battle.itemModal.title'), t('battle.itemModal.limitReached', { max: MAX_BATTLE_ITEM_USES }));
       return;
@@ -1968,8 +2474,10 @@ export class BattleScene extends Phaser.Scene {
     const hpBefore = this.hpSnapshot();
     const result = useBattleItem(item.id, this.battle);
     if (result.used) {
+      this.setPlayerPortraitPose('cast', 1050);
       this.consumeBattleItem(item.id);
       this.battleItemUses += 1;
+      this.battleItemUseCounts[item.id] = (this.battleItemUseCounts[item.id] ?? 0) + 1;
       this.itemFeedback = result.feedback;
     }
 
@@ -1997,6 +2505,7 @@ export class BattleScene extends Phaser.Scene {
     this.playHealSoundIfHpIncreased(hpBefore);
     this.itemModalOpen = false;
     const events = this.battle.consumePresentationEvents();
+    this.presentationSequencePlaying = true;
     this.playImmediatePresentationEvents(events);
     const shouldDelayResultModal = this.shouldDelayOutcomeForPresentation(events);
     this.resultModalReady = !shouldDelayResultModal;
@@ -2005,17 +2514,20 @@ export class BattleScene extends Phaser.Scene {
     }
     this.playPostActionAnimations(events, hpBefore, false, () => {
       if (this.hasPendingSoulRedeem()) {
+        this.presentationSequencePlaying = false;
         this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
         return;
       }
 
       if (!shouldDelayResultModal) {
+        this.presentationSequencePlaying = false;
         this.render();
         return;
       }
 
       const showResult = () => {
         this.resultModalReady = true;
+        this.presentationSequencePlaying = false;
         this.render();
       };
 
@@ -2036,6 +2548,7 @@ export class BattleScene extends Phaser.Scene {
   private playBeerHealThenReveal(healed: number, hpBefore: { player: number; enemies: number[] }): void {
     this.itemModalOpen = false;
     this.itemFeedback = undefined;
+    this.presentationSequencePlaying = true;
     this.actionAnimationPlaying = true;
     this.visualHpOverride = hpBefore;
     this.render();
@@ -2057,12 +2570,14 @@ export class BattleScene extends Phaser.Scene {
       this.time.delayedCall(620, () => this.playPostActionAnimations(events, hpBefore, true, () => {
         if (this.hasPendingSoulRedeem()) {
           this.actionAnimationPlaying = false;
+          this.presentationSequencePlaying = false;
           this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
           return;
         }
 
         if (!shouldDelayResultModal) {
           this.actionAnimationPlaying = false;
+          this.presentationSequencePlaying = false;
           this.render();
           return;
         }
@@ -2070,6 +2585,7 @@ export class BattleScene extends Phaser.Scene {
         const showResult = () => {
           this.resultModalReady = true;
           this.actionAnimationPlaying = false;
+          this.presentationSequencePlaying = false;
           this.render();
         };
 
@@ -2084,10 +2600,10 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playFateBeerDrinkEffect(onComplete: () => void): void {
-    const startX = SEATS.player.x + 172;
-    const startY = SEATS.player.y - 16;
-    const drinkX = SEATS.player.x + 74;
-    const drinkY = SEATS.player.y - 62;
+    const startX = this.battleLayout.seats.player.x + 172;
+    const startY = this.battleLayout.seats.player.y - 16;
+    const drinkX = this.battleLayout.seats.player.x + 74;
+    const drinkY = this.battleLayout.seats.player.y - 62;
     const beer = this.add.container(startX, startY).setDepth(62).setAlpha(0).setScale(0.72).setRotation(-0.32);
     const handle = this.add.circle(23, 5, 0xe8b24a, 0.2).setStrokeStyle(4, 0xf7d36a, 0.95);
     const handleCutout = this.add.circle(23, 5, 7, COLORS.panel, 1);
@@ -2136,8 +2652,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playFateBeerHealEffect(amount: number): void {
-    const x = SEATS.player.x;
-    const y = SEATS.player.y;
+    const x = this.battleLayout.seats.player.x;
+    const y = this.battleLayout.seats.player.y;
     const glow = this.add.circle(x, y, 58, 0x78d18a, 0.2).setStrokeStyle(4, 0x9dffae, 0.9).setDepth(58);
     const innerGlow = this.add.circle(x, y, 26, 0xb9ffc2, 0.32).setDepth(59);
     const halo = this.add.circle(x, y, 18, 0x78d18a, 0.1).setStrokeStyle(3, 0xd0ffd4, 0.95).setDepth(60);
@@ -2212,8 +2728,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playHolyShieldActivation(charges: number): void {
-    const x = SEATS.player.x;
-    const y = SEATS.player.y;
+    const x = this.battleLayout.seats.player.x;
+    const y = this.battleLayout.seats.player.y;
     const halo = this.add.circle(x, y, 44, 0x62c4ff, 0.18).setStrokeStyle(4, 0xbcefff, 0.92).setDepth(62);
     const ring = this.add.circle(x, y, 22, 0x4f9dff, 0.14).setStrokeStyle(3, 0x72c7ff, 0.92).setDepth(63);
     const label = this.add.text(x, y - 126, t('battle.holyShield.status', { charges }), {
@@ -2249,8 +2765,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playHolyShieldBlock(blockedDamage: number): void {
-    const x = SEATS.player.x;
-    const y = SEATS.player.y;
+    const x = this.battleLayout.seats.player.x;
+    const y = this.battleLayout.seats.player.y;
     const dome = this.add.circle(x, y, 42, 0x4f9dff, 0.2).setStrokeStyle(5, 0xbcefff, 0.96).setDepth(62);
     const inner = this.add.circle(x, y, 20, 0xa7e7ff, 0.28).setDepth(63);
     const label = this.add.text(x, y - 118, t('battle.holyShield.blocked'), {
@@ -2294,85 +2810,92 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private canUseItemNow(item: ItemDefinition): boolean {
-    return this.remainingBattleItemUses() > 0 && canUseBattleItemFromState(item.id, this.battle.getState());
+    return !this.itemUseLimitReached(item)
+      && this.remainingBattleItemUses() > 0
+      && canUseBattleItemFromState(item.id, this.battle.getState());
   }
 
-  private playerPassiveIcon(seat: { width: number; height: number }): Phaser.GameObjects.Container {
+  private itemUseLimitReached(item: ItemDefinition): boolean {
+    return item.maxUsesPerBattle !== undefined
+      && (this.battleItemUseCounts[item.id] ?? 0) >= item.maxUsesPerBattle;
+  }
+
+  private playerStatusStates(): StatusIconState[] {
+    const statuses: StatusIconState[] = [];
+    if (this.battle.player.shieldCharges > 0) {
+      statuses.push({
+        id: 'holy-shield',
+        icon: '◇',
+        color: 0x68c9ff,
+        textColor: '#bfeeff',
+        title: t('item.holyShield.name'),
+        description: t('item.holyShield.desc'),
+        label: t('battle.status.holyShieldTag', { amount: this.battle.player.shieldCharges }),
+        badge: `${this.battle.player.shieldCharges}`,
+      });
+    }
+
+    if (this.battle.player.incomingDamageBonus > 0) {
+      statuses.push({
+        id: 'incoming-damage',
+        icon: '!',
+        color: 0xe35661,
+        textColor: '#ffb0b7',
+        title: t('battle.status.incomingDamage'),
+        description: t('battle.phase.playerRiskActive'),
+        label: t('battle.status.incomingDamageTag', { amount: this.battle.player.incomingDamageBonus }),
+        badge: `+${this.battle.player.incomingDamageBonus}`,
+      });
+    }
+
+    return statuses;
+  }
+
+  private playerPassiveIcon(): Phaser.GameObjects.Container {
     const active = !this.battle.player.soulRedeemUsed;
-    const x = -seat.width / 2 - 42;
-    const y = -44;
-    const icon = this.add.container(x, y);
-    const color = 0xffd86b;
-    const textColor = active ? COLORS.resonance : COLORS.muted;
-    const rect = this.add.rectangle(0, 0, 54, 44, active ? 0x332c20 : 0x20232a).setStrokeStyle(2, active ? color : COLORS.line);
-    const glyph = this.add.text(0, -5, '✚', {
-      fontFamily: 'Arial',
-      fontSize: '22px',
-      color: textColor,
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    const label = this.add.text(0, 14, t('common.passive'), {
-      fontFamily: 'Arial',
-      fontSize: '10px',
-      color: active ? COLORS.text : COLORS.muted,
-    }).setOrigin(0.5);
-
-    if (active) {
-      glyph.setShadow(0, 0, COLORS.resonance, 10, true, true);
-    }
-
-    rect.setInteractive({ useHandCursor: false });
-    rect.on('pointerover', () => {
-      rect.setFillStyle(0x343947);
-      this.showSkillTooltip(SEATS.player.x + x - 190, SEATS.player.y + y - 94, t('skill.soulRedeem.name'), t('skill.soulRedeem.tooltip'));
-    });
-    rect.on('pointerout', () => {
-      rect.setFillStyle(active ? 0x332c20 : 0x20232a);
-      this.hideSkillTooltip();
-    });
-
-    icon.add([rect, glyph, label]);
-    return icon;
+    const seat = this.battleLayout.seats.player;
+    const hud = this.battleLayout.playerHud;
+    return new AbilitySlot(this, {
+      icon: '✚',
+      color: 0xffd86b,
+      textColor: COLORS.resonance,
+      enabled: active,
+      badge: active ? undefined : '×',
+      onShowTooltip: () => this.showSkillTooltip(
+        seat.x + hud.portrait.x - hud.orbitRadiusX - 110,
+        seat.y + hud.portrait.y - hud.orbitRadiusY - 90,
+        t('skill.soulRedeem.name'),
+        t('skill.soulRedeem.tooltip'),
+      ),
+      onHideTooltip: () => this.hideSkillTooltip(),
+    }).container;
   }
 
-  private enemyPassiveIcon(enemy: EnemyState, index: number, seat: { width: number; height: number }): Phaser.GameObjects.Container {
+  private enemyPassiveIcon(
+    enemy: EnemyState,
+    index: number,
+    layout: BattleLayoutConfig['enemyHud']['left'],
+  ): Phaser.GameObjects.Container {
     const passive = this.enemyPassiveInfo(enemy);
-    const x = index === 1 ? -seat.width / 2 - 34 : -seat.width / 2 + 34;
-    const y = index === 1 ? -seat.height / 2 + 36 : -seat.height / 2 - 32;
     const active = this.enemyPassiveActive(enemy);
-    const icon = this.add.container(x, y);
-    const rect = this.add.rectangle(0, 0, 54, 44, active ? 0x33262b : 0x20232a).setStrokeStyle(2, active ? passive.color : COLORS.line);
-    const glyph = this.add.text(0, -5, passive.icon, {
-      fontFamily: 'Arial',
-      fontSize: '22px',
-      color: active ? passive.textColor : COLORS.muted,
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    const label = this.add.text(0, 14, t('common.passive'), {
-      fontFamily: 'Arial',
-      fontSize: '10px',
-      color: active ? COLORS.text : COLORS.muted,
-    }).setOrigin(0.5);
-
-    if (active) {
-      glyph.setShadow(0, 0, passive.textColor, 10, true, true);
-    }
-
-    rect.setInteractive({ useHandCursor: false });
-    rect.on('pointerover', () => {
-      rect.setFillStyle(0x343947);
-      const worldSeat = this.enemySeatForIndex(index);
-      const worldX = worldSeat.x + x + (index === 1 ? -170 : 150);
-      const worldY = worldSeat.y + y + (index === 1 ? 104 : -62);
-      this.showSkillTooltip(worldX, worldY, passive.name, passive.description);
-    });
-    rect.on('pointerout', () => {
-      rect.setFillStyle(active ? 0x33262b : 0x20232a);
-      this.hideSkillTooltip();
-    });
-
-    icon.add([rect, glyph, label]);
-    return icon;
+    const worldSeat = this.enemySeatForIndex(index);
+    const left = layout.passivePosition.endsWith('left');
+    const top = layout.passivePosition.startsWith('top');
+    const slotX = layout.portrait.x + (left ? -layout.orbitRadiusX : layout.orbitRadiusX);
+    const slotY = layout.portrait.y + (top ? -layout.orbitRadiusY : layout.orbitRadiusY);
+    return new AbilitySlot(this, {
+      icon: passive.icon,
+      color: passive.color,
+      textColor: passive.textColor,
+      enabled: active,
+      onShowTooltip: () => this.showSkillTooltip(
+        worldSeat.x + slotX + (left ? -118 : 118),
+        worldSeat.y + slotY + (top ? -74 : 74),
+        passive.name,
+        passive.description,
+      ),
+      onHideTooltip: () => this.hideSkillTooltip(),
+    }).container;
   }
 
   private enemyHasPassiveInfo(enemy: EnemyState): boolean {
@@ -2396,7 +2919,7 @@ export class BattleScene extends Phaser.Scene {
       return {
         name: t('skill.goblinInstinct.name'),
         icon: '!',
-        description: t('skill.goblinInstinct.tooltip'),
+        description: t('skill.goblinInstinct.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
         color: 0x65d46e,
         textColor: '#78d18a',
       };
@@ -2406,7 +2929,7 @@ export class BattleScene extends Phaser.Scene {
       return {
         name: t('skill.gamblerBlessing.name'),
         icon: '♢',
-        description: t('skill.gamblerBlessing.tooltip'),
+        description: t('skill.gamblerBlessing.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
         color: 0xf25f9a,
         textColor: '#f25f9a',
       };
@@ -2426,7 +2949,7 @@ export class BattleScene extends Phaser.Scene {
       return {
         name: t('skill.warHorn.name'),
         icon: 'H',
-        description: t('skill.warHorn.tooltip'),
+        description: t('skill.warHorn.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
         color: 0xff8a3d,
         textColor: '#ffad6b',
       };
@@ -2436,7 +2959,7 @@ export class BattleScene extends Phaser.Scene {
       return {
         name: t('skill.runeBlessing.name'),
         icon: 'R',
-        description: t('skill.runeBlessing.tooltip'),
+        description: t('skill.runeBlessing.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
         color: 0x79c9ff,
         textColor: '#9ed8ff',
       };
@@ -2446,7 +2969,7 @@ export class BattleScene extends Phaser.Scene {
       return {
         name: t('skill.einherjarSummon.name'),
         icon: 'V',
-        description: t('skill.einherjarSummon.tooltip'),
+        description: t('skill.einherjarSummon.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
         color: 0xf7d889,
         textColor: '#ffe39a',
       };
@@ -2466,7 +2989,7 @@ export class BattleScene extends Phaser.Scene {
       return {
         name: t('skill.redSilkToast.name'),
         icon: '绸',
-        description: t('skill.redSilkToast.tooltip'),
+        description: t('skill.redSilkToast.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
         color: 0xf29bc2,
         textColor: '#ffb8d6',
       };
@@ -2496,7 +3019,7 @@ export class BattleScene extends Phaser.Scene {
       return {
         name: t('skill.smokeSubstitution.name'),
         icon: '影',
-        description: t('skill.smokeSubstitution.tooltip'),
+        description: t('skill.smokeSubstitution.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
         color: 0x8e78bb,
         textColor: '#d8cbff',
       };
@@ -2515,7 +3038,7 @@ export class BattleScene extends Phaser.Scene {
     return {
       name: t('skill.werewolfLifesteal.name'),
       icon: 'V',
-      description: t('skill.werewolfLifesteal.tooltip'),
+      description: t('skill.werewolfLifesteal.tooltip', { threshold: this.battle.enemyPassiveHpThreshold(enemy.id) }),
       color: 0x73c7ff,
       textColor: '#73c7ff',
     };
@@ -2523,11 +3046,11 @@ export class BattleScene extends Phaser.Scene {
 
   private enemyPassiveActive(enemy: EnemyState): boolean {
     if (enemy.id === 'goblin') {
-      return enemy.hp < 3 && !enemy.defeated;
+      return enemy.hp < this.battle.enemyPassiveHpThreshold(enemy.id) && !enemy.defeated;
     }
 
     if (enemy.id === 'gambler') {
-      return enemy.hp < 3 && !enemy.defeated;
+      return enemy.hp < this.battle.enemyPassiveHpThreshold(enemy.id) && !enemy.defeated;
     }
 
     if (enemy.id === 'keeper') {
@@ -2535,15 +3058,15 @@ export class BattleScene extends Phaser.Scene {
     }
 
     if (enemy.id === 'viking_warrior') {
-      return enemy.hp < 3 && !enemy.passiveTriggered && !enemy.defeated;
+      return enemy.hp < this.battle.enemyPassiveHpThreshold(enemy.id) && !enemy.passiveTriggered && !enemy.defeated;
     }
 
     if (enemy.id === 'rune_shaman') {
-      return enemy.hp < 3 && !enemy.defeated;
+      return enemy.hp < this.battle.enemyPassiveHpThreshold(enemy.id) && !enemy.defeated;
     }
 
     if (enemy.id === 'valkyrie') {
-      return enemy.hp < 4 && enemy.summonCount < 2 && !enemy.defeated;
+      return enemy.hp < this.battle.enemyPassiveHpThreshold(enemy.id) && enemy.summonCount < 2 && !enemy.defeated;
     }
 
     if (enemy.id === 'swordsman') {
@@ -2553,7 +3076,11 @@ export class BattleScene extends Phaser.Scene {
     }
 
     if (enemy.id === 'songstress') {
-      return this.battle.enemies.some((item) => item !== enemy && !item.defeated && item.hp < 3)
+      return this.battle.enemies.some((item) => (
+        item !== enemy
+        && !item.defeated
+        && item.hp < this.battle.enemyPassiveHpThreshold(enemy.id)
+      ))
         && !enemy.passiveTriggeredThisRound
         && !enemy.defeated;
     }
@@ -2574,21 +3101,23 @@ export class BattleScene extends Phaser.Scene {
       return this.battle.enemies.some((candidate) => candidate !== enemy && !candidate.defeated);
     }
 
-    return enemy.hp < 3 && !enemy.defeated;
+    return enemy.hp < this.battle.enemyPassiveHpThreshold(enemy.id) && !enemy.defeated;
   }
 
   private showSkillTooltip(x: number, y: number, title: string, body: string): void {
     this.hideSkillTooltip();
-    const tooltip = this.add.container(x, y).setDepth(50).setName('skill-tooltip');
     const width = 320;
     const bodyText = this.add.text(-width / 2 + 16, -18, body, {
       fontFamily: 'Arial',
       fontSize: '13px',
       color: COLORS.text,
       lineSpacing: 4,
-      wordWrap: { width: width - 32 },
+      wordWrap: { width: width - 32, useAdvancedWrap: true },
     });
     const height = Math.max(104, bodyText.height + 58);
+    const safeX = Phaser.Math.Clamp(x, width / 2 + 12, 1280 - width / 2 - 12);
+    const safeY = Phaser.Math.Clamp(y, height / 2 + 12, 720 - height / 2 - 12);
+    const tooltip = this.add.container(safeX, safeY).setDepth(50).setName('skill-tooltip');
     tooltip.add(this.add.rectangle(0, 0, width, height, 0x101114, 0.96).setStrokeStyle(2, 0xffd86b));
     tooltip.add(this.add.text(-width / 2 + 16, -height / 2 + 14, title, {
       fontFamily: 'Arial',
@@ -2604,25 +3133,13 @@ export class BattleScene extends Phaser.Scene {
     this.children.getByName('skill-tooltip')?.destroy();
   }
 
-  private hpText(x: number, y: number, label: string, muted = false): Phaser.GameObjects.Text {
-    const text = this.add.text(x, y, label, {
-      fontFamily: 'Arial',
-      fontSize: '21px',
-      color: muted ? COLORS.muted : COLORS.dangerText,
-    });
-    if (!muted) {
-      text.setShadow(0, 0, COLORS.dangerText, 10, true, true);
-    }
-
-    return text;
-  }
-
-  private renderScoreBadge(container: Phaser.GameObjects.Container, x: number, y: number, point: number): void {
+  private renderScoreBadge(container: Phaser.GameObjects.Container, x: number, y: number, point: number, compact = false): void {
     container.add(createScoreBadge(this, {
       x,
       y,
       point,
       label: t('common.pointUnit'),
+      variant: compact ? 'compact' : 'orb',
     }));
   }
 
@@ -2638,14 +3155,20 @@ export class BattleScene extends Phaser.Scene {
     return t('score.noResonance');
   }
 
-  private renderEnemyCardRow(container: Phaser.GameObjects.Container, enemy: EnemyState, enemyIndex: number, x: number, y: number): void {
+  private renderEnemyCardRow(
+    container: Phaser.GameObjects.Container,
+    enemy: EnemyState,
+    enemyIndex: number,
+    x: number,
+    y: number,
+  ): HandView<{ card: Card; faceUp: boolean }> | undefined {
     if (this.enemyDisplayDefeated(enemyIndex) && enemy.hand.length === 0) {
-      container.add(this.add.text(x, y - 12, t('battle.notParticipating'), {
+      container.add(this.add.text(x, y, t('battle.notParticipating'), {
         fontFamily: 'Arial',
-        fontSize: '18px',
+        fontSize: '14px',
         color: COLORS.muted,
-      }));
-      return;
+      }).setOrigin(0.5));
+      return undefined;
     }
 
     const visibleCards = this.dealing || this.actionDealing
@@ -2657,13 +3180,28 @@ export class BattleScene extends Phaser.Scene {
       faceUp: showAll || index === 0,
     }));
 
-    this.renderCardRow(container, x, y, cards, {
-      width: 70,
-      height: 96,
-      spacing: 54,
-      resonant: this.enemyHasResonance(enemy),
-      muted: this.enemyDisplayDefeated(enemyIndex),
+    const width = this.battleLayout.cards.width;
+    const resonant = this.enemyHasResonance(enemy);
+    const muted = this.enemyDisplayDefeated(enemyIndex);
+    const hand = new HandView(this, {
+      x,
+      y,
+      items: cards,
+      slotCount: enemy.hand.length,
+      itemWidth: width,
+      spacing: this.battleLayout.cards.spacing,
+      createItem: ({ card, faceUp }, _index, cardX) => createCardView(this, {
+        x: cardX,
+        y: 0,
+        card: faceUp ? card : undefined,
+        hidden: !faceUp,
+        width,
+        resonant,
+        muted,
+      }),
     });
+    container.add(hand.container);
+    return hand;
   }
 
   private showEnemySpeech(enemyId: string, text: string): void {
@@ -2678,13 +3216,12 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private renderEnemySpeech(container: Phaser.GameObjects.Container, enemy: EnemyState, seat: { width: number; height: number }): void {
+  private renderEnemySpeech(container: Phaser.GameObjects.Container, enemy: EnemyState, anchor: { x: number; y: number }): void {
     if (this.enemySpeech?.enemyId !== enemy.id) {
       return;
     }
 
-    const x = -seat.width / 2 + 112;
-    const y = -seat.height / 2 + 30;
+    const { x, y } = anchor;
     const text = this.add.text(x, y, this.enemySpeech.text, {
       fontFamily: 'Arial',
       fontSize: '16px',
@@ -2699,19 +3236,32 @@ export class BattleScene extends Phaser.Scene {
     container.add(bubble);
   }
 
-  private renderPlayerCardRow(container: Phaser.GameObjects.Container, x: number, y: number): void {
+  private renderPlayerCardRow(container: Phaser.GameObjects.Container, x: number, y: number): HandView<{ card: Card; faceUp: boolean }> {
     const visibleCards = this.dealing || this.playerRedealing || this.actionDealing
       ? this.battle.player.hand.slice(0, this.dealtPlayerCards)
       : this.battle.player.hand;
     const faceUp = this.playerRedealing || (!this.dealing && this.battle.phase !== 'choice' && (!this.battle.player.fateMode || this.battle.roundRevealed));
     const cards = visibleCards.map((card) => ({ card, faceUp }));
-
-    this.renderCardRow(container, x, y, cards, {
-      width: 70,
-      height: 96,
-      spacing: 54,
-      resonant: !this.playerRedealing && this.playerHasResonance(),
+    const width = this.battleLayout.cards.width;
+    const resonant = !this.playerRedealing && this.playerHasResonance();
+    const hand = new HandView(this, {
+      x,
+      y,
+      items: cards,
+      slotCount: this.battle.player.hand.length,
+      itemWidth: width,
+      spacing: this.battleLayout.cards.spacing,
+      createItem: ({ card, faceUp }, _index, cardX) => createCardView(this, {
+        x: cardX,
+        y: 0,
+        card: faceUp ? card : undefined,
+        hidden: !faceUp,
+        width,
+        resonant,
+      }),
     });
+    container.add(hand.container);
+    return hand;
   }
 
   private renderCardRow(
@@ -2857,6 +3407,7 @@ export class BattleScene extends Phaser.Scene {
     action();
     this.playRoundResonanceEchoOnce();
     const events = this.battle.consumePresentationEvents();
+    this.presentationSequencePlaying = true;
     this.playImmediatePresentationEvents(events);
     const shouldDelayResultModal = this.shouldDelayOutcomeForPresentation(events);
     const shouldDealNewRound = this.battle.round > roundBefore && this.battle.phase === 'choice' && !this.battle.battleOutcome;
@@ -2872,12 +3423,14 @@ export class BattleScene extends Phaser.Scene {
         this.playPostActionAnimations(events, hpBefore, skipRevealBanner, () => {
           this.playPassiveEffectEvents(this.postCombatPresentationEvents(events), () => {
           if (this.hasPendingSoulRedeem()) {
+            this.presentationSequencePlaying = false;
             this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
             return;
           }
 
           const continueAfterRevealDialogue = () => {
             if (!shouldDelayResultModal) {
+              this.presentationSequencePlaying = false;
               if (shouldDealNewRound) {
                 this.startDealPresentation();
               } else if (this.showPlayerTurnLessonIfNeeded()) {
@@ -2890,6 +3443,7 @@ export class BattleScene extends Phaser.Scene {
 
             const showResult = () => {
               this.resultModalReady = true;
+              this.presentationSequencePlaying = false;
               if (shouldDealNewRound) {
                 this.startDealPresentation();
               } else if (this.showPlayerTurnLessonIfNeeded()) {
@@ -2938,10 +3492,16 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
+    // Logic resolves synchronously, so preserve the pre-combat state throughout
+    // reveal and passive presentation. Each impact advances this visual snapshot.
+    this.visualHpOverride = {
+      player: hpBefore.player,
+      enemies: [...hpBefore.enemies],
+    };
+    this.visualEnemyDefeated = hpBefore.enemies.map((hp) => hp <= 0);
+
     const playWithDelayedHp = () => {
       this.actionAnimationPlaying = true;
-      this.visualHpOverride = hpBefore;
-      this.visualEnemyDefeated = hpBefore.enemies.map((hp) => hp <= 0);
       this.render();
       this.playDamageAnimations(combatEvents, () => {
         this.visualHpOverride = undefined;
@@ -3062,7 +3622,7 @@ export class BattleScene extends Phaser.Scene {
       x: position.x,
       y: position.y,
       card: event.previousCard,
-      width: 70,
+      width: this.battleLayout.cards.width,
     }).setDepth(32);
     const talisman = this.add.text(position.x, position.y, '符', {
       fontFamily: 'Arial',
@@ -3090,7 +3650,7 @@ export class BattleScene extends Phaser.Scene {
             x: position.x,
             y: position.y,
             card: event.replacementCard,
-            width: 70,
+            width: this.battleLayout.cards.width,
           }).setDepth(32).setAlpha(0);
           this.sound.play('cardPlace', { volume: 0.46 });
           this.tweens.add({
@@ -3145,6 +3705,7 @@ export class BattleScene extends Phaser.Scene {
       || this.actionDealing
       || this.stageBannerPlaying
       || this.actionAnimationPlaying
+      || this.presentationSequencePlaying
       || this.autoAdvancingRound;
   }
 
@@ -3351,8 +3912,7 @@ export class BattleScene extends Phaser.Scene {
       && (event.resonance === 'resonance' || event.resonance === 'strong')
       && getProgress().equippedAttackEffect === 'sakura_slash'
     ) {
-      const comboDuration = 840 + this.sakuraSlashCount(event.amount) * 270;
-      return isLast ? Math.max(1520, comboDuration + 320) : Math.max(820, comboDuration);
+      return isLast ? 1680 : 1380;
     }
 
     return isLast ? 1520 : 820;
@@ -3392,57 +3952,63 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playPassiveEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
+    this.setEnemyPortraitPose(event.sourceEnemyIndex, 'cast');
+    const finish = () => {
+      this.setEnemyPortraitPose(event.sourceEnemyIndex, 'idle');
+      onComplete();
+    };
+
     if (event.passiveId === 'goblin_instinct') {
-      this.playGoblinInstinctEffect(event, onComplete);
+      this.playGoblinInstinctEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'gambler_blessing') {
-      this.playGamblerBlessingEffect(event, onComplete);
+      this.playGamblerBlessingEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'werewolf_lifesteal') {
-      this.playWerewolfLifestealEffect(event, onComplete);
+      this.playWerewolfLifestealEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'war_horn') {
-      this.playWarHornEffect(event, onComplete);
+      this.playWarHornEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'rune_blessing') {
-      this.playRuneBlessingEffect(event, onComplete);
+      this.playRuneBlessingEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'red_silk_toast') {
-      this.playRedSilkToastEffect(event, onComplete);
+      this.playRedSilkToastEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'heavenly_insight') {
-      this.playHeavenlyInsightEffect(event, onComplete);
+      this.playHeavenlyInsightEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'iaijutsu_charge') {
-      this.playIaijutsuChargeEffect(event, onComplete);
+      this.playIaijutsuChargeEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'smoke_substitution') {
-      this.playSmokeScreenArmEffect(event, onComplete);
+      this.playSmokeScreenArmEffect(event, finish);
       return;
     }
 
     if (event.passiveId === 'hanami_dance') {
-      this.playHanamiDanceEffect(event, onComplete);
+      this.playHanamiDanceEffect(event, finish);
       return;
     }
 
-    this.playEinherjarSummonEffect(event, onComplete);
+    this.playEinherjarSummonEffect(event, finish);
   }
 
   private playIaijutsuChargeEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
@@ -3516,10 +4082,10 @@ export class BattleScene extends Phaser.Scene {
 
     if (healing && targetEnemy) {
       const hpBefore = Math.max(0, targetEnemy.hp - amount);
-      this.enemyHpTexts.get(targetEnemy.id)?.setText(t('common.hp', { hp: hpBefore, maxHp: targetEnemy.maxHp }));
+      this.enemyHeartMeters.get(targetEnemy.id)?.setHp(hpBefore);
       this.time.delayedCall(620, () => {
         this.sound.play('healSound', { volume: 0.48 });
-        this.enemyHpTexts.get(targetEnemy.id)?.setText(t('common.hp', { hp: targetEnemy.hp, maxHp: targetEnemy.maxHp }));
+        this.enemyHeartMeters.get(targetEnemy.id)?.setHp(targetEnemy.hp, true);
         this.flashEnemySeat(targetIndex, 0x78d18a, t('battle.passive.hpGain', { amount }), '#89f09f');
         this.playShockwave(target.x, target.y, 0x78d18a, 150);
       });
@@ -3657,7 +4223,7 @@ export class BattleScene extends Phaser.Scene {
 
   private playGoblinInstinctEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
     const source = this.enemySeatCenter(event.sourceEnemyIndex);
-    const player = new Phaser.Math.Vector2(SEATS.player.x, SEATS.player.y);
+    const player = new Phaser.Math.Vector2(this.battleLayout.seats.player.x, this.battleLayout.seats.player.y);
     this.sound.play('attackWind', { volume: 0.28 });
     this.flashEnemySeat(event.sourceEnemyIndex, 0x65d46e, t('battle.passive.goblinInstinct'), '#78d18a');
     this.playShockwave(source.x, source.y, 0x65d46e, 140);
@@ -3675,7 +4241,7 @@ export class BattleScene extends Phaser.Scene {
 
   private playWerewolfLifestealEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
     const source = this.enemySeatCenter(event.sourceEnemyIndex);
-    const player = new Phaser.Math.Vector2(SEATS.player.x, SEATS.player.y);
+    const player = new Phaser.Math.Vector2(this.battleLayout.seats.player.x, this.battleLayout.seats.player.y);
     this.sound.play('healSound', { volume: 0.46 });
     this.flashEnemySeat(event.sourceEnemyIndex, 0x73c7ff, t('battle.passive.werewolfLifesteal'), '#88d4ff');
     this.playBloodReturn(player, source, 0xef6f6c);
@@ -3711,6 +4277,7 @@ export class BattleScene extends Phaser.Scene {
 
   private playEinherjarSummonEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
     const source = this.enemySeatCenter(event.sourceEnemyIndex);
+    event.targetEnemyIndexes.forEach((index) => this.setEnemyPortraitPose(index, 'cast'));
     this.sound.play('resonanceEcho', { volume: 0.5 });
     this.flashEnemySeat(event.sourceEnemyIndex, 0xf7d889, t('battle.passive.einherjarSummon'), '#ffe39a');
     this.playShockwave(source.x, source.y, 0xf7d889, 220);
@@ -3721,7 +4288,10 @@ export class BattleScene extends Phaser.Scene {
         this.flashEnemySeat(index, 0xf7d889, t('battle.passive.einherjarArrive'), '#ffe39a');
       });
     });
-    this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, onComplete);
+    this.time.delayedCall(PASSIVE_EFFECT_TIMING.standardTotal, () => {
+      event.targetEnemyIndexes.forEach((index) => this.setEnemyPortraitPose(index, 'idle'));
+      onComplete();
+    });
   }
 
   private playRedSilkToastEffect(event: Extract<BattlePresentationEvent, { type: 'passive-effect' }>, onComplete: () => void): void {
@@ -3736,7 +4306,7 @@ export class BattleScene extends Phaser.Scene {
     const targetEnemy = this.battle.enemies[targetIndex];
     const hpBeforeToast = targetEnemy ? Math.max(0, targetEnemy.hp - 1) : undefined;
     if (targetEnemy && hpBeforeToast !== undefined) {
-      this.enemyHpTexts.get(targetEnemy.id)?.setText(t('common.hp', { hp: hpBeforeToast, maxHp: targetEnemy.maxHp }));
+      this.enemyHeartMeters.get(targetEnemy.id)?.setHp(hpBeforeToast);
     }
     this.sound.play('attackWind', { volume: 0.38 });
     this.flashEnemySeat(event.sourceEnemyIndex, 0xf29bc2, t('battle.passive.redSilkToast'), '#ffb8d6');
@@ -3745,7 +4315,7 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(660, () => {
       this.sound.play('healSound', { volume: 0.44 });
       if (targetEnemy) {
-        this.enemyHpTexts.get(targetEnemy.id)?.setText(t('common.hp', { hp: targetEnemy.hp, maxHp: targetEnemy.maxHp }));
+        this.enemyHeartMeters.get(targetEnemy.id)?.setHp(targetEnemy.hp, true);
       }
       this.flashEnemySeat(targetIndex, 0x78d18a, t('battle.passive.hpUp'), '#89f09f');
       this.playShockwave(target.x, target.y, 0x78d18a, 145);
@@ -3938,23 +4508,26 @@ export class BattleScene extends Phaser.Scene {
 
   private enemySeatCenter(index: number): Phaser.Math.Vector2 {
     const seat = this.enemySeatForIndex(index);
-    return new Phaser.Math.Vector2(seat.x, seat.y);
+    const hud = this.enemyHudLayout(index);
+    return new Phaser.Math.Vector2(seat.x + hud.portrait.x, seat.y + hud.portrait.y);
   }
 
   private flashEnemySeat(index: number, color: number, label: string, textColor: string): void {
-    const seat = this.enemySeatForIndex(index);
-    const overlay = this.add.container(seat.x, seat.y).setDepth(28);
-    const frame = this.add.rectangle(0, 0, seat.width + 12, seat.height + 12, color, 0.08).setStrokeStyle(4, color, 1);
-    const text = this.add.text(0, -seat.height / 2 - 18, label, {
+    const center = this.enemySeatCenter(index);
+    const hud = this.enemyHudLayout(index);
+    const overlay = this.add.container(center.x, center.y).setDepth(28);
+    const glow = this.add.rectangle(0, 0, hud.portrait.width + 20, hud.portrait.height + 20, color, 0.12).setStrokeStyle(4, color, 1);
+    const inner = this.add.rectangle(0, 0, hud.portrait.width - 8, hud.portrait.height - 8, color, 0.04).setStrokeStyle(2, color, 0.58);
+    const text = this.add.text(0, -hud.portrait.height / 2 - 38, label, {
       fontFamily: 'Arial',
-      fontSize: '26px',
+      fontSize: '22px',
       color: textColor,
       fontStyle: 'bold',
       stroke: '#101114',
       strokeThickness: 5,
     }).setOrigin(0.5);
     text.setShadow(0, 0, textColor, 14, true, true);
-    overlay.add([frame, text]);
+    overlay.add([glow, inner, text]);
     overlay.setAlpha(0);
     overlay.setScale(0.94);
 
@@ -4057,8 +4630,11 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
+    const enemyIndex = this.battle.enemies.indexOf(enemy);
     const positions = this.combatPositions(enemy);
     if (event.type === 'clash') {
+      this.setEnemyPortraitPose(enemyIndex, 'attack', 900);
+      this.playEnemyPortraitAttackMotion(enemyIndex);
       this.playClashAnimation(positions.player, positions.enemy, enemy);
       return;
     }
@@ -4086,6 +4662,9 @@ export class BattleScene extends Phaser.Scene {
       }
 
       this.playPlayerAttackEffect(positions.player, positions.enemy, event.resonance, event.amount, (damage) => {
+        if (damage > 0) {
+          this.setEnemyPortraitPose(enemyIndex, 'hurt', 920);
+        }
         this.sound.play('damageExplosion', { volume: event.resonance === 'strong' ? 0.62 : 0.5 });
         this.applyVisualDamage(event, enemy, damage);
         this.playImpactBurst(positions.enemy.x, positions.enemy.y, event.resonance === 'strong' ? 0xf5d66b : SKILL_COLORS.player);
@@ -4095,6 +4674,8 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
+    this.setEnemyPortraitPose(enemyIndex, 'attack', 900);
+    this.playEnemyPortraitAttackMotion(enemyIndex);
     if (event.shielded) {
       this.playProjectile(positions.enemy, positions.player, SKILL_COLORS[enemy.id], enemyName(enemy.id), event.resonance === 'resonance' || event.resonance === 'strong', () => {
         this.playHolyShieldBlock(event.originalAmount ?? 0);
@@ -4103,6 +4684,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.playProjectile(positions.enemy, positions.player, SKILL_COLORS[enemy.id], enemyName(enemy.id), event.resonance === 'resonance' || event.resonance === 'strong', () => {
+      this.setPlayerPortraitPose('hurt', 920);
       this.sound.play('damageExplosion', { volume: 0.5 });
       this.applyVisualDamage(event, enemy);
       this.playImpactBurst(positions.player.x, positions.player.y, SKILL_COLORS[enemy.id]);
@@ -4119,9 +4701,16 @@ export class BattleScene extends Phaser.Scene {
     onHit: (damage: number) => void,
     onComplete?: () => void,
   ): void {
+    this.setPlayerPortraitPose('attack');
+    this.playPlayerPortraitAttackMotion();
     const resonantAttack = resonance === 'resonance' || resonance === 'strong';
     const equippedAttackEffect = getProgress().equippedAttackEffect;
-    const complete = onComplete ?? (() => undefined);
+    const complete = () => {
+      if (this.playerPortraitPose === 'attack') {
+        this.setPlayerPortraitPose(this.playerDisplayHp() <= 0 ? 'hurt' : 'idle');
+      }
+      onComplete?.();
+    };
     if (resonantAttack && equippedAttackEffect === 'sakura_slash') {
       this.playSakuraSlashAttack(from, to, resonance === 'strong', damage, onHit, complete);
       return;
@@ -4197,6 +4786,7 @@ export class BattleScene extends Phaser.Scene {
     const homeDepth = protectorPanel.depth;
     let lastTrailAt = 0;
 
+    this.setEnemyPortraitPose(guard.protectorEnemyIndex, 'cast');
     this.flashEnemySeat(guard.protectorEnemyIndex, red, t('battle.passive.chivalry'), '#ff9a72');
     this.sound.play('attackWind', { volume: 0.56 });
     protectorPanel.setDepth(27);
@@ -4227,6 +4817,11 @@ export class BattleScene extends Phaser.Scene {
 
       this.time.delayedCall(340, () => {
         this.setEnemyVisualHp(guard.protectorEnemyIndex, guard.protectorHpAfter);
+        this.setEnemyPortraitPose(
+          guard.protectorEnemyIndex,
+          'hurt',
+          guard.protectorHpAfter > 0 ? 920 : undefined,
+        );
         this.playDamageText(blockPosition.x, blockPosition.y - 48, guard.preventedDamage);
         this.tweens.add({
           targets: protectorPanel,
@@ -4358,7 +4953,6 @@ export class BattleScene extends Phaser.Scene {
     onHit: (damage: number) => void,
     onComplete: () => void,
   ): void {
-    const slashCount = this.sakuraSlashCount(damage);
     const pink = 0xff79bd;
     const softPink = 0xffb7dc;
     const finalColor = 0xffefbd;
@@ -4403,72 +4997,82 @@ export class BattleScene extends Phaser.Scene {
       },
       onComplete: () => {
         katana.destroy(true);
-        this.playSakuraSlashCombo(to, strong, slashCount, pink, softPink, finalColor, onHit, onComplete);
       },
     });
-    this.time.delayedCall(360, () => this.playSakuraCutImpact(to.x, to.y, pink, softPink, strong, false));
-  }
 
-  private playSakuraSlashCombo(
-    to: Phaser.Math.Vector2,
-    strong: boolean,
-    slashCount: number,
-    pink: number,
-    softPink: number,
-    finalColor: number,
-    onHit: (damage: number) => void,
-    onComplete: () => void,
-  ): void {
-    for (let index = 0; index < slashCount; index += 1) {
-      const delay = index * 270;
-      const finalSlash = index === slashCount - 1;
-      this.time.delayedCall(delay, () => {
-        const direction = index % 2 === 0 ? 1 : -1;
-        const offsetX = direction * (finalSlash ? 12 : 24);
-        const offsetY = finalSlash ? -4 : direction * 14;
-        const slashColor = finalSlash ? finalColor : pink;
-        const slash = this.add.graphics().setPosition(to.x + offsetX, to.y + offsetY).setDepth(25);
-        const size = finalSlash ? (strong ? 92 : 76) : 64;
-        slash.lineStyle(finalSlash ? 7 : 5, slashColor, 0.96);
-        slash.beginPath();
-        slash.moveTo(-size * direction, size * 0.62);
-        slash.lineTo(size * direction, -size * 0.62);
-        slash.strokePath();
-        slash.lineStyle(finalSlash ? 3 : 2, 0xffffff, 0.94);
-        slash.beginPath();
-        slash.moveTo(-size * direction * 0.9, size * 0.46);
-        slash.lineTo(size * direction * 0.9, -size * 0.46);
-        slash.strokePath();
+    this.time.delayedCall(340, () => {
+      const wound = this.createSakuraWound(to.x, to.y, pink, finalColor, strong);
+      this.sound.play('sakuraCut', { volume: strong ? 0.68 : 0.56 });
+      this.playSakuraPetals(to.x, to.y, strong ? 9 : 5, pink, strong);
 
-        const glow = this.add.circle(to.x + offsetX, to.y + offsetY, finalSlash ? 28 : 20, slashColor, finalSlash ? 0.2 : 0.14)
-          .setDepth(24)
-          .setStrokeStyle(finalSlash ? 3 : 2, softPink, 0.78);
-        this.playSakuraPetals(to.x + offsetX, to.y + offsetY, finalSlash ? 9 : 5, slashColor, strong && finalSlash);
+      this.time.delayedCall(strong ? 420 : 360, () => {
+        this.playSakuraCutImpact(to.x, to.y, pink, softPink, strong);
+        if (strong) {
+          this.playShockwave(to.x, to.y, finalColor, 108);
+        }
+        onHit(damage);
 
+        this.tweens.killTweensOf(wound);
         this.tweens.add({
-          targets: [slash, glow],
+          targets: wound,
           alpha: 0,
-          scale: finalSlash ? 1.8 : 1.5,
-          duration: finalSlash ? 380 : 280,
+          scaleX: 1.7,
+          scaleY: 1.35,
+          duration: 420,
+          delay: 80,
           ease: 'Cubic.easeOut',
           onComplete: () => {
-            slash.destroy();
-            glow.destroy();
+            wound.destroy(true);
+            onComplete();
           },
         });
-
-        this.time.delayedCall(148, () => {
-          this.playSakuraCutImpact(to.x, to.y, slashColor, softPink, strong, finalSlash);
-          onHit(1);
-          this.playImpactBurst(to.x, to.y, slashColor);
-          if (finalSlash && strong) {
-            this.playShockwave(to.x, to.y, finalColor, 108);
-          }
-        });
       });
-    }
+    });
+  }
 
-    this.time.delayedCall((slashCount - 1) * 270 + 410, onComplete);
+  private createSakuraWound(
+    x: number,
+    y: number,
+    pink: number,
+    gold: number,
+    strong: boolean,
+  ): Phaser.GameObjects.Container {
+    const wound = this.add.container(x, y).setDepth(30);
+    const size = strong ? 88 : 72;
+    const shadow = this.add.graphics();
+    shadow.lineStyle(strong ? 13 : 11, 0x3b1028, 0.72);
+    shadow.beginPath();
+    shadow.moveTo(-size, size * 0.62);
+    shadow.lineTo(size, -size * 0.62);
+    shadow.strokePath();
+
+    const edge = this.add.graphics();
+    edge.lineStyle(strong ? 8 : 7, strong ? gold : pink, 0.96);
+    edge.beginPath();
+    edge.moveTo(-size, size * 0.62);
+    edge.lineTo(size, -size * 0.62);
+    edge.strokePath();
+
+    const core = this.add.graphics();
+    core.lineStyle(strong ? 3 : 2, 0xffffff, 0.98);
+    core.beginPath();
+    core.moveTo(-size * 0.9, size * 0.54);
+    core.lineTo(size * 0.9, -size * 0.54);
+    core.strokePath();
+
+    const glow = this.add.circle(0, 0, strong ? 34 : 26, pink, strong ? 0.2 : 0.15)
+      .setStrokeStyle(strong ? 4 : 3, strong ? gold : pink, 0.82);
+    wound.add([glow, shadow, edge, core]);
+    wound.setScale(0.84);
+    this.tweens.add({
+      targets: wound,
+      scale: 1.06,
+      duration: strong ? 230 : 190,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    return wound;
   }
 
   private createSakuraKatana(x: number, y: number, pink: number, gold: number, strong: boolean): Phaser.GameObjects.Container {
@@ -4498,29 +5102,24 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private playSakuraCutImpact(x: number, y: number, pink: number, softPink: number, strong: boolean, finalSlash: boolean): void {
-    const size = finalSlash ? (strong ? 72 : 58) : 44;
+  private playSakuraCutImpact(x: number, y: number, pink: number, softPink: number, strong: boolean): void {
+    const size = strong ? 82 : 66;
     const scars = this.add.graphics().setDepth(29);
-    scars.lineStyle(finalSlash ? 7 : 5, finalSlash ? 0xfff3d5 : pink, 0.96);
+    scars.lineStyle(strong ? 8 : 6, strong ? 0xfff3d5 : pink, 0.96);
     scars.beginPath();
     scars.moveTo(x - size, y + size * 0.64);
     scars.lineTo(x + size, y - size * 0.64);
     scars.strokePath();
-    scars.lineStyle(finalSlash ? 3 : 2, softPink, 0.96);
-    scars.beginPath();
-    scars.moveTo(x - size * 0.66, y - size * 0.62);
-    scars.lineTo(x + size * 0.66, y + size * 0.62);
-    scars.strokePath();
 
-    const flash = this.add.circle(x, y, finalSlash ? 30 : 20, 0xffffff, finalSlash ? 0.22 : 0.16).setDepth(28);
-    const ring = this.add.circle(x, y, finalSlash ? 28 : 18, pink, finalSlash ? 0.18 : 0.13)
+    const flash = this.add.circle(x, y, strong ? 34 : 26, 0xffffff, strong ? 0.24 : 0.18).setDepth(28);
+    const ring = this.add.circle(x, y, strong ? 32 : 24, pink, strong ? 0.2 : 0.15)
       .setDepth(27)
-      .setStrokeStyle(finalSlash ? 4 : 3, softPink, 0.88);
+      .setStrokeStyle(strong ? 4 : 3, softPink, 0.88);
     this.tweens.add({
       targets: [scars, flash, ring],
       alpha: 0,
-      scale: finalSlash ? 2.35 : 1.85,
-      duration: finalSlash ? 430 : 300,
+      scale: strong ? 2.5 : 2.1,
+      duration: strong ? 480 : 400,
       ease: 'Cubic.easeOut',
       onComplete: () => {
         scars.destroy();
@@ -4528,14 +5127,7 @@ export class BattleScene extends Phaser.Scene {
         ring.destroy();
       },
     });
-
-    if (finalSlash) {
-      this.playSakuraPetals(x, y, strong ? 12 : 8, pink, strong);
-    }
-  }
-
-  private sakuraSlashCount(damage: number): number {
-    return Math.max(1, Math.floor(damage));
+    this.playSakuraPetals(x, y, strong ? 14 : 9, pink, strong);
   }
 
   private playSakuraPetals(x: number, y: number, count: number, color: number, strong: boolean): void {
@@ -4803,7 +5395,7 @@ export class BattleScene extends Phaser.Scene {
 
     const hpAfterHit = Math.max(0, this.visualHpOverride.player - amount);
     this.visualHpOverride.player = hpAfterHit;
-    this.playerHpText?.setText(t('common.hp', { hp: hpAfterHit, maxHp: this.battle.player.maxHp }));
+    this.playerHeartMeter?.setHp(hpAfterHit, true);
   }
 
   private setEnemyVisualHp(enemyIndex: number, hp: number): void {
@@ -4814,20 +5406,33 @@ export class BattleScene extends Phaser.Scene {
 
     this.visualHpOverride.enemies[enemyIndex] = hp;
     this.visualEnemyDefeated![enemyIndex] = hp <= 0;
-    this.enemyHpTexts.get(enemy.id)?.setText(t('common.hp', { hp, maxHp: enemy.maxHp }));
+    this.enemyHeartMeters.get(enemy.id)?.setHp(hp, true);
   }
 
   private combatPositions(enemy: EnemyState): { player: Phaser.Math.Vector2; enemy: Phaser.Math.Vector2 } {
     const enemyIndex = this.battle.enemies.indexOf(enemy);
     const enemySeat = this.enemySeatForIndex(enemyIndex);
+    const enemyLayout = this.enemyHudLayout(enemyIndex);
     return {
-      enemy: new Phaser.Math.Vector2(enemySeat.x, enemySeat.y),
-      player: new Phaser.Math.Vector2(SEATS.player.x, SEATS.player.y),
+      enemy: new Phaser.Math.Vector2(enemySeat.x + enemyLayout.portrait.x, enemySeat.y + enemyLayout.portrait.y),
+      player: new Phaser.Math.Vector2(this.battleLayout.seats.player.x, this.battleLayout.seats.player.y),
     };
   }
 
   private enemySeatForIndex(index: number): { x: number; y: number; width: number; height: number } {
-    return this.battle.enemies.length === 1 ? SEATS.enemy[1] : SEATS.enemy[index];
+    return this.battle.enemies.length === 1 ? this.battleLayout.seats.enemies[1] : this.battleLayout.seats.enemies[index];
+  }
+
+  private enemyHudSeat(index: number): keyof BattleLayoutConfig['enemyHud'] {
+    if (this.battle.enemies.length === 1 || index === 1) {
+      return 'top';
+    }
+
+    return index === 0 ? 'left' : 'right';
+  }
+
+  private enemyHudLayout(index: number): BattleLayoutConfig['enemyHud']['left'] {
+    return this.battleLayout.enemyHud[this.enemyHudSeat(index)];
   }
 
   private playProjectile(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, color: number, label: string, resonantAttack: boolean, onHit: () => void): void {

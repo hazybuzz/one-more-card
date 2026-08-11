@@ -26,15 +26,18 @@ interface ActionPanelOptions {
   };
   createButton: ButtonFactory;
   onAction: (button: BattleActionButtonState) => void;
+  centered?: boolean;
 }
 
 export class ActionPanel {
   static render(scene: Phaser.Scene, options: ActionPanelOptions): Phaser.GameObjects.Container {
     const container = scene.add.container(options.x, options.y);
+    const rightEdge = options.buttons.reduce((maximum, button) => Math.max(maximum, button.x + button.width), 0);
+    const offsetX = options.centered && options.buttons.length > 0 ? -rightEdge / 2 : 0;
 
     options.buttons.forEach((buttonState) => {
       container.add(options.createButton(
-        buttonState.x,
+        buttonState.x + offsetX,
         0,
         buttonState.width,
         48,

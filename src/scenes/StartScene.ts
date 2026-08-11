@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { preloadCardImages } from '../game/assets';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
 import { t, toggleLanguage } from '../game/i18n';
-import { getProgress, resetProgress } from '../game/progress';
+import { getEconomyDebugSnapshot, getProgress, resetProgress } from '../game/progress';
 
 const COLORS = {
   bg: 0x101114,
@@ -19,6 +19,7 @@ const COLORS = {
 
 export class StartScene extends Phaser.Scene {
   private statusText?: Phaser.GameObjects.Text;
+  private economyDebugModal?: Phaser.GameObjects.Container;
   private pendingStatus = '';
 
   constructor() {
@@ -127,12 +128,105 @@ export class StartScene extends Phaser.Scene {
   }
 
   private renderDebugActions(): void {
-    this.add.container(1168, 668).add([
+    const actions = this.add.container(1168, 668);
+    actions.add([
       this.menuButton(0, 0, 168, 42, t('start.resetGold'), () => {
         resetProgress();
         this.scene.restart({ status: t('start.goldReset', { total: getProgress().soulCoins }) });
       }, '16px'),
     ]);
+
+    if (import.meta.env.DEV) {
+      actions.add(this.menuButton(0, -52, 168, 42, t('start.economyDebug'), () => {
+        this.showEconomyDebugModal();
+      }, '15px'));
+    }
+  }
+
+  private showEconomyDebugModal(): void {
+    if (this.economyDebugModal) {
+      return;
+    }
+
+    const snapshot = getEconomyDebugSnapshot();
+    const stats = snapshot.economyStats;
+    const modal = this.add.container(640, 360).setDepth(100);
+    this.economyDebugModal = modal;
+    modal.add(this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.76).setInteractive());
+    modal.add(this.add.rectangle(0, 0, 820, 570, COLORS.panel, 0.99).setStrokeStyle(2, COLORS.accent));
+    modal.add(this.add.text(0, -246, t('economyDebug.title'), {
+      fontFamily: 'Arial',
+      fontSize: '30px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 9, true, true));
+
+    modal.add(this.add.text(0, -190, [
+      t('economyDebug.current', { amount: snapshot.soulCoins }),
+      t('economyDebug.opening', { amount: stats.openingBalance }),
+      t('economyDebug.totalEarned', { amount: stats.totalEarned }),
+      t('economyDebug.totalSpent', { amount: stats.totalSpent }),
+      t('economyDebug.recentCount', { count: snapshot.economyTransactions.length }),
+    ].join('    '), {
+      fontFamily: 'Arial',
+      fontSize: '16px',
+      color: COLORS.accentText,
+      align: 'center',
+      wordWrap: { width: 740 },
+    }).setOrigin(0.5));
+
+    modal.add(this.economyDebugColumn(-360, -128, t('economyDebug.incomeTitle'), [
+      t('economyDebug.storyFirstClear', { amount: stats.incomeBySource.story_first_clear }),
+      t('economyDebug.formalVictory', { amount: stats.incomeBySource.formal_victory }),
+      t('economyDebug.relief', { amount: stats.incomeBySource.relief }),
+      t('economyDebug.pvpVictory', { amount: stats.incomeBySource.pvp_victory }),
+    ]));
+    modal.add(this.economyDebugColumn(20, -128, t('economyDebug.expenseTitle'), [
+      t('economyDebug.formalEntry', { amount: stats.spendingBySink.formal_entry }),
+      t('economyDebug.itemPurchase', { amount: stats.spendingBySink.item_purchase }),
+      t('economyDebug.cosmeticPurchase', { amount: stats.spendingBySink.cosmetic_purchase }),
+      t('economyDebug.themeUnlock', { amount: stats.spendingBySink.theme_unlock }),
+      t('economyDebug.pvpLoss', { amount: stats.spendingBySink.pvp_loss }),
+    ]));
+
+    modal.add([
+      this.menuButton(-120, 238, 190, 46, t('economyDebug.export'), () => this.exportEconomyDebugJson(), '16px'),
+      this.menuButton(120, 238, 190, 46, t('economyDebug.close'), () => {
+        modal.destroy(true);
+        this.economyDebugModal = undefined;
+      }, '16px'),
+    ]);
+  }
+
+  private economyDebugColumn(x: number, y: number, title: string, lines: string[]): Phaser.GameObjects.Container {
+    const column = this.add.container(x, y);
+    column.add(this.add.rectangle(170, 122, 340, 300, 0x111318, 0.72).setStrokeStyle(1, COLORS.line));
+    column.add(this.add.text(22, 0, title, {
+      fontFamily: 'Arial',
+      fontSize: '21px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }));
+    column.add(this.add.text(22, 48, lines.join('\n'), {
+      fontFamily: 'Arial',
+      fontSize: '17px',
+      color: COLORS.muted,
+      lineSpacing: 15,
+    }));
+    return column;
+  }
+
+  private exportEconomyDebugJson(): void {
+    const payload = JSON.stringify({
+      exportedAt: new Date().toISOString(),
+      ...getEconomyDebugSnapshot(),
+    }, null, 2);
+    const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `one-more-card-economy-${Date.now()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   private menuButton(x: number, y: number, width: number, height: number, label: string, onClick: () => void, fontSize = '22px'): Phaser.GameObjects.Container {

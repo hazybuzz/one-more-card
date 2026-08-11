@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import './style.css';
 import { BattleScene } from './scenes/BattleScene';
 import { ChapterIntroScene } from './scenes/ChapterIntroScene';
 import { InventoryScene } from './scenes/InventoryScene';

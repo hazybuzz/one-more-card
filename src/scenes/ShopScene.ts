@@ -1,9 +1,29 @@
 import Phaser from 'phaser';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
-import { COSMETICS, CosmeticConfig } from '../game/cosmetics';
-import { ITEMS, ItemDefinition } from '../game/items';
+import { COSMETICS, type CosmeticConfig } from '../game/cosmetics';
 import { t } from '../game/i18n';
-import { addCosmetic, addItem, equipAttackEffect, getProgress, ownsCosmetic, spendSoulCoins, unequipAttackEffect } from '../game/progress';
+import { ITEMS, type ItemDefinition } from '../game/items';
+import {
+  addCosmetic,
+  addItem,
+  equipAttackEffect,
+  getProgress,
+  ownsCosmetic,
+  spendSoulCoins,
+  unequipAttackEffect,
+} from '../game/progress';
+import {
+  CatalogCard,
+  CatalogDetailPanel,
+  CategoryTabs,
+  createCosmeticCatalogEntry,
+  createItemCatalogEntry,
+  DESKTOP_CATALOG_LAYOUT,
+  entriesForCategory,
+  ScrollableGrid,
+  type CatalogCategoryId,
+  type CatalogEntryViewModel,
+} from '../ui/catalog';
 
 const COLORS = {
   bg: 0x101114,
@@ -14,15 +34,19 @@ const COLORS = {
   muted: '#aeb4c0',
   accent: 0xe8cf73,
   accentText: '#e8cf73',
+  equipped: 0x7fd7ff,
   green: '#78d18a',
-  dangerText: '#ff4b5f',
   button: 0x303542,
   buttonHover: 0x41495b,
 };
 
+const CATALOG_LAYOUT = DESKTOP_CATALOG_LAYOUT;
+
 export class ShopScene extends Phaser.Scene {
-  private statusText?: Phaser.GameObjects.Text;
-  private itemTooltip?: Phaser.GameObjects.Container;
+  private activeCategory: CatalogCategoryId = 'battle-items';
+  private selectedEntryId?: string;
+  private scrollGrid?: ScrollableGrid<CatalogEntryViewModel>;
+  private detailPanel?: Phaser.GameObjects.Container;
 
   constructor() {
     super('ShopScene');
@@ -41,41 +65,45 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private render(status = ''): void {
-    this.hideItemTooltip();
+    this.scrollGrid?.destroy();
+    this.scrollGrid = undefined;
+    this.detailPanel = undefined;
     this.children.removeAll(true);
     this.addBackground();
     this.renderHeader();
-    this.renderItems();
-    this.renderCosmetics();
-    this.statusText = this.add.text(640, 674, status || t('shop.futureUse'), {
-      fontFamily: 'Arial',
-      fontSize: '17px',
-      color: status ? COLORS.accentText : COLORS.muted,
-    }).setOrigin(0.5);
+
+    const entries = this.catalogEntries();
+    const activeEntries = entriesForCategory(entries, this.activeCategory);
+    if (!activeEntries.some((entry) => entry.id === this.selectedEntryId)) {
+      this.selectedEntryId = activeEntries[0]?.id;
+    }
+
+    this.renderCategoryTabs(entries);
+    this.renderCatalogGrid(activeEntries);
+    this.renderSelectedEntry(activeEntries);
+    this.renderStatus(status);
   }
 
   private addBackground(): void {
     this.add.rectangle(640, 360, 1280, 720, COLORS.bg);
-    this.add.circle(640, 360, 248, 0x191c22, 0.92).setStrokeStyle(2, COLORS.line);
-    this.add.circle(640, 360, 168, 0x101114, 0.52).setStrokeStyle(1, 0x2b303c);
+    this.add.circle(640, 372, 300, 0x191c22, 0.58).setStrokeStyle(1, COLORS.line, 0.55);
+    this.add.line(640, 124, 0, 0, 1224, 0, COLORS.line, 0.7).setLineWidth(1);
   }
 
   private renderHeader(): void {
-    this.add.text(640, 78, t('shop.title'), {
+    this.add.text(640, 62, t('shop.title'), {
       fontFamily: 'Arial',
-      fontSize: '42px',
+      fontSize: '38px',
       color: COLORS.text,
       fontStyle: 'bold',
-    }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 10, true, true);
+    }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 9, true, true);
 
-    this.add.container(110, 50).add([
-      this.button(0, 0, 178, 44, t('shop.returnLobby'), () => {
-        this.scene.start('StartScene');
-      }, '16px'),
-    ]);
+    this.add.container(24, 30).add(this.button(0, 0, 176, 44, t('shop.returnLobby'), () => {
+      this.scene.start('StartScene');
+    }, '16px'));
 
-    const coinPanel = this.add.container(1118, 50);
-    coinPanel.add(this.add.rectangle(0, 0, 236, 52, COLORS.panel, 0.95).setStrokeStyle(2, COLORS.accent));
+    const coinPanel = this.add.container(1118, 52);
+    coinPanel.add(this.add.rectangle(0, 0, 236, 52, COLORS.panel, 0.96).setStrokeStyle(2, COLORS.accent));
     coinPanel.add(this.add.text(-96, -13, t('progress.soulCoins'), {
       fontFamily: 'Arial',
       fontSize: '16px',
@@ -91,219 +119,263 @@ export class ShopScene extends Phaser.Scene {
     coinPanel.add(value);
   }
 
-  private renderItems(): void {
-    this.renderSectionTitle(146, t('shop.itemsSection'));
+  private catalogEntries(): CatalogEntryViewModel[] {
+    const progress = getProgress();
+    const itemEntries = ITEMS.map((item) => createItemCatalogEntry(item, {
+      soulCoins: progress.soulCoins,
+      ownedCount: progress.ownedItems[item.id] ?? 0,
+    }));
+    const cosmeticEntries = COSMETICS.map((cosmetic) => createCosmeticCatalogEntry(cosmetic, {
+      soulCoins: progress.soulCoins,
+      ownedCount: ownsCosmetic(cosmetic.id) ? 1 : 0,
+      equipped: progress.equippedAttackEffect === cosmetic.id,
+    }));
+    return [...itemEntries, ...cosmeticEntries];
+  }
 
-    const positions = this.gridPositions(ITEMS.length, 236, 116, 218);
-    ITEMS.forEach((item, index) => {
-      const position = positions[index];
-      this.renderItemCard(position.x, position.y, item);
+  private renderCategoryTabs(entries: CatalogEntryViewModel[]): void {
+    this.add.text(CATALOG_LAYOUT.sidebarX, 132, t('shop.categories'), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: COLORS.muted,
+    });
+    CategoryTabs.render(this, {
+      x: CATALOG_LAYOUT.sidebarX,
+      y: CATALOG_LAYOUT.sidebarY,
+      width: CATALOG_LAYOUT.sidebarWidth,
+      activeCategory: this.activeCategory,
+      tabs: [
+        {
+          id: 'battle-items',
+          label: t('shop.itemsSection'),
+          count: entriesForCategory(entries, 'battle-items').length,
+        },
+        {
+          id: 'effects',
+          label: t('shop.cosmeticsSection'),
+          count: entriesForCategory(entries, 'effects').length,
+        },
+      ],
+      colors: {
+        panel: COLORS.panel,
+        activePanel: COLORS.panelAlt,
+        line: COLORS.line,
+        accent: COLORS.accent,
+        accentText: COLORS.accentText,
+        text: COLORS.text,
+        muted: COLORS.muted,
+      },
+      onSelect: (category) => {
+        this.playButtonClick();
+        this.activeCategory = category;
+        this.selectedEntryId = undefined;
+        this.render();
+      },
     });
   }
 
-  private renderSectionTitle(y: number, label: string): void {
-    this.add.text(640, y, label, {
+  private renderCatalogGrid(entries: CatalogEntryViewModel[]): void {
+    const sectionLabel = this.categoryLabel(this.activeCategory);
+    this.add.text(CATALOG_LAYOUT.gridX, 126, sectionLabel, {
       fontFamily: 'Arial',
       fontSize: '22px',
       color: COLORS.text,
       fontStyle: 'bold',
-    }).setOrigin(0.5);
-    this.add.line(640, y + 20, 0, 0, 1040, 0, COLORS.line, 0.9).setLineWidth(1);
-  }
-
-  private gridPositions(count: number, startY: number, cardWidth: number, gap: number): Array<{ x: number; y: number }> {
-    const columns = 3;
-    const rows = Math.max(1, Math.ceil(count / columns));
-    const positions: Array<{ x: number; y: number }> = [];
-
-    for (let index = 0; index < count; index += 1) {
-      const row = Math.floor(index / columns);
-      const column = index % columns;
-      const cardsInRow = row === rows - 1 ? count - row * columns : columns;
-      const rowWidth = cardsInRow * cardWidth + Math.max(0, cardsInRow - 1) * gap;
-      positions.push({
-        x: 640 - rowWidth / 2 + cardWidth / 2 + column * (cardWidth + gap),
-        y: startY + row * 132,
-      });
-    }
-
-    return positions;
-  }
-
-  private renderItemCard(x: number, y: number, item: ItemDefinition): void {
-    const progress = getProgress();
-    const canAfford = progress.soulCoins >= item.price;
-    const ownedCount = progress.ownedItems[item.id] ?? 0;
-    const card = this.add.container(x, y);
-
-    const border = canAfford ? COLORS.accent : COLORS.line;
-    const background = this.add.rectangle(0, 0, 218, 112, COLORS.panel, 0.96).setStrokeStyle(2, border);
-    background.setInteractive({ useHandCursor: true });
-    background.on('pointerover', () => this.showShopTooltip(x, y - 76, t(item.nameKey), t(item.descriptionKey), t('shop.price', { price: item.price })));
-    background.on('pointerout', () => this.hideItemTooltip());
-    card.add(background);
-    card.add(this.add.circle(-76, -15, 24, canAfford ? COLORS.accent : COLORS.line, canAfford ? 0.18 : 0.12).setStrokeStyle(2, border));
-    card.add(this.add.text(-76, -16, item.icon, {
-      fontFamily: 'Arial',
-      fontSize: '27px',
-      color: canAfford ? COLORS.accentText : COLORS.muted,
-      fontStyle: 'bold',
-    }).setOrigin(0.5).setShadow(0, 0, canAfford ? COLORS.accentText : '#000000', 7, true, true));
-
-    card.add(this.add.text(-42, -40, t(item.nameKey), {
-      fontFamily: 'Arial',
-      fontSize: '17px',
-      color: COLORS.text,
-      fontStyle: 'bold',
-    }));
-    card.add(this.add.text(-42, -15, t('shop.price', { price: item.price }), {
+    });
+    this.add.text(CATALOG_LAYOUT.gridX + CATALOG_LAYOUT.gridWidth - 14, 132, `${entries.length}`, {
       fontFamily: 'Arial',
       fontSize: '14px',
-      color: COLORS.accentText,
-    }));
-    card.add(this.add.text(-42, 8, t('shop.owned', { count: ownedCount }), {
-      fontFamily: 'Arial',
-      fontSize: '13px',
       color: COLORS.muted,
+    }).setOrigin(1, 0.5);
+
+    this.scrollGrid = new ScrollableGrid<CatalogEntryViewModel>(this, {
+      x: CATALOG_LAYOUT.gridX,
+      y: CATALOG_LAYOUT.gridY,
+      width: CATALOG_LAYOUT.gridWidth,
+      height: CATALOG_LAYOUT.gridHeight,
+      columns: 3,
+      cellWidth: 204,
+      cellHeight: 158,
+      columnGap: 14,
+      rowGap: 14,
+      scrollbar: {
+        thumbColor: 0x747b8c,
+        thumbHoverColor: 0xa8b0c2,
+        trackColor: COLORS.panelAlt,
+      },
+    });
+    this.scrollGrid.setItems(entries, (_scene, entry) => CatalogCard.render(this, {
+      entry,
+      width: 196,
+      height: 150,
+      selected: entry.id === this.selectedEntryId,
+      metaText: this.cardMetaText(entry),
+      actionLabel: this.actionLabel(entry),
+      colors: {
+        panel: COLORS.panel,
+        panelHover: COLORS.panelAlt,
+        line: COLORS.line,
+        accent: COLORS.accent,
+        accentText: COLORS.accentText,
+        text: COLORS.text,
+        muted: COLORS.muted,
+        equipped: COLORS.equipped,
+      },
+      createButton: (x, y, width, height, label, onClick) => this.button(x, y, width, height, label, onClick, '14px'),
+      onSelect: () => this.selectEntry(entry.id),
+      onAction: () => this.activateEntry(entry),
     }));
-    card.add(this.infoButton(82, -37, () => this.showShopTooltip(x, y - 76, t(item.nameKey), t(item.descriptionKey), t('shop.price', { price: item.price }))));
-    card.add(this.button(32, 30, 142, 38, t('shop.buy'), () => this.buyItem(item), '16px', canAfford ? COLORS.button : 0x25272d));
   }
 
-  private renderCosmetics(): void {
-    this.renderSectionTitle(400, t('shop.cosmeticsSection'));
+  private selectEntry(entryId: string): void {
+    if (this.selectedEntryId === entryId) {
+      return;
+    }
 
-    const positions = this.gridPositions(COSMETICS.length, 510, 218, 18);
-    COSMETICS.forEach((cosmetic, index) => {
-      const position = positions[index];
-      this.renderCosmeticCard(position.x, position.y, cosmetic);
+    this.selectedEntryId = entryId;
+    this.detailPanel?.destroy(true);
+    const entries = entriesForCategory(this.catalogEntries(), this.activeCategory);
+    this.renderSelectedEntry(entries);
+  }
+
+  private renderSelectedEntry(entries: CatalogEntryViewModel[]): void {
+    const entry = entries.find((candidate) => candidate.id === this.selectedEntryId) ?? entries[0];
+    if (!entry) {
+      return;
+    }
+
+    this.selectedEntryId = entry.id;
+    this.detailPanel = CatalogDetailPanel.render(this, {
+      x: CATALOG_LAYOUT.detailX,
+      y: CATALOG_LAYOUT.detailY,
+      width: CATALOG_LAYOUT.detailWidth,
+      height: CATALOG_LAYOUT.detailHeight,
+      entry,
+      categoryLabel: this.categoryLabel(entry.category),
+      ownershipText: this.ownershipText(entry),
+      priceText: t('shop.price', { price: entry.price }),
+      actionLabel: this.actionLabel(entry),
+      colors: {
+        panel: COLORS.panel,
+        line: COLORS.line,
+        accent: COLORS.accent,
+        accentText: COLORS.accentText,
+        text: COLORS.text,
+        muted: COLORS.muted,
+        equipped: COLORS.equipped,
+      },
+      createButton: (x, y, width, height, label, onClick) => this.button(x, y, width, height, label, onClick, '17px'),
+      onAction: () => this.activateEntry(entry),
     });
   }
 
-  private renderCosmeticCard(x: number, y: number, cosmetic: CosmeticConfig): void {
-    const progress = getProgress();
-    const owned = ownsCosmetic(cosmetic.id);
-    const equipped = progress.equippedAttackEffect === cosmetic.id;
-    const canAfford = progress.soulCoins >= cosmetic.price;
-    const card = this.add.container(x, y);
-    const active = owned || canAfford;
+  private categoryLabel(category: CatalogCategoryId): string {
+    return category === 'battle-items' ? t('shop.itemsSection') : t('shop.cosmeticsSection');
+  }
 
-    const border = equipped ? 0x7fd7ff : active ? COLORS.accent : COLORS.line;
-    const background = this.add.rectangle(0, 0, 218, 112, COLORS.panel, 0.96).setStrokeStyle(2, border);
-    background.setInteractive({ useHandCursor: true });
-    background.on('pointerover', () => this.showShopTooltip(x, y - 76, t(cosmetic.nameKey), t(cosmetic.descriptionKey), owned ? t('shop.ownedPermanent') : t('shop.price', { price: cosmetic.price })));
-    background.on('pointerout', () => this.hideItemTooltip());
-    card.add(background);
-    card.add(this.add.circle(-76, -15, 24, equipped ? 0x3b8dff : COLORS.accent, equipped ? 0.24 : 0.16).setStrokeStyle(2, border));
-    const icon = this.add.text(-76, -16, cosmetic.icon, {
+  private cardMetaText(entry: CatalogEntryViewModel): string {
+    if (entry.ownership === 'stackable') {
+      return `${t('shop.price', { price: entry.price })}  ·  ${t('shop.owned', { count: entry.ownedCount })}`;
+    }
+
+    if (entry.equipped) {
+      return t('shop.equipped');
+    }
+
+    return entry.ownedCount > 0 ? t('shop.ownedPermanent') : t('shop.price', { price: entry.price });
+  }
+
+  private ownershipText(entry: CatalogEntryViewModel): string {
+    if (entry.ownership === 'stackable') {
+      return t('shop.owned', { count: entry.ownedCount });
+    }
+
+    return entry.equipped ? t('shop.equipped') : entry.ownedCount > 0 ? t('shop.ownedPermanent') : t('shop.notOwned');
+  }
+
+  private actionLabel(entry: CatalogEntryViewModel): string {
+    if (entry.kind === 'consumable') {
+      return t('shop.buy');
+    }
+
+    if (entry.equipped) {
+      return t('shop.unequip');
+    }
+
+    return entry.ownedCount > 0 ? t('shop.equip') : t('shop.buy');
+  }
+
+  private activateEntry(entry: CatalogEntryViewModel): void {
+    if (entry.kind === 'consumable') {
+      const item = ITEMS.find((candidate) => candidate.id === entry.id);
+      if (item) {
+        this.buyItem(item);
+      }
+      return;
+    }
+
+    const cosmetic = COSMETICS.find((candidate) => candidate.id === entry.id);
+    if (cosmetic) {
+      this.buyOrEquipCosmetic(cosmetic);
+    }
+  }
+
+  private renderStatus(status: string): void {
+    const message = status || t('shop.futureUse');
+    const text = this.add.text(640, 682, message, {
       fontFamily: 'Arial',
-      fontSize: '27px',
-      color: equipped ? '#9fe7ff' : COLORS.accentText,
-      fontStyle: 'bold',
+      fontSize: '16px',
+      color: status ? COLORS.accentText : COLORS.muted,
+      align: 'center',
+      wordWrap: { width: 760 },
     }).setOrigin(0.5);
-    icon.setShadow(0, 0, equipped ? '#9fe7ff' : COLORS.accentText, 10, true, true);
-    card.add(icon);
-
-    card.add(this.add.text(-42, -40, t(cosmetic.nameKey), {
-      fontFamily: 'Arial',
-      fontSize: '17px',
-      color: COLORS.text,
-      fontStyle: 'bold',
-    }));
-    card.add(this.add.text(-42, -15, owned ? t('shop.ownedPermanent') : t('shop.price', { price: cosmetic.price }), {
-      fontFamily: 'Arial',
-      fontSize: '14px',
-      color: owned ? COLORS.green : COLORS.accentText,
-    }));
-    card.add(this.infoButton(82, -37, () => this.showShopTooltip(x, y - 76, t(cosmetic.nameKey), t(cosmetic.descriptionKey), owned ? t('shop.ownedPermanent') : t('shop.price', { price: cosmetic.price }))));
-
-    const label = equipped ? t('shop.unequip') : owned ? t('shop.equip') : t('shop.buy');
-    const fill = equipped ? 0x1f4d66 : canAfford || owned ? COLORS.button : 0x25272d;
-    card.add(this.button(32, 30, 142, 38, label, () => this.buyOrEquipCosmetic(cosmetic), '16px', fill));
-  }
-
-  private infoButton(x: number, y: number, onClick: () => void): Phaser.GameObjects.Container {
-    const container = this.add.container(x, y);
-    const circle = this.add.circle(0, 0, 11, COLORS.panelAlt).setStrokeStyle(1, COLORS.line);
-    const label = this.add.text(0, -1, 'i', {
-      fontFamily: 'Arial',
-      fontSize: '15px',
-      color: COLORS.muted,
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    circle.setInteractive({ useHandCursor: true });
-    circle.on('pointerover', onClick);
-    circle.on('pointerdown', onClick);
-    container.add([circle, label]);
-    return container;
-  }
-
-  private showShopTooltip(x: number, y: number, title: string, description: string, meta: string): void {
-    this.hideItemTooltip();
-    const width = 300;
-    const height = 132;
-    const safeX = Phaser.Math.Clamp(x, width / 2 + 18, 1280 - width / 2 - 18);
-    const safeY = Phaser.Math.Clamp(y, height / 2 + 18, 720 - height / 2 - 18);
-    const tooltip = this.add.container(safeX, safeY).setDepth(20);
-    tooltip.add(this.add.rectangle(0, 0, width, height, 0x101114, 0.98).setStrokeStyle(2, COLORS.accent));
-    tooltip.add(this.add.text(-132, -50, title, {
-      fontFamily: 'Arial',
-      fontSize: '19px',
-      color: COLORS.text,
-      fontStyle: 'bold',
-    }));
-    tooltip.add(this.add.text(-132, -20, description, {
-      fontFamily: 'Arial',
-      fontSize: '14px',
-      color: COLORS.muted,
-      lineSpacing: 4,
-      wordWrap: { width: 264 },
-    }));
-    tooltip.add(this.add.text(-132, 44, meta, {
-      fontFamily: 'Arial',
-      fontSize: '14px',
-      color: COLORS.accentText,
-      fontStyle: 'bold',
-    }));
-    this.itemTooltip = tooltip;
-  }
-
-  private hideItemTooltip(): void {
-    this.itemTooltip?.destroy();
-    this.itemTooltip = undefined;
+    if (status) {
+      text.setShadow(0, 0, COLORS.accentText, 8, true, true);
+    }
   }
 
   private buyItem(item: ItemDefinition): void {
-    if (!spendSoulCoins(item.price)) {
+    if (!spendSoulCoins('item_purchase', item.price, { itemId: item.id })) {
       this.render(t('shop.notEnoughCoins', { item: t(item.nameKey) }));
       return;
     }
 
     addItem(item.id, 1);
+    this.selectedEntryId = item.id;
     this.render(t('shop.buySuccess', { item: t(item.nameKey) }));
   }
 
   private buyOrEquipCosmetic(cosmetic: CosmeticConfig): void {
     if (getProgress().equippedAttackEffect === cosmetic.id) {
       unequipAttackEffect();
+      this.selectedEntryId = cosmetic.id;
       this.render(t('shop.unequipSuccess', { item: t(cosmetic.nameKey) }));
       return;
     }
 
     if (!ownsCosmetic(cosmetic.id)) {
-      if (!spendSoulCoins(cosmetic.price)) {
+      if (!spendSoulCoins('cosmetic_purchase', cosmetic.price, { cosmeticId: cosmetic.id })) {
         this.render(t('shop.notEnoughCoins', { item: t(cosmetic.nameKey) }));
         return;
       }
-
       addCosmetic(cosmetic.id);
     }
 
     equipAttackEffect(cosmetic.id);
+    this.selectedEntryId = cosmetic.id;
     this.render(t('shop.equipSuccess', { item: t(cosmetic.nameKey) }));
   }
 
-  private button(x: number, y: number, width: number, height: number, label: string, onClick: () => void, fontSize = '20px', fill = COLORS.button): Phaser.GameObjects.Container {
+  private button(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+    onClick: () => void,
+    fontSize = '20px',
+    fill = COLORS.button,
+  ): Phaser.GameObjects.Container {
     const button = this.add.container(x, y);
     const rect = this.add.rectangle(width / 2, height / 2, width, height, fill).setStrokeStyle(2, COLORS.line);
     const text = this.add.text(width / 2, height / 2, label, {
@@ -313,13 +385,12 @@ export class ShopScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     rect.setInteractive({ useHandCursor: true });
-    rect.on('pointerover', () => rect.setFillStyle(COLORS.buttonHover));
-    rect.on('pointerout', () => rect.setFillStyle(fill));
-    rect.on('pointerdown', () => {
+    rect.on(Phaser.Input.Events.POINTER_OVER, () => rect.setFillStyle(COLORS.buttonHover));
+    rect.on(Phaser.Input.Events.POINTER_OUT, () => rect.setFillStyle(fill));
+    rect.on(Phaser.Input.Events.POINTER_DOWN, () => {
       this.playButtonClick();
       onClick();
     });
-
     button.add([rect, text]);
     return button;
   }

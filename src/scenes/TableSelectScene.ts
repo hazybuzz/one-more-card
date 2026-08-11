@@ -1,9 +1,16 @@
 import Phaser from 'phaser';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
+import { getStakeDifficulty } from '../game/data/stakeDifficulties';
 import { TABLE_THEMES } from '../game/data/tableThemes';
-import { tryPayEntryCost } from '../game/economy';
+import { calculateFormalVictoryReward, RELIEF_COIN_THRESHOLD, RELIEF_TARGET_COINS, tryPayEntryCost } from '../game/economy';
 import { t, toggleLanguage } from '../game/i18n';
-import { getProgress } from '../game/progress';
+import {
+  consumeComplimentaryTableEntry,
+  getProgress,
+  hasComplimentaryTableEntry,
+  isTableThemeUnlocked,
+  tryPurchaseTableTheme,
+} from '../game/progress';
 import type { EntryStakeMultiplier, TableThemeConfig, TableThemeId } from '../game/types/tableTheme';
 import { ENTRY_STAKE_MULTIPLIERS } from '../game/types/tableTheme';
 
@@ -131,11 +138,13 @@ export class TableSelectScene extends Phaser.Scene {
   }
 
   private renderThemeCard(x: number, y: number, theme: TableThemeConfig): void {
-    const unlocked = theme.unlockedByDefault;
+    const unlocked = isTableThemeUnlocked(theme.id);
     const stake = this.stakeByTheme[theme.id] ?? 1;
+    const difficulty = getStakeDifficulty(stake);
     const totalCost = this.roundCost(theme, stake);
-    const totalRewardMultiplier = theme.rewardMultiplier * stake;
-    const canEnter = unlocked && getProgress().soulCoins >= totalCost;
+    const maxReward = calculateFormalVictoryReward(totalCost, theme.playerHp, theme.payoutMultiplier);
+    const complimentaryEntry = unlocked && stake === 1 && hasComplimentaryTableEntry(theme.id);
+    const canEnter = unlocked && (complimentaryEntry || getProgress().soulCoins >= totalCost);
     const card = this.add.container(x, y);
     const panel = this.add.rectangle(0, 0, 456, 232, theme.visual.panelColor, 0.96).setStrokeStyle(2, unlocked ? theme.visual.accentColor : COLORS.line);
     card.add(panel);
@@ -153,17 +162,29 @@ export class TableSelectScene extends Phaser.Scene {
       color: unlocked ? theme.visual.glowColor : COLORS.muted,
     }));
 
+    if (!unlocked) {
+      this.renderLockedThemeContent(card, theme);
+      return;
+    }
+
+    if (theme.id === 'evernight_tavern' && getProgress().soulCoins < RELIEF_COIN_THRESHOLD) {
+      this.renderReliefThemeContent(card, theme);
+      return;
+    }
+
     card.add(this.add.text(-202, -2, t('tableSelect.baseEntry', { cost: theme.entryCost }), {
       fontFamily: 'Arial',
       fontSize: '15px',
       color: COLORS.muted,
     }));
-    card.add(this.add.text(-22, -2, t('tableSelect.rewardPreview', { multiplier: totalRewardMultiplier.toFixed(1) }), {
+    card.add(this.add.text(-22, -2, t('tableSelect.payoutRate', { multiplier: theme.payoutMultiplier.toFixed(1) }), {
       fontFamily: 'Arial',
       fontSize: '15px',
       color: theme.visual.glowColor,
     }).setOrigin(0.5, 0));
-    card.add(this.add.text(202, -2, t('tableSelect.roundCost', { cost: totalCost }), {
+    card.add(this.add.text(202, -2, complimentaryEntry
+      ? t('tableSelect.complimentaryEntryCost')
+      : t('tableSelect.roundCost', { cost: totalCost }), {
       fontFamily: 'Arial',
       fontSize: '15px',
       color: canEnter ? COLORS.accentText : COLORS.dangerText,
@@ -172,17 +193,30 @@ export class TableSelectScene extends Phaser.Scene {
 
     card.add(this.add.rectangle(0, 70, 410, 76, 0x0c0d10, 0.24).setStrokeStyle(1, COLORS.line, 0.35));
 
-    card.add(this.add.text(-196, 37, t('tableSelect.stake'), {
+    card.add(this.add.text(-196, 35, `${t('tableSelect.stake')} · ${t(difficulty.labelKey)}`, {
       fontFamily: 'Arial',
       fontSize: '13px',
+      color: theme.visual.glowColor,
+      fontStyle: 'bold',
+    }));
+    card.add(this.add.text(-196, 52, t(difficulty.descriptionKey), {
+      fontFamily: 'Arial',
+      fontSize: '11px',
       color: COLORS.muted,
     }));
+    card.add(this.add.text(202, 35, t('tableSelect.maxRewardPreview', { reward: maxReward }), {
+      fontFamily: 'Arial',
+      fontSize: '13px',
+      color: theme.visual.glowColor,
+      fontStyle: 'bold',
+    }).setOrigin(1, 0));
 
     ENTRY_STAKE_MULTIPLIERS.forEach((multiplier, index) => {
       const cost = this.roundCost(theme, multiplier);
-      const affordable = getProgress().soulCoins >= cost;
+      const affordable = (multiplier === 1 && hasComplimentaryTableEntry(theme.id))
+        || getProgress().soulCoins >= cost;
       const selected = multiplier === stake;
-      card.add(this.button(-154 + index * 58, 79, 52, 38, `${multiplier}x`, () => {
+      card.add(this.button(-154 + index * 58, 86, 52, 38, `${multiplier}x`, () => {
         this.stakeByTheme[theme.id] = multiplier;
         this.render();
       }, {
@@ -193,9 +227,151 @@ export class TableSelectScene extends Phaser.Scene {
       }));
     });
 
-    card.add(this.button(112, 79, 176, 42, canEnter ? t('tableSelect.enter') : t('tableSelect.notEnoughCoinsShort'), () => {
+    const enterLabel = complimentaryEntry
+      ? t('tableSelect.complimentaryEnter')
+      : canEnter
+        ? t('tableSelect.enter')
+        : t('tableSelect.notEnoughCoinsShort');
+    card.add(this.button(112, 86, 176, 42, enterLabel, () => {
       this.enterTheme(theme, stake);
     }, { fontSize: '16px', enabled: canEnter }));
+  }
+
+  private renderReliefThemeContent(card: Phaser.GameObjects.Container, theme: TableThemeConfig): void {
+    card.add(this.add.text(-202, -4, t('tableSelect.reliefTitle'), {
+      fontFamily: 'Arial',
+      fontSize: '18px',
+      color: theme.visual.glowColor,
+      fontStyle: 'bold',
+    }));
+    card.add(this.add.text(202, -2, t('tableSelect.reliefFree'), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: COLORS.accentText,
+      fontStyle: 'bold',
+    }).setOrigin(1, 0));
+    card.add(this.add.rectangle(0, 70, 410, 76, 0x0c0d10, 0.24).setStrokeStyle(1, COLORS.line, 0.35));
+    card.add(this.add.text(-196, 43, t('tableSelect.reliefHint', { target: RELIEF_TARGET_COINS }), {
+      fontFamily: 'Arial',
+      fontSize: '13px',
+      color: COLORS.muted,
+      lineSpacing: 4,
+    }));
+    card.add(this.button(112, 72, 176, 44, t('tableSelect.reliefEnter'), () => {
+      this.enterReliefTheme(theme);
+    }, {
+      fontSize: '16px',
+      fill: theme.visual.accentColor,
+      textColor: '#101114',
+    }));
+  }
+
+  private renderLockedThemeContent(card: Phaser.GameObjects.Container, theme: TableThemeConfig): void {
+    const unlock = theme.unlock;
+    if (!unlock) {
+      card.add(this.add.text(0, 52, t('tableSelect.locked'), {
+        fontFamily: 'Arial',
+        fontSize: '18px',
+        color: COLORS.muted,
+      }).setOrigin(0.5));
+      return;
+    }
+
+    const progress = getProgress();
+    const currentWins = progress.formalTableStats.wins;
+    const hasWins = currentWins >= unlock.requiredFormalWins;
+    const canAfford = progress.soulCoins >= unlock.coinCost;
+    const canUnlock = hasWins && canAfford;
+
+    card.add(this.add.text(-170, -58, '🔒', {
+      fontFamily: 'Arial',
+      fontSize: '23px',
+      color: COLORS.text,
+    }).setOrigin(0.5).setShadow(0, 0, '#000000', 7, true, true));
+
+    card.add(this.add.text(-202, -2, t('tableSelect.unlockProgress', {
+      current: Math.min(currentWins, unlock.requiredFormalWins),
+      required: unlock.requiredFormalWins,
+    }), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: hasWins ? theme.visual.glowColor : COLORS.muted,
+    }));
+    card.add(this.add.text(202, -2, t('tableSelect.unlockCost', { cost: unlock.coinCost }), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: canAfford ? COLORS.accentText : COLORS.dangerText,
+      fontStyle: 'bold',
+    }).setOrigin(1, 0));
+
+    card.add(this.add.rectangle(0, 70, 410, 76, 0x0c0d10, 0.24).setStrokeStyle(1, COLORS.line, 0.35));
+    const label = !hasWins
+      ? t('tableSelect.winsRequiredShort')
+      : !canAfford
+        ? t('tableSelect.notEnoughCoinsShort')
+        : t('tableSelect.unlock');
+    card.add(this.button(0, 70, 238, 44, label, () => {
+      this.showUnlockConfirmation(theme);
+    }, {
+      fontSize: '16px',
+      enabled: canUnlock,
+      fill: canUnlock ? theme.visual.accentColor : undefined,
+      textColor: canUnlock ? '#101114' : undefined,
+    }));
+  }
+
+  private showUnlockConfirmation(theme: TableThemeConfig): void {
+    const unlock = theme.unlock;
+    if (!unlock) {
+      return;
+    }
+
+    const overlay = this.add.container(0, 0).setDepth(100);
+    const blocker = this.add.rectangle(640, 360, 1280, 720, 0x050608, 0.76).setInteractive();
+    const panel = this.add.rectangle(640, 360, 520, 292, COLORS.panel, 0.99).setStrokeStyle(2, theme.visual.accentColor);
+    const title = this.add.text(640, 270, t('tableSelect.unlockConfirmTitle'), {
+      fontFamily: 'Arial',
+      fontSize: '30px',
+      color: COLORS.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setShadow(0, 0, theme.visual.glowColor, 9, true, true);
+    const body = this.add.text(640, 350, t('tableSelect.unlockConfirmBody', {
+      name: t(theme.nameKey),
+      cost: unlock.coinCost,
+      remaining: getProgress().soulCoins - unlock.coinCost,
+    }), {
+      fontFamily: 'Arial',
+      fontSize: '19px',
+      color: COLORS.muted,
+      align: 'center',
+      lineSpacing: 8,
+    }).setOrigin(0.5);
+    const cancel = this.button(515, 442, 190, 46, t('tableSelect.unlockCancel'), () => {
+      overlay.destroy(true);
+    }, { fontSize: '17px' });
+    const confirm = this.button(765, 442, 190, 46, t('tableSelect.unlockConfirm'), () => {
+      const result = tryPurchaseTableTheme(theme.id, unlock.coinCost, unlock.requiredFormalWins);
+      overlay.destroy(true);
+      if (result.status === 'unlocked') {
+        this.render(t('tableSelect.unlockSuccess', { name: t(theme.nameKey), total: result.total }));
+        return;
+      }
+      if (result.status === 'wins-required') {
+        this.render(t('tableSelect.unlockWinsMissing', { current: result.currentWins, required: result.requiredWins }));
+        return;
+      }
+      if (result.status === 'not-enough-coins') {
+        this.render(t('tableSelect.notEnoughCoins', { cost: result.cost, total: result.total }));
+        return;
+      }
+      this.render(t('tableSelect.unlockAlreadyOwned'));
+    }, {
+      fontSize: '17px',
+      fill: theme.visual.accentColor,
+      textColor: '#101114',
+    });
+
+    overlay.add([blocker, panel, title, body, cancel, confirm]);
   }
 
   private renderComingSoonCard(x: number, y: number): void {
@@ -277,8 +453,20 @@ export class TableSelectScene extends Phaser.Scene {
   }
 
   private enterTheme(theme: TableThemeConfig, stakeMultiplier: EntryStakeMultiplier): void {
+    if (stakeMultiplier === 1 && consumeComplimentaryTableEntry(theme.id)) {
+      this.render(t('tableSelect.complimentaryEntryUsed', { name: t(theme.nameKey) }));
+      this.time.delayedCall(320, () => this.scene.start('BattleScene', {
+        tableThemeId: theme.id,
+        stakeMultiplier,
+      }));
+      return;
+    }
+
     const cost = this.roundCost(theme, stakeMultiplier);
-    const entry = tryPayEntryCost(cost);
+    const entry = tryPayEntryCost(cost, {
+      themeId: theme.id,
+      stakeMultiplier,
+    });
     if (!entry.paid) {
       this.render(t('tableSelect.notEnoughCoins', { cost, total: entry.total }));
       return;
@@ -289,6 +477,19 @@ export class TableSelectScene extends Phaser.Scene {
       tableThemeId: theme.id,
       stakeMultiplier,
     }));
+  }
+
+  private enterReliefTheme(theme: TableThemeConfig): void {
+    if (theme.id !== 'evernight_tavern' || getProgress().soulCoins >= RELIEF_COIN_THRESHOLD) {
+      this.render();
+      return;
+    }
+
+    this.scene.start('BattleScene', {
+      tableThemeId: theme.id,
+      stakeMultiplier: 1,
+      reliefMode: true,
+    });
   }
 
   private roundCost(theme: TableThemeConfig, stakeMultiplier: EntryStakeMultiplier): number {

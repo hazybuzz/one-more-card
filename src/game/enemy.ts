@@ -45,7 +45,11 @@ export function createEnemies(): EnemyState[] {
   return createEnemiesForLevel();
 }
 
-export function createEnemiesForLevel(level?: LevelConfig, tableTheme?: TableThemeConfig): EnemyState[] {
+export function createEnemiesForLevel(
+  level?: LevelConfig,
+  tableTheme?: TableThemeConfig,
+  enemyHpModifier = 0,
+): EnemyState[] {
   const enemyIds = level?.enemyIds ?? tableTheme?.enemyIds ?? ENEMIES.map((enemy) => enemy.id);
   return enemyIds.map((enemyId) => {
     const enemyConfig = ENEMY_CONFIGS[enemyId];
@@ -54,7 +58,10 @@ export function createEnemiesForLevel(level?: LevelConfig, tableTheme?: TableThe
       throw new Error(`Unknown enemy id: ${enemyId}`);
     }
 
-    const maxHp = level?.enemyHpOverrides?.[enemyId] ?? baseEnemy.maxHp;
+    const adjustedThemeHp = tableTheme && enemyId !== 'einherjar'
+      ? Math.max(1, baseEnemy.maxHp + enemyHpModifier)
+      : baseEnemy.maxHp;
+    const maxHp = level?.enemyHpOverrides?.[enemyId] ?? adjustedThemeHp;
     return {
       ...baseEnemy,
       maxHp,
@@ -80,11 +87,11 @@ export function createEnemiesForLevel(level?: LevelConfig, tableTheme?: TableThe
   });
 }
 
-export function decideInvite(enemy: EnemyState, playerPoint?: number): EnemyDecision {
+export function decideInvite(enemy: EnemyState, playerPoint?: number, passiveHpThreshold = 3): EnemyDecision {
   const point = scoreHand(enemy.hand).point;
 
   if (enemy.id === 'goblin') {
-    if (enemy.hp < 3 && playerPoint !== undefined) {
+    if (enemy.hp < passiveHpThreshold && playerPoint !== undefined) {
       if (point >= playerPoint) {
         return chance(0.08, t('enemy.ai.goblin.peekSafe'));
       }

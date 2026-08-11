@@ -1,10 +1,34 @@
 import { CHAPTERS } from './data/chapters';
 import type { CosmeticId } from './types/cosmetic';
+import {
+  ECONOMY_EXPENSE_SINKS,
+  ECONOMY_INCOME_SOURCES,
+  type EconomyExpenseSink,
+  type EconomyIncomeSource,
+  type EconomyStats,
+  type EconomyTransaction,
+  type EconomyTransactionContext,
+} from './types/economy';
+import { TABLE_THEME_IDS, type TableThemeId } from './types/tableTheme';
 
 export interface BattleStats {
   wins: number;
   losses: number;
   battlesPlayed: number;
+}
+
+export interface FormalTableStats extends BattleStats {
+  winsByTheme: Partial<Record<TableThemeId, number>>;
+}
+
+export type TableThemePurchaseStatus = 'unlocked' | 'already-unlocked' | 'wins-required' | 'not-enough-coins';
+
+export interface TableThemePurchaseResult {
+  status: TableThemePurchaseStatus;
+  cost: number;
+  total: number;
+  currentWins: number;
+  requiredWins: number;
 }
 
 export interface StoryProgress {
@@ -16,8 +40,13 @@ export interface GameProgress {
   soulCoins: number;
   ownedItems: Record<string, number>;
   ownedCosmetics: CosmeticId[];
+  unlockedTableThemeIds: TableThemeId[];
+  complimentaryTableEntryThemeIds: TableThemeId[];
   equippedAttackEffect?: CosmeticId;
   stats: BattleStats;
+  formalTableStats: FormalTableStats;
+  economyStats: EconomyStats;
+  economyTransactions: EconomyTransaction[];
   story: StoryProgress;
 }
 
@@ -29,12 +58,39 @@ const DEFAULT_PROGRESS: GameProgress = {
     heal_potion: 2,
   },
   ownedCosmetics: [],
+  unlockedTableThemeIds: ['evernight_tavern'],
+  complimentaryTableEntryThemeIds: [],
   equippedAttackEffect: undefined,
   stats: {
     wins: 0,
     losses: 0,
     battlesPlayed: 0,
   },
+  formalTableStats: {
+    wins: 0,
+    losses: 0,
+    battlesPlayed: 0,
+    winsByTheme: {},
+  },
+  economyStats: {
+    openingBalance: 100,
+    totalEarned: 0,
+    totalSpent: 0,
+    incomeBySource: {
+      story_first_clear: 0,
+      formal_victory: 0,
+      relief: 0,
+      pvp_victory: 0,
+    },
+    spendingBySink: {
+      formal_entry: 0,
+      item_purchase: 0,
+      cosmetic_purchase: 0,
+      theme_unlock: 0,
+      pvp_loss: 0,
+    },
+  },
+  economyTransactions: [],
   story: {
     unlockedLevelIds: ['chapter1_1'],
     completedLevelIds: [],
@@ -47,23 +103,45 @@ export function getProgress(): GameProgress {
   return progress;
 }
 
-export function setSoulCoins(amount: number): void {
-  progress.soulCoins = Math.max(0, Math.floor(amount));
+export function grantSoulCoins(
+  source: EconomyIncomeSource,
+  amount: number,
+  context: EconomyTransactionContext = {},
+): number {
+  const reward = Math.max(0, Math.floor(amount));
+  if (reward <= 0) {
+    return 0;
+  }
+
+  progress.soulCoins += reward;
+  progress.economyStats.totalEarned += reward;
+  progress.economyStats.incomeBySource[source] += reward;
+  appendEconomyTransaction('income', source, reward, context);
   saveProgress();
+  return reward;
 }
 
-export function addSoulCoins(amount: number): void {
-  setSoulCoins(progress.soulCoins + amount);
-}
-
-export function spendSoulCoins(amount: number): boolean {
+export function spendSoulCoins(
+  sink: EconomyExpenseSink,
+  amount: number,
+  context: EconomyTransactionContext = {},
+): boolean {
   const cost = Math.max(0, Math.floor(amount));
   if (progress.soulCoins < cost) {
     return false;
   }
 
-  setSoulCoins(progress.soulCoins - cost);
+  applySoulCoinExpense(sink, cost, context);
+  saveProgress();
   return true;
+}
+
+export function getEconomyDebugSnapshot(): Pick<GameProgress, 'soulCoins' | 'economyStats' | 'economyTransactions'> {
+  return {
+    soulCoins: progress.soulCoins,
+    economyStats: cloneEconomyStats(progress.economyStats),
+    economyTransactions: progress.economyTransactions.map((transaction) => ({ ...transaction })),
+  };
 }
 
 export function addItem(itemId: string, count = 1): void {
@@ -111,6 +189,77 @@ export function addCosmetic(cosmeticId: CosmeticId): void {
   saveProgress();
 }
 
+export function isTableThemeUnlocked(themeId: TableThemeId): boolean {
+  return progress.unlockedTableThemeIds.includes(themeId);
+}
+
+export function unlockTableTheme(themeId: TableThemeId): boolean {
+  if (isTableThemeUnlocked(themeId)) {
+    return false;
+  }
+
+  progress.unlockedTableThemeIds.push(themeId);
+  grantComplimentaryTableEntry(themeId);
+  saveProgress();
+  return true;
+}
+
+export function hasComplimentaryTableEntry(themeId: TableThemeId): boolean {
+  return progress.complimentaryTableEntryThemeIds.includes(themeId);
+}
+
+export function consumeComplimentaryTableEntry(themeId: TableThemeId): boolean {
+  const index = progress.complimentaryTableEntryThemeIds.indexOf(themeId);
+  if (index < 0) {
+    return false;
+  }
+
+  progress.complimentaryTableEntryThemeIds.splice(index, 1);
+  saveProgress();
+  return true;
+}
+
+export function tryPurchaseTableTheme(
+  themeId: TableThemeId,
+  coinCost: number,
+  requiredFormalWins: number,
+): TableThemePurchaseResult {
+  const cost = Math.max(0, Math.floor(coinCost));
+  const requiredWins = Math.max(0, Math.floor(requiredFormalWins));
+  const currentWins = progress.formalTableStats.wins;
+  const result = (status: TableThemePurchaseStatus): TableThemePurchaseResult => ({
+    status,
+    cost,
+    total: progress.soulCoins,
+    currentWins,
+    requiredWins,
+  });
+
+  if (isTableThemeUnlocked(themeId)) {
+    return result('already-unlocked');
+  }
+  if (currentWins < requiredWins) {
+    return result('wins-required');
+  }
+  if (progress.soulCoins < cost) {
+    return result('not-enough-coins');
+  }
+
+  applySoulCoinExpense('theme_unlock', cost, { themeId });
+  progress.unlockedTableThemeIds.push(themeId);
+  grantComplimentaryTableEntry(themeId);
+  saveProgress();
+  return result('unlocked');
+}
+
+function grantComplimentaryTableEntry(themeId: TableThemeId): void {
+  if (themeId === 'evernight_tavern' || progress.complimentaryTableEntryThemeIds.includes(themeId)) {
+    return;
+  }
+
+  progress.complimentaryTableEntryThemeIds.push(themeId);
+}
+
 export function equipAttackEffect(cosmeticId: CosmeticId): boolean {
   if (!ownsCosmetic(cosmeticId)) {
     return false;
@@ -132,6 +281,22 @@ export function recordBattleResult(outcome: 'victory' | 'defeat'): void {
     progress.stats.wins += 1;
   } else {
     progress.stats.losses += 1;
+  }
+
+  saveProgress();
+}
+
+export function recordFormalTableResult(outcome: 'victory' | 'defeat', themeId: TableThemeId): void {
+  progress.stats.battlesPlayed += 1;
+  progress.formalTableStats.battlesPlayed += 1;
+
+  if (outcome === 'victory') {
+    progress.stats.wins += 1;
+    progress.formalTableStats.wins += 1;
+    progress.formalTableStats.winsByTheme[themeId] = (progress.formalTableStats.winsByTheme[themeId] ?? 0) + 1;
+  } else {
+    progress.stats.losses += 1;
+    progress.formalTableStats.losses += 1;
   }
 
   saveProgress();
@@ -190,20 +355,159 @@ function saveProgress(): void {
   }
 }
 
+function applySoulCoinExpense(
+  sink: EconomyExpenseSink,
+  cost: number,
+  context: EconomyTransactionContext,
+): void {
+  if (cost <= 0) {
+    return;
+  }
+
+  progress.soulCoins -= cost;
+  progress.economyStats.totalSpent += cost;
+  progress.economyStats.spendingBySink[sink] += cost;
+  appendEconomyTransaction('expense', sink, cost, context);
+}
+
+function appendEconomyTransaction(
+  direction: 'income' | 'expense',
+  category: EconomyIncomeSource | EconomyExpenseSink,
+  amount: number,
+  context: EconomyTransactionContext,
+): void {
+  progress.economyTransactions.push({
+    timestamp: Date.now(),
+    direction,
+    category,
+    amount,
+    balanceAfter: progress.soulCoins,
+    ...context,
+  });
+  progress.economyTransactions = progress.economyTransactions.slice(-100);
+}
+
 function normalizeProgress(value: Partial<GameProgress>): GameProgress {
   const defaultProgress = cloneProgress(DEFAULT_PROGRESS);
+  const soulCoins = normalizeNumber(value.soulCoins, defaultProgress.soulCoins);
+  const unlockedTableThemeIds = normalizeUnlockedTableThemeIds(value.unlockedTableThemeIds);
   return {
-    soulCoins: normalizeNumber(value.soulCoins, defaultProgress.soulCoins),
+    soulCoins,
     ownedItems: normalizeItems(value.ownedItems),
     ownedCosmetics: normalizeCosmetics(value.ownedCosmetics),
+    unlockedTableThemeIds,
+    complimentaryTableEntryThemeIds: normalizeComplimentaryTableEntryThemeIds(
+      value.complimentaryTableEntryThemeIds,
+      unlockedTableThemeIds,
+    ),
     equippedAttackEffect: normalizeEquippedAttackEffect(value.equippedAttackEffect, value.ownedCosmetics),
     stats: {
       wins: normalizeNumber(value.stats?.wins, defaultProgress.stats.wins),
       losses: normalizeNumber(value.stats?.losses, defaultProgress.stats.losses),
       battlesPlayed: normalizeNumber(value.stats?.battlesPlayed, defaultProgress.stats.battlesPlayed),
     },
+    formalTableStats: normalizeFormalTableStats(value.formalTableStats),
+    economyStats: normalizeEconomyStats(value.economyStats, soulCoins),
+    economyTransactions: normalizeEconomyTransactions(value.economyTransactions),
     story: normalizeStoryProgress(value.story),
   };
+}
+
+function normalizeEconomyStats(stats: unknown, currentBalance: number): EconomyStats {
+  if (!stats || typeof stats !== 'object' || Array.isArray(stats)) {
+    return {
+      ...cloneEconomyStats(DEFAULT_PROGRESS.economyStats),
+      openingBalance: currentBalance,
+    };
+  }
+
+  const value = stats as Partial<EconomyStats>;
+  return {
+    openingBalance: normalizeNumber(value.openingBalance, currentBalance),
+    totalEarned: normalizeNumber(value.totalEarned, 0),
+    totalSpent: normalizeNumber(value.totalSpent, 0),
+    incomeBySource: normalizeCategoryTotals(value.incomeBySource, ECONOMY_INCOME_SOURCES),
+    spendingBySink: normalizeCategoryTotals(value.spendingBySink, ECONOMY_EXPENSE_SINKS),
+  };
+}
+
+function normalizeCategoryTotals<T extends string>(value: unknown, categories: readonly T[]): Record<T, number> {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  return categories.reduce<Record<T, number>>((normalized, category) => {
+    normalized[category] = normalizeNumber(source[category], 0);
+    return normalized;
+  }, {} as Record<T, number>);
+}
+
+function normalizeEconomyTransactions(transactions: unknown): EconomyTransaction[] {
+  if (!Array.isArray(transactions)) {
+    return [];
+  }
+
+  const validIncome = new Set<string>(ECONOMY_INCOME_SOURCES);
+  const validExpenses = new Set<string>(ECONOMY_EXPENSE_SINKS);
+  return transactions.flatMap<EconomyTransaction>((transaction) => {
+    if (!transaction || typeof transaction !== 'object' || Array.isArray(transaction)) {
+      return [];
+    }
+
+    const value = transaction as Partial<EconomyTransaction>;
+    const category = typeof value.category === 'string' ? value.category : '';
+    const direction = value.direction;
+    if (
+      (direction !== 'income' && direction !== 'expense')
+      || (direction === 'income' && !validIncome.has(category))
+      || (direction === 'expense' && !validExpenses.has(category))
+    ) {
+      return [];
+    }
+
+    return [{
+      timestamp: normalizeNumber(value.timestamp, 0),
+      direction,
+      category: category as EconomyTransaction['category'],
+      amount: normalizeNumber(value.amount, 0),
+      balanceAfter: normalizeNumber(value.balanceAfter, 0),
+      ...(typeof value.levelId === 'string' ? { levelId: value.levelId } : {}),
+      ...(TABLE_THEME_IDS.includes(value.themeId as TableThemeId) ? { themeId: value.themeId as TableThemeId } : {}),
+      ...(value.stakeMultiplier === 1 || value.stakeMultiplier === 2 || value.stakeMultiplier === 3
+        ? { stakeMultiplier: value.stakeMultiplier }
+        : {}),
+      ...(typeof value.itemId === 'string' ? { itemId: value.itemId } : {}),
+      ...(typeof value.cosmeticId === 'string' ? { cosmeticId: value.cosmeticId } : {}),
+    }];
+  }).slice(-100);
+}
+
+function normalizeFormalTableStats(stats: unknown): FormalTableStats {
+  const defaultStats = DEFAULT_PROGRESS.formalTableStats;
+  if (!stats || typeof stats !== 'object' || Array.isArray(stats)) {
+    return cloneFormalTableStats(defaultStats);
+  }
+
+  const value = stats as Partial<FormalTableStats>;
+  return {
+    wins: normalizeNumber(value.wins, defaultStats.wins),
+    losses: normalizeNumber(value.losses, defaultStats.losses),
+    battlesPlayed: normalizeNumber(value.battlesPlayed, defaultStats.battlesPlayed),
+    winsByTheme: normalizeWinsByTheme(value.winsByTheme),
+  };
+}
+
+function normalizeWinsByTheme(winsByTheme: unknown): Partial<Record<TableThemeId, number>> {
+  if (!winsByTheme || typeof winsByTheme !== 'object' || Array.isArray(winsByTheme)) {
+    return {};
+  }
+
+  return TABLE_THEME_IDS.reduce<Partial<Record<TableThemeId, number>>>((normalized, themeId) => {
+    const wins = normalizeNumber((winsByTheme as Record<string, unknown>)[themeId], 0);
+    if (wins > 0) {
+      normalized[themeId] = wins;
+    }
+    return normalized;
+  }, {});
 }
 
 function normalizeCosmetics(cosmetics: unknown): CosmeticId[] {
@@ -213,6 +517,33 @@ function normalizeCosmetics(cosmetics: unknown): CosmeticId[] {
   }
 
   return uniqueStrings(cosmetics.filter((item): item is CosmeticId => validCosmetics.includes(item as CosmeticId))) as CosmeticId[];
+}
+
+function normalizeUnlockedTableThemeIds(themeIds: unknown): TableThemeId[] {
+  const validThemeIds = new Set<string>(TABLE_THEME_IDS);
+  const normalized = Array.isArray(themeIds)
+    ? themeIds.filter((themeId): themeId is TableThemeId => typeof themeId === 'string' && validThemeIds.has(themeId))
+    : [];
+
+  return uniqueStrings(['evernight_tavern', ...normalized]) as TableThemeId[];
+}
+
+function normalizeComplimentaryTableEntryThemeIds(themeIds: unknown, unlockedThemeIds: TableThemeId[]): TableThemeId[] {
+  if (themeIds === undefined) {
+    return unlockedThemeIds.filter((themeId) => themeId !== 'evernight_tavern');
+  }
+
+  const unlocked = new Set<TableThemeId>(unlockedThemeIds);
+  const validThemeIds = new Set<string>(TABLE_THEME_IDS);
+  const normalized = Array.isArray(themeIds)
+    ? themeIds.filter((themeId): themeId is TableThemeId => (
+      typeof themeId === 'string'
+      && themeId !== 'evernight_tavern'
+      && validThemeIds.has(themeId)
+      && unlocked.has(themeId as TableThemeId)
+    ))
+    : [];
+  return uniqueStrings(normalized) as TableThemeId[];
 }
 
 function normalizeEquippedAttackEffect(value: unknown, ownedCosmetics: unknown): CosmeticId | undefined {
@@ -302,9 +633,33 @@ function cloneProgress(value: GameProgress): GameProgress {
     soulCoins: value.soulCoins,
     ownedItems: { ...value.ownedItems },
     ownedCosmetics: [...value.ownedCosmetics],
+    unlockedTableThemeIds: [...value.unlockedTableThemeIds],
+    complimentaryTableEntryThemeIds: [...value.complimentaryTableEntryThemeIds],
     equippedAttackEffect: value.equippedAttackEffect,
     stats: { ...value.stats },
+    formalTableStats: cloneFormalTableStats(value.formalTableStats),
+    economyStats: cloneEconomyStats(value.economyStats),
+    economyTransactions: value.economyTransactions.map((transaction) => ({ ...transaction })),
     story: cloneStoryProgress(value.story),
+  };
+}
+
+function cloneEconomyStats(value: EconomyStats): EconomyStats {
+  return {
+    openingBalance: value.openingBalance,
+    totalEarned: value.totalEarned,
+    totalSpent: value.totalSpent,
+    incomeBySource: { ...value.incomeBySource },
+    spendingBySink: { ...value.spendingBySink },
+  };
+}
+
+function cloneFormalTableStats(value: FormalTableStats): FormalTableStats {
+  return {
+    wins: value.wins,
+    losses: value.losses,
+    battlesPlayed: value.battlesPlayed,
+    winsByTheme: { ...value.winsByTheme },
   };
 }
 

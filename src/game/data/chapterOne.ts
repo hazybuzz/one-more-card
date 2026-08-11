@@ -15,7 +15,7 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
     fixedRounds: FIXED_DEALS.chapter1_1,
     useRandomAfterFixedRounds: true,
     tutorialTips: [{ id: 'invite_goblin', textKey: 'tutorial.chapter1.inviteGoblin' }],
-    rewards: [{ soulCoins: 20 }],
+    rewards: [{ soulCoins: 15 }],
   },
   {
     id: 'chapter1_2',
@@ -28,7 +28,7 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
     unlockedMechanics: ['invite', 'compare'],
     fixedRounds: FIXED_DEALS.chapter1_2,
     useRandomAfterFixedRounds: false,
-    rewards: [{ soulCoins: 22 }],
+    rewards: [{ soulCoins: 20 }],
   },
   {
     id: 'chapter1_3',
@@ -43,7 +43,7 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
     levelIntroLessonKey: 'tutorial.chapter1_3.gamblerProfile',
     fixedRounds: FIXED_DEALS.chapter1_3,
     useRandomAfterFixedRounds: true,
-    rewards: [{ soulCoins: 24 }],
+    rewards: [{ soulCoins: 25 }],
   },
   {
     id: 'chapter1_4',
@@ -58,7 +58,7 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
     levelIntroLessonKey: 'tutorial.chapter1_4.resonanceRule',
     fixedRounds: FIXED_DEALS.chapter1_4,
     useRandomAfterFixedRounds: false,
-    rewards: [{ soulCoins: 26 }],
+    rewards: [{ soulCoins: 30 }],
   },
   {
     id: 'chapter1_6',
@@ -72,7 +72,7 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
     levelIntroLessonKey: 'tutorial.chapter1_6.skillIntro',
     fixedRounds: FIXED_DEALS.chapter1_6,
     useRandomAfterFixedRounds: false,
-    rewards: [{ soulCoins: 30 }],
+    rewards: [{ soulCoins: 35 }],
   },
   {
     id: 'chapter1_7',
@@ -85,7 +85,7 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
     unlockedMechanics: ['compare', 'player_draw', 'resonance', 'items'],
     fixedRounds: FIXED_DEALS.chapter1_7,
     useRandomAfterFixedRounds: false,
-    rewards: [{ soulCoins: 32 }],
+    rewards: [{ soulCoins: 40 }],
   },
   {
     id: 'chapter1_8',
@@ -102,7 +102,7 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
       enemyId: 'keeper',
       dialogueKey: 'dialogue.chapter1.boss',
     },
-    rewards: [{ soulCoins: 40 }],
+    rewards: [{ soulCoins: 50 }],
   },
   {
     id: 'chapter1_9',
@@ -114,7 +114,7 @@ export const CHAPTER_ONE_LEVELS: LevelConfig[] = [
     unlockedMechanics: ['invite', 'compare', 'player_draw', 'resonance', 'skills', 'items', 'soul_redeem', 'enemy_passives'],
     levelIntroLessonKey: 'tutorial.chapter1_9.standardGameIntro',
     useRandomAfterFixedRounds: true,
-    rewards: [{ soulCoins: 50 }],
+    rewards: [{ soulCoins: 60 }],
   },
 ];
 

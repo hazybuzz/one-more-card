@@ -10,5 +10,6 @@ export interface ItemConfig {
   descriptionKey: string;
   useTiming: ItemUseTiming;
   effectId: ItemEffectId;
+  maxUsesPerBattle?: number;
   resourceKey?: string;
 }

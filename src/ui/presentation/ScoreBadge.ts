@@ -6,12 +6,26 @@ export interface ScoreBadgeOptions {
   point: number;
   label?: string;
   scale?: number;
+  variant?: 'orb' | 'compact';
 }
 
 export function createScoreBadge(scene: Phaser.Scene, options: ScoreBadgeOptions): Phaser.GameObjects.Container {
   const scale = options.scale ?? 1;
   const color = pointColor(options.point);
   const badge = scene.add.container(options.x, options.y);
+  if (options.variant === 'compact') {
+    badge.add(scene.add.rectangle(0, 0, 58, 26, color.fill, 0.2).setStrokeStyle(2, color.stroke, 0.9));
+    const compactText = scene.add.text(0, 0, `${options.point} ${options.label ?? '点'}`, {
+      fontFamily: 'Arial',
+      fontSize: '17px',
+      color: color.text,
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    compactText.setShadow(0, 0, color.glow, 8, true, true);
+    badge.add(compactText);
+    return badge;
+  }
+
   badge.add(scene.add.circle(0, 0, 31 * scale, color.fill, 0.18).setStrokeStyle(2, color.stroke, 0.95));
   badge.add(scene.add.circle(0, 0, 22 * scale, color.fill, 0.26));
   const pointText = scene.add.text(0, -3 * scale, `${options.point}`, {
@@ -50,4 +64,3 @@ function pointColor(point: number): { fill: number; stroke: number; text: string
 
   return { fill: 0x8b96aa, stroke: 0xb5c0d0, text: '#b5c0d0', glow: '#8b96aa' };
 }
-

@@ -74,7 +74,7 @@ export function createBattleUIState(state: BattleState, flags: BattleUIRuntimeFl
       summon: createSummonSkillState(state, inputLocked),
     },
     itemButton: {
-      enabled: hasMechanic(state, 'items') && flags.ownedItemCount > 0 && flags.itemUsesRemaining > 0 && !inputLocked,
+      enabled: hasMechanic(state, 'items') && state.phase !== 'battle-result' && !inputLocked,
     },
     autoAdvanceRound: !inputLocked && state.phase === 'round-result',
   };

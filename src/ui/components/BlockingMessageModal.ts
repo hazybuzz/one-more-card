@@ -42,7 +42,7 @@ export class BlockingMessageModal {
       color: options.colors.text,
       align: 'center',
       lineSpacing: 7,
-      wordWrap: { width: bodyWidth },
+      wordWrap: { width: bodyWidth, useAdvancedWrap: true },
     }).setOrigin(0.5);
 
     const button = scene.add.container(-100, buttonY - 25);

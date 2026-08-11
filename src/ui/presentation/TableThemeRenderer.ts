@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 import type { TableThemeVisualConfig } from '../../game/types/tableTheme';
+import type { BattleThemeArtManifest, ImageArtAsset } from '../art';
 
 export const DEFAULT_TABLE_THEME_VISUAL: TableThemeVisualConfig = {
   accentColor: 0xe8cf73,
+  enemyFrameColor: 0xaeb6c3,
   glowColor: '#e8cf73',
   backgroundColor: 0x101114,
   panelColor: 0x1b1d22,
@@ -17,24 +19,36 @@ export function resolveTableThemeVisual(visual?: TableThemeVisualConfig): TableT
   return visual ?? DEFAULT_TABLE_THEME_VISUAL;
 }
 
-export function renderBattleTableTheme(scene: Phaser.Scene, visual?: TableThemeVisualConfig): void {
+export function renderBattleTableTheme(
+  scene: Phaser.Scene,
+  visual?: TableThemeVisualConfig,
+  art?: BattleThemeArtManifest,
+): void {
   const resolvedVisual = resolveTableThemeVisual(visual);
-  if (resolvedVisual.motif === 'northern') {
+  if (art?.background && scene.textures.exists(art.background.textureKey)) {
+    renderArtLayer(scene, art.background, -30);
+  } else if (resolvedVisual.motif === 'northern') {
     renderNorthernTheme(scene, resolvedVisual);
-    return;
-  }
-
-  if (resolvedVisual.motif === 'dragon') {
+  } else if (resolvedVisual.motif === 'dragon') {
     renderDragonGateTheme(scene, resolvedVisual);
-    return;
-  }
-
-  if (resolvedVisual.motif === 'edo') {
+  } else if (resolvedVisual.motif === 'edo') {
     renderEdoTheme(scene, resolvedVisual);
-    return;
+  } else {
+    renderTavernTheme(scene, resolvedVisual);
   }
 
-  renderTavernTheme(scene, resolvedVisual);
+  if (art?.tableOverlay && scene.textures.exists(art.tableOverlay.textureKey)) {
+    renderArtLayer(scene, art.tableOverlay, -20);
+  }
+  if (art?.foreground && scene.textures.exists(art.foreground.textureKey)) {
+    renderArtLayer(scene, art.foreground, -10);
+  }
+}
+
+function renderArtLayer(scene: Phaser.Scene, asset: ImageArtAsset, depth: number): void {
+  scene.add.image(640, 360, asset.textureKey)
+    .setDisplaySize(1280, 720)
+    .setDepth(depth);
 }
 
 function renderTavernTheme(scene: Phaser.Scene, visual: TableThemeVisualConfig): void {
