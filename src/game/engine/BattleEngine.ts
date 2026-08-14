@@ -79,6 +79,7 @@ export class BattleEngine extends Battle {
           evaded: event.evaded,
           shielded: event.shielded,
           originalAmount: event.originalAmount,
+          killRewardHeal: event.killRewardHeal,
           guard: event.guard,
         };
       }),
@@ -165,8 +166,12 @@ export class BattleEngine extends Battle {
     });
 
     const playerHealed = this.player.hp - before.playerHp;
-    if (playerHealed > 0) {
-      this.presentationEvents.push({ type: 'heal', target: 'player', amount: playerHealed });
+    const attachedKillRewardHeal = this.damageEvents.reduce((total, event) => (
+      total + (event.killRewardHeal ?? 0) + (event.guard?.killRewardHeal ?? 0)
+    ), 0);
+    const standalonePlayerHeal = Math.max(0, playerHealed - attachedKillRewardHeal);
+    if (standalonePlayerHeal > 0) {
+      this.presentationEvents.push({ type: 'heal', target: 'player', amount: standalonePlayerHeal });
     }
 
     if (invitedEnemy?.invited && invitedEnemy.acceptedInvite !== undefined) {

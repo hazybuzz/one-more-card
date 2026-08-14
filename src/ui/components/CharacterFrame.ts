@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { NineSliceArtAsset } from '../art';
+import type { CharacterFrameArtAsset } from '../art';
 
 interface CharacterFrameOptions {
   x: number;
@@ -8,9 +8,25 @@ interface CharacterFrameOptions {
   height: number;
   accentColor: number;
   backgroundColor?: number;
-  skin?: NineSliceArtAsset;
+  skin?: CharacterFrameArtAsset;
+  shape?: 'rectangle' | 'circle';
+  backdrop?: 'none' | 'diamond';
   active?: boolean;
   muted?: boolean;
+}
+
+type NineSliceCharacterFrameArtAsset = CharacterFrameArtAsset & {
+  leftWidth: number;
+  rightWidth: number;
+  topHeight: number;
+  bottomHeight: number;
+};
+
+function isNineSliceSkin(asset: CharacterFrameArtAsset): asset is NineSliceCharacterFrameArtAsset {
+  return asset.leftWidth !== undefined
+    && asset.rightWidth !== undefined
+    && asset.topHeight !== undefined
+    && asset.bottomHeight !== undefined;
 }
 
 export class CharacterFrame {
@@ -20,6 +36,14 @@ export class CharacterFrame {
   constructor(scene: Phaser.Scene, options: CharacterFrameOptions) {
     this.container = scene.add.container(options.x, options.y);
     const alpha = options.muted ? 0.45 : 1;
+    const shape = options.shape ?? 'rectangle';
+
+    if (shape === 'circle') {
+      this.portraitLayer = scene.add.container(0, 0).setAlpha(alpha);
+      this.createCircularFrame(scene, options, alpha);
+      return;
+    }
+
     const background = scene.add.rectangle(0, 0, options.width, options.height, options.backgroundColor ?? 0x10151d, 0.92)
       .setStrokeStyle(2, options.accentColor, 0.3 * alpha);
     this.portraitLayer = scene.add.container(0, 0).setAlpha(alpha);
@@ -31,19 +55,20 @@ export class CharacterFrame {
       .setStrokeStyle(1, options.accentColor, 0.42 * alpha);
     this.container.add([background, this.portraitLayer]);
 
-    const hasSkin = options.skin && scene.textures.exists(options.skin.textureKey);
-    if (hasSkin) {
+    const skin = options.skin;
+    const hasSkin = Boolean(skin && scene.textures.exists(skin.textureKey));
+    if (skin && hasSkin && isNineSliceSkin(skin)) {
       this.container.add(scene.add.nineslice(
         0,
         0,
-        options.skin!.textureKey,
+        skin.textureKey,
         undefined,
         options.width + 8,
         options.height + 8,
-        options.skin!.leftWidth,
-        options.skin!.rightWidth,
-        options.skin!.topHeight,
-        options.skin!.bottomHeight,
+        skin.leftWidth,
+        skin.rightWidth,
+        skin.topHeight,
+        skin.bottomHeight,
       ).setAlpha(alpha));
     }
 
@@ -96,6 +121,180 @@ export class CharacterFrame {
 
   addPortrait(portrait: Phaser.GameObjects.GameObject): void {
     this.portraitLayer.add(portrait);
+  }
+
+  private createCircularFrame(scene: Phaser.Scene, options: CharacterFrameOptions, alpha: number): void {
+    const radius = Math.min(options.width, options.height) / 2;
+    const skin = options.skin;
+    const hasSkin = Boolean(skin && scene.textures.exists(skin.textureKey));
+    if (options.backdrop === 'diamond' && !hasSkin) {
+      this.container.add(this.createDiamondBackdrop(scene, radius, options.accentColor, alpha, Boolean(options.active)));
+    }
+    const background = scene.add.circle(0, 0, radius, options.backgroundColor ?? 0x10151d, 0.92)
+      .setStrokeStyle(2, options.accentColor, 0.32 * alpha);
+    const innerBorder = scene.add.circle(0, 0, radius - 7, 0x000000, 0)
+      .setStrokeStyle(1, 0xffffff, 0.17 * alpha);
+    const outerBorder = scene.add.circle(0, 0, radius + 4, 0x000000, 0)
+      .setStrokeStyle(options.active ? 4 : 2, options.accentColor, (options.active ? 1 : 0.76) * alpha);
+    this.container.add([background, this.portraitLayer]);
+    if (skin && hasSkin) {
+      const scale = skin.displayScale ?? 1;
+      this.container.add(scene.add.image(
+        skin.offsetX ?? 0,
+        skin.offsetY ?? 0,
+        skin.textureKey,
+      ).setDisplaySize(options.width * scale, options.height * scale).setAlpha(alpha));
+    } else {
+      this.container.add([innerBorder, outerBorder]);
+    }
+
+    if (!options.active) {
+      return;
+    }
+
+    const focusRadius = radius + 10;
+    const themeGlow = scene.add.circle(0, 0, focusRadius + 5, 0x000000, 0)
+      .setStrokeStyle(5, options.accentColor, 0.34);
+    const separator = scene.add.circle(0, 0, focusRadius + 1, 0x000000, 0)
+      .setStrokeStyle(6, 0x050608, 0.92);
+    const focusBorder = scene.add.circle(0, 0, focusRadius - 2, 0x000000, 0)
+      .setStrokeStyle(2, 0xfff6df, 0.94);
+    const segments = Array.from({ length: 4 }, (_, index) => this.focusArc(
+      scene,
+      focusRadius + 2,
+      -Math.PI / 2 + index * Math.PI / 2 + 0.16,
+      -Math.PI / 2 + index * Math.PI / 2 + 0.66,
+    ));
+    this.container.add([themeGlow, separator, focusBorder, ...segments]);
+
+    scene.tweens.add({
+      targets: [themeGlow, focusBorder],
+      alpha: { from: 0.5, to: 1 },
+      duration: 760,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    segments.forEach((segment, index) => {
+      scene.tweens.add({
+        targets: segment,
+        alpha: { from: 0.14, to: 1 },
+        duration: 240,
+        delay: index * 220,
+        yoyo: true,
+        repeat: -1,
+        repeatDelay: 500,
+        ease: 'Sine.easeInOut',
+      });
+    });
+    focusBorder.once(Phaser.GameObjects.Events.DESTROY, () => {
+      scene.tweens.killTweensOf([themeGlow, focusBorder, ...segments]);
+    });
+  }
+
+  private createDiamondBackdrop(
+    scene: Phaser.Scene,
+    radius: number,
+    accentColor: number,
+    alpha: number,
+    active: boolean,
+  ): Phaser.GameObjects.Container {
+    const backdrop = scene.add.container(0, 0).setAlpha(alpha);
+    const outerExtent = radius + 20;
+    const innerExtent = radius + 10;
+    const fill = scene.add.graphics();
+    fill.fillStyle(accentColor, 0.045);
+    fill.beginPath();
+    fill.moveTo(0, -outerExtent);
+    fill.lineTo(outerExtent, 0);
+    fill.lineTo(0, outerExtent);
+    fill.lineTo(-outerExtent, 0);
+    fill.closePath();
+    fill.fillPath();
+
+    const corners = Array.from({ length: 4 }, (_, index) => this.diamondCorner(
+      scene,
+      outerExtent,
+      innerExtent,
+      index,
+      accentColor,
+    ));
+    backdrop.add([fill, ...corners]);
+
+    if (!active) {
+      return backdrop;
+    }
+
+    scene.tweens.add({
+      targets: backdrop,
+      angle: { from: -4, to: 4 },
+      duration: 3000,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    corners.forEach((corner, index) => {
+      scene.tweens.add({
+        targets: corner,
+        alpha: { from: 0.44, to: 1 },
+        duration: 420,
+        delay: index * 260,
+        yoyo: true,
+        repeat: -1,
+        repeatDelay: 900,
+        ease: 'Sine.easeInOut',
+      });
+    });
+    backdrop.once(Phaser.GameObjects.Events.DESTROY, () => {
+      scene.tweens.killTweensOf([backdrop, ...corners]);
+    });
+    return backdrop;
+  }
+
+  private diamondCorner(
+    scene: Phaser.Scene,
+    outerExtent: number,
+    innerExtent: number,
+    index: number,
+    accentColor: number,
+  ): Phaser.GameObjects.Graphics {
+    const corner = scene.add.graphics();
+    this.drawDiamondCorner(corner, outerExtent, index, 24, 2, accentColor, 0.3);
+    this.drawDiamondCorner(corner, innerExtent, index, 18, 1, 0xfff6df, 0.17);
+    return corner;
+  }
+
+  private drawDiamondCorner(
+    graphics: Phaser.GameObjects.Graphics,
+    extent: number,
+    index: number,
+    length: number,
+    lineWidth: number,
+    color: number,
+    alpha: number,
+  ): void {
+    const vertices = [
+      { x: 0, y: -extent, before: { x: -length, y: -extent + length }, after: { x: length, y: -extent + length } },
+      { x: extent, y: 0, before: { x: extent - length, y: -length }, after: { x: extent - length, y: length } },
+      { x: 0, y: extent, before: { x: length, y: extent - length }, after: { x: -length, y: extent - length } },
+      { x: -extent, y: 0, before: { x: -extent + length, y: length }, after: { x: -extent + length, y: -length } },
+    ];
+    const vertex = vertices[index];
+    graphics.lineStyle(lineWidth, color, alpha);
+    graphics.beginPath();
+    graphics.moveTo(vertex.before.x, vertex.before.y);
+    graphics.lineTo(vertex.x, vertex.y);
+    graphics.lineTo(vertex.after.x, vertex.after.y);
+    graphics.strokePath();
+  }
+
+  private focusArc(scene: Phaser.Scene, radius: number, startAngle: number, endAngle: number): Phaser.GameObjects.Graphics {
+    const arc = scene.add.graphics().setAlpha(0.14);
+    arc.lineStyle(5, 0xffffff, 0.98);
+    arc.beginPath();
+    arc.arc(0, 0, radius, startAngle, endAngle, false);
+    arc.strokePath();
+    return arc;
   }
 
   private focusSegment(

@@ -24,7 +24,7 @@ import { AbilityOrbit } from '../ui/components/AbilityOrbit';
 import { AbilitySlot } from '../ui/components/AbilitySlot';
 import { BlockingMessageModal } from '../ui/components/BlockingMessageModal';
 import { CharacterFrame } from '../ui/components/CharacterFrame';
-import { HandView } from '../ui/components/HandView';
+import { HandView, resolveHandItemPose } from '../ui/components/HandView';
 import { HeartMeter } from '../ui/components/HeartMeter';
 import { ItemBar } from '../ui/components/ItemBar';
 import { SkillBar } from '../ui/components/SkillBar';
@@ -131,10 +131,13 @@ export class BattleScene extends Phaser.Scene {
   private stageBannerPlaying = false;
   private actionAnimationPlaying = false;
   private presentationSequencePlaying = false;
+  private revealFocusPlaying = false;
+  private revealFocusPendingEnemyIds = new Set<string>();
   private dealingRound = 0;
   private dealtPlayerCards = 0;
   private dealtEnemyCards = [0, 0, 0];
   private echoedResonanceRound = 0;
+  private resonanceShakeKeys = new Set<string>();
   private visualHpOverride?: { player: number; enemies: number[] };
   private visualEnemyDefeated?: boolean[];
   private hiddenRoundAttackBonusEnemyIds = new Set<string>();
@@ -257,6 +260,7 @@ export class BattleScene extends Phaser.Scene {
     this.battleItemUses = 0;
     this.battleItemUseCounts = {};
     this.grantedItemRoundIds.clear();
+    this.resonanceShakeKeys.clear();
     this.shownLessonRoundIds.clear();
     this.shownCompareHintKeys.clear();
     this.shownRevealDialogueRoundIds.clear();
@@ -352,6 +356,8 @@ export class BattleScene extends Phaser.Scene {
         height: hud.portrait.height,
         accentColor: visual.enemyFrameColor,
         skin: themeArt.enemyFrame,
+        shape: 'circle',
+        backdrop: 'diamond',
         active,
         muted: displayDefeated,
       });
@@ -428,10 +434,7 @@ export class BattleScene extends Phaser.Scene {
       if (this.shouldShowEnemyScore(enemy)) {
         const direction = hud.scoreSide === 'right' ? 1 : -1;
         const scoreX = hud.hand.x + direction * ((hand?.rightEdge ?? 0) + hud.scoreGap);
-        this.renderScoreBadge(container, scoreX, hud.hand.y, this.scoreEnemy(enemy).point, true);
-        if (this.hasMechanic('resonance')) {
-          container.add(this.resonanceLabel(scoreX, hud.hand.y + 34, this.scoreEnemy(enemy), '13px').setOrigin(0.5));
-        }
+        this.renderScoreBadge(container, scoreX, hud.hand.y, this.scoreEnemy(enemy), true, this.hasMechanic('resonance'));
       }
 
       this.renderEnemySpeech(container, enemy, hud.speech);
@@ -571,6 +574,8 @@ export class BattleScene extends Phaser.Scene {
       height: hud.portrait.height,
       accentColor: visual.accentColor,
       skin: getBattleThemeArt(this.battleArtSelection.themeId).playerFrame,
+      shape: 'circle',
+      backdrop: 'diamond',
       active: this.battle.phase === 'player-turn',
       muted: this.playerDisplayHp() <= 0,
     });
@@ -624,11 +629,7 @@ export class BattleScene extends Phaser.Scene {
     const scoreX = hud.hand.x + hand.rightEdge + hud.scoreGap;
     if (this.battle.phase !== 'choice' && !this.playerRedealing) {
       const score = this.battle.playerScore();
-      this.renderScoreBadge(container, scoreX, hud.hand.y, score.point, true);
-      if (this.hasMechanic('resonance')) {
-        const resonance = this.resonanceLabel(scoreX, hud.hand.y + 34, score, '13px').setOrigin(0.5);
-        container.add(resonance);
-      }
+      this.renderScoreBadge(container, scoreX, hud.hand.y, score, true, this.hasMechanic('resonance'));
     } else if (this.battle.phase === 'choice') {
       container.add(this.add.text(scoreX, hud.hand.y, t('battle.handHidden'), {
         fontFamily: 'Arial',
@@ -1103,8 +1104,11 @@ export class BattleScene extends Phaser.Scene {
       const to = step.target === 'player'
         ? this.dealTargetForPlayer(step.cardIndex)
         : this.dealTargetForEnemy(enemyIndex, step.cardIndex);
+      const targetAngle = step.target === 'player'
+        ? this.dealAngleForPlayer(step.cardIndex)
+        : this.dealAngleForEnemy(enemyIndex, step.cardIndex);
 
-      this.playDealCard(to, () => {
+      this.playDealCard(to, targetAngle, 'slide', () => {
         if (step.target === 'player') {
           this.dealtPlayerCards = Math.max(this.dealtPlayerCards, step.cardIndex + 1);
         } else {
@@ -1164,8 +1168,11 @@ export class BattleScene extends Phaser.Scene {
       const to = event.target === 'player'
         ? this.dealTargetForPlayer(event.cardIndex)
         : this.dealTargetForEnemy(enemyIndex, event.cardIndex);
+      const targetAngle = event.target === 'player'
+        ? this.dealAngleForPlayer(event.cardIndex)
+        : this.dealAngleForEnemy(enemyIndex, event.cardIndex);
 
-      this.playDealCard(to, () => {
+      this.playDealCard(to, targetAngle, 'place', () => {
         if (event.target === 'player') {
           this.dealtPlayerCards = Math.max(this.dealtPlayerCards, event.cardIndex + 1);
         } else {
@@ -1184,11 +1191,16 @@ export class BattleScene extends Phaser.Scene {
     const seat = this.battleLayout.seats.player;
     const hud = this.battleLayout.playerHud;
     const count = Math.max(this.battle.player.hand.length, cardIndex + 1);
-    const width = this.battleLayout.cards.width + (count - 1) * this.battleLayout.cards.spacing;
-    const firstCenter = -width / 2 + this.battleLayout.cards.width / 2;
+    const pose = resolveHandItemPose(
+      cardIndex,
+      count,
+      this.battleLayout.cards.width,
+      this.battleLayout.cards.spacing,
+      true,
+    );
     return new Phaser.Math.Vector2(
-      seat.x + hud.hand.x + firstCenter + cardIndex * this.battleLayout.cards.spacing,
-      seat.y + hud.hand.y,
+      seat.x + hud.hand.x + pose.x,
+      seat.y + hud.hand.y + pose.y,
     );
   }
 
@@ -1196,28 +1208,67 @@ export class BattleScene extends Phaser.Scene {
     const seat = this.enemySeatForIndex(enemyIndex);
     const layout = this.enemyHudLayout(enemyIndex);
     const count = Math.max(this.battle.enemies[enemyIndex]?.hand.length ?? 0, cardIndex + 1);
-    const width = this.battleLayout.cards.width + (count - 1) * this.battleLayout.cards.spacing;
-    const firstCenter = -width / 2 + this.battleLayout.cards.width / 2;
-    return new Phaser.Math.Vector2(
-      seat.x + layout.hand.x + firstCenter + cardIndex * this.battleLayout.cards.spacing,
-      seat.y + layout.hand.y,
+    const pose = resolveHandItemPose(
+      cardIndex,
+      count,
+      this.battleLayout.cards.enemyWidth,
+      this.battleLayout.cards.enemySpacing,
+      true,
     );
+    return new Phaser.Math.Vector2(
+      seat.x + layout.hand.x + pose.x,
+      seat.y + layout.hand.y + pose.y,
+    );
+  }
+
+  private dealAngleForPlayer(cardIndex: number): number {
+    const count = Math.max(this.battle.player.hand.length, cardIndex + 1);
+    return resolveHandItemPose(
+      cardIndex,
+      count,
+      this.battleLayout.cards.width,
+      this.battleLayout.cards.spacing,
+      true,
+    ).angle;
+  }
+
+  private dealAngleForEnemy(enemyIndex: number, cardIndex: number): number {
+    const count = Math.max(this.battle.enemies[enemyIndex]?.hand.length ?? 0, cardIndex + 1);
+    return resolveHandItemPose(
+      cardIndex,
+      count,
+      this.battleLayout.cards.enemyWidth,
+      this.battleLayout.cards.enemySpacing,
+      true,
+    ).angle;
   }
 
   private enemyCardCenter(enemyIndex: number, cardIndex: number): Phaser.Math.Vector2 {
     const seat = this.enemySeatForIndex(enemyIndex);
     const layout = this.enemyHudLayout(enemyIndex);
     const count = Math.max(this.battle.enemies[enemyIndex]?.hand.length ?? 0, cardIndex + 1);
-    const width = this.battleLayout.cards.width + (count - 1) * this.battleLayout.cards.spacing;
-    const firstCenter = -width / 2 + this.battleLayout.cards.width / 2;
+    const pose = resolveHandItemPose(
+      cardIndex,
+      count,
+      this.battleLayout.cards.enemyWidth,
+      this.battleLayout.cards.enemySpacing,
+      true,
+    );
     return new Phaser.Math.Vector2(
-      seat.x + layout.hand.x + firstCenter + cardIndex * this.battleLayout.cards.spacing,
-      seat.y + layout.hand.y,
+      seat.x + layout.hand.x + pose.x,
+      seat.y + layout.hand.y + pose.y,
     );
   }
 
-  private playDealCard(to: Phaser.Math.Vector2, onComplete: () => void): void {
-    const card = this.add.container(this.battleLayout.dealOrigin.x, this.battleLayout.dealOrigin.y).setDepth(30);
+  private playDealCard(
+    to: Phaser.Math.Vector2,
+    targetAngle: number,
+    sound: 'slide' | 'place',
+    onComplete: () => void,
+  ): void {
+    const card = this.add.container(this.battleLayout.dealOrigin.x, this.battleLayout.dealOrigin.y)
+      .setDepth(30)
+      .setAngle(Phaser.Math.Between(-5, 5));
     card.add(this.add.rectangle(0, 0, 34, 48, 0xf2f2ed, 0.96).setStrokeStyle(2, COLORS.accent));
     card.add(this.add.rectangle(0, 0, 24, 36, 0x2b303c, 0.18).setStrokeStyle(1, 0x2b303c, 0.45));
     card.add(this.add.text(0, 0, '?', {
@@ -1227,12 +1278,14 @@ export class BattleScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    this.sound.play('cardSlide', { volume: 0.56 });
+    this.sound.play(sound === 'slide' ? 'cardSlide' : 'cardPlace', {
+      volume: sound === 'slide' ? 0.56 : 0.42,
+    });
     this.tweens.add({
       targets: card,
       x: to.x,
       y: to.y,
-      angle: Phaser.Math.Between(-5, 5),
+      angle: targetAngle,
       duration: 160,
       ease: 'Sine.easeInOut',
       onComplete: () => {
@@ -1260,7 +1313,7 @@ export class BattleScene extends Phaser.Scene {
       }
 
       const event = dealEvents[index];
-      this.playDealCard(this.dealTargetForPlayer(event.cardIndex), () => {
+      this.playDealCard(this.dealTargetForPlayer(event.cardIndex), this.dealAngleForPlayer(event.cardIndex), 'place', () => {
         this.dealtPlayerCards = Math.max(this.dealtPlayerCards, event.cardIndex + 1);
         this.render();
         this.time.delayedCall(70, () => playStep(index + 1));
@@ -1611,6 +1664,9 @@ export class BattleScene extends Phaser.Scene {
       const invitedEnemyId = this.battle.currentEnemy?.id;
       this.battle.execute(buttonState.action);
       const events = this.battle.consumePresentationEvents();
+      if (this.cardDealEvents(events).length === 0) {
+        this.playClickSound();
+      }
       this.playImmediatePresentationEvents(events);
       this.playActionDealEvents(events, () => {
         this.playPassiveEffectEvents(events, () => {
@@ -2322,7 +2378,7 @@ export class BattleScene extends Phaser.Scene {
     ]);
   }
 
-  private button(x: number, y: number, width: number, height: number, label: string, onClick: () => void, fill = COLORS.button, fontSize = '19px', sound: 'button' | 'card' = 'button'): Phaser.GameObjects.Container {
+  private button(x: number, y: number, width: number, height: number, label: string, onClick: () => void, fill = COLORS.button, fontSize = '19px', sound: 'button' | 'card' | 'none' = 'button'): Phaser.GameObjects.Container {
     const button = this.add.container(x, y);
     const rect = this.add.rectangle(width / 2, height / 2, width, height, fill).setStrokeStyle(2, COLORS.line);
     const text = this.add.text(width / 2, height / 2, label, {
@@ -2335,7 +2391,9 @@ export class BattleScene extends Phaser.Scene {
     rect.on('pointerover', () => rect.setFillStyle(COLORS.buttonHover));
     rect.on('pointerout', () => rect.setFillStyle(fill));
     rect.on('pointerdown', () => {
-      this.playClickSound(sound);
+      if (sound !== 'none') {
+        this.playClickSound(sound);
+      }
       onClick();
     });
 
@@ -2512,7 +2570,7 @@ export class BattleScene extends Phaser.Scene {
     if (!this.hasCombatEvents(events)) {
       this.render();
     }
-    this.playPostActionAnimations(events, hpBefore, false, () => {
+    this.playPostActionAnimations(events, hpBefore, this.currentRevealEnemyIds(), false, () => {
       if (this.hasPendingSoulRedeem()) {
         this.presentationSequencePlaying = false;
         this.playPendingSoulRedeemBannerThen(() => this.resolvePendingSoulRedeem());
@@ -2567,7 +2625,7 @@ export class BattleScene extends Phaser.Scene {
       this.resultModalReady = !shouldDelayResultModal;
       this.render();
 
-      this.time.delayedCall(620, () => this.playPostActionAnimations(events, hpBefore, true, () => {
+      this.time.delayedCall(620, () => this.playPostActionAnimations(events, hpBefore, this.currentRevealEnemyIds(), true, () => {
         if (this.hasPendingSoulRedeem()) {
           this.actionAnimationPlaying = false;
           this.presentationSequencePlaying = false;
@@ -3133,13 +3191,23 @@ export class BattleScene extends Phaser.Scene {
     this.children.getByName('skill-tooltip')?.destroy();
   }
 
-  private renderScoreBadge(container: Phaser.GameObjects.Container, x: number, y: number, point: number, compact = false): void {
+  private renderScoreBadge(
+    container: Phaser.GameObjects.Container,
+    x: number,
+    y: number,
+    score: ScoreResult,
+    compact = false,
+    showResonance = false,
+  ): void {
     container.add(createScoreBadge(this, {
       x,
       y,
-      point,
+      point: score.point,
       label: t('common.pointUnit'),
       variant: compact ? 'compact' : 'orb',
+      resonance: showResonance ? score.resonance : 'none',
+      multiplier: score.multiplier,
+      resonanceLabel: showResonance && score.resonance !== 'none' ? this.resonanceText(score) : undefined,
     }));
   }
 
@@ -3174,13 +3242,15 @@ export class BattleScene extends Phaser.Scene {
     const visibleCards = this.dealing || this.actionDealing
       ? enemy.hand.slice(0, Math.min(this.dealtEnemyCards[enemyIndex] ?? 0, enemy.hand.length))
       : enemy.hand;
-    const showAll = enemy.revealed || (this.battle.roundRevealed && this.battle.results.some((result) => result.enemy === enemy));
+    const pendingReveal = this.revealFocusPlaying && this.revealFocusPendingEnemyIds.has(enemy.id);
+    const showAll = !pendingReveal
+      && (enemy.revealed || (this.battle.roundRevealed && this.battle.results.some((result) => result.enemy === enemy)));
     const cards = visibleCards.map((card, index) => ({
       card,
       faceUp: showAll || index === 0,
     }));
 
-    const width = this.battleLayout.cards.width;
+    const width = this.battleLayout.cards.enemyWidth;
     const resonant = this.enemyHasResonance(enemy);
     const muted = this.enemyDisplayDefeated(enemyIndex);
     const hand = new HandView(this, {
@@ -3189,18 +3259,26 @@ export class BattleScene extends Phaser.Scene {
       items: cards,
       slotCount: enemy.hand.length,
       itemWidth: width,
-      spacing: this.battleLayout.cards.spacing,
-      createItem: ({ card, faceUp }, _index, cardX) => createCardView(this, {
+      spacing: this.battleLayout.cards.enemySpacing,
+      fan: true,
+      createItem: ({ card, faceUp }, _index, cardX, cardY, angle) => createCardView(this, {
         x: cardX,
-        y: 0,
+        y: cardY,
         card: faceUp ? card : undefined,
         hidden: !faceUp,
         width,
         resonant,
         muted,
-      }),
+      }).setAngle(angle),
     });
     container.add(hand.container);
+    if (resonant && showAll && !muted) {
+      this.playResonanceHandShakeOnce(
+        `enemy:${enemy.id}:${this.battle.round}:${enemy.hand.map(formatCard).join('|')}`,
+        hand.container,
+        this.scoreEnemy(enemy).resonance === 'strong',
+      );
+    }
     return hand;
   }
 
@@ -3251,17 +3329,62 @@ export class BattleScene extends Phaser.Scene {
       slotCount: this.battle.player.hand.length,
       itemWidth: width,
       spacing: this.battleLayout.cards.spacing,
-      createItem: ({ card, faceUp }, _index, cardX) => createCardView(this, {
+      fan: true,
+      createItem: ({ card, faceUp }, _index, cardX, cardY, angle) => createCardView(this, {
         x: cardX,
-        y: 0,
+        y: cardY,
         card: faceUp ? card : undefined,
         hidden: !faceUp,
         width,
         resonant,
-      }),
+      }).setAngle(angle),
     });
     container.add(hand.container);
+    if (resonant && faceUp) {
+      this.playResonanceHandShakeOnce(
+        `player:${this.battle.round}:${this.battle.player.hand.map(formatCard).join('|')}`,
+        hand.container,
+        this.battle.playerScore().resonance === 'strong',
+      );
+    }
     return hand;
+  }
+
+  private playResonanceHandShakeOnce(
+    key: string,
+    hand: Phaser.GameObjects.Container,
+    strong: boolean,
+  ): void {
+    if (this.resonanceShakeKeys.has(key) || !hand.active) {
+      return;
+    }
+
+    this.resonanceShakeKeys.add(key);
+    this.playResonanceHandShake(hand, strong);
+  }
+
+  private playResonanceHandShake(hand: Phaser.GameObjects.Container, strong: boolean): void {
+    const originX = hand.x;
+    const distance = strong ? 5 : 3;
+    const angle = strong ? 2.4 : 1.6;
+    hand.setX(originX - distance);
+    hand.setAngle(-angle);
+    this.tweens.add({
+      targets: hand,
+      x: originX + distance,
+      angle,
+      duration: strong ? 46 : 52,
+      yoyo: true,
+      repeat: 2,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        if (!hand.active) {
+          return;
+        }
+        hand.setPosition(originX, hand.y);
+        hand.setAngle(0);
+      },
+    });
   }
 
   private renderCardRow(
@@ -3402,8 +3525,10 @@ export class BattleScene extends Phaser.Scene {
     const roundBefore = this.battle.round;
     const hpBefore = this.hpSnapshot();
     const phaseBefore = this.battle.phase;
-    const aliveBefore = this.battle.aliveEnemies.length;
-    const comparedBefore = this.battle.aliveEnemies.filter((enemy) => enemy.compared).length;
+    const currentEnemyIdBefore = phaseBefore === 'enemy-turn' ? this.battle.currentEnemy?.id : undefined;
+    const revealedEnemyIdsBefore = new Set(
+      this.battle.enemies.filter((enemy) => enemy.revealed).map((enemy) => enemy.id),
+    );
     action();
     this.playRoundResonanceEchoOnce();
     const events = this.battle.consumePresentationEvents();
@@ -3412,7 +3537,20 @@ export class BattleScene extends Phaser.Scene {
     const shouldDelayResultModal = this.shouldDelayOutcomeForPresentation(events);
     const shouldDealNewRound = this.battle.round > roundBefore && this.battle.phase === 'choice' && !this.battle.battleOutcome;
     this.resultModalReady = !shouldDelayResultModal;
-    const skipRevealBanner = phaseBefore === 'enemy-turn' && comparedBefore === aliveBefore - 1 && this.hasRoundRevealEvent(events);
+    const directlyComparedEnemyId = phaseBefore === 'enemy-turn' ? currentEnemyIdBefore : undefined;
+    const revealEnemyIds = new Set(
+      this.hasRoundRevealEvent(events)
+        ? this.battle.enemies
+          .filter((enemy) => (
+            enemy.hand.length > 0
+            && this.battle.results.some((result) => result.enemy === enemy)
+            && !revealedEnemyIdsBefore.has(enemy.id)
+            && enemy.id !== directlyComparedEnemyId
+          ))
+          .map((enemy) => enemy.id)
+        : [],
+    );
+    const skipRevealBanner = this.hasRoundRevealEvent(events) && revealEnemyIds.size === 0;
 
     this.playActionDealEvents(events, () => {
       const continueAfterActionDeals = () => {
@@ -3420,7 +3558,7 @@ export class BattleScene extends Phaser.Scene {
           this.render();
         }
 
-        this.playPostActionAnimations(events, hpBefore, skipRevealBanner, () => {
+        this.playPostActionAnimations(events, hpBefore, revealEnemyIds, skipRevealBanner, () => {
           this.playPassiveEffectEvents(this.postCombatPresentationEvents(events), () => {
           if (this.hasPendingSoulRedeem()) {
             this.presentationSequencePlaying = false;
@@ -3485,7 +3623,13 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private playPostActionAnimations(events: BattlePresentationEvent[], hpBefore: { player: number; enemies: number[] }, skipRevealBanner = false, onComplete?: () => void): void {
+  private playPostActionAnimations(
+    events: BattlePresentationEvent[],
+    hpBefore: { player: number; enemies: number[] },
+    revealEnemyIds: Set<string>,
+    skipRevealBanner = false,
+    onComplete?: () => void,
+  ): void {
     const combatEvents = this.combatEvents(events);
     if (combatEvents.length === 0) {
       this.playPreCombatPresentationEvents(events, () => onComplete?.());
@@ -3510,16 +3654,239 @@ export class BattleScene extends Phaser.Scene {
         onComplete?.();
       });
     };
-    const playPreCombatThenDamage = () => {
-      this.playPreCombatPresentationEvents(events, playWithDelayedHp);
+    const playPreCombatThenReveal = () => {
+      this.playPreCombatPresentationEvents(events, () => {
+        if (this.hasRoundRevealEvent(events) && revealEnemyIds.size > 0) {
+          this.playRevealFocus(revealEnemyIds, playWithDelayedHp);
+          return;
+        }
+
+        playWithDelayedHp();
+      });
     };
 
     if (combatEvents.length > 0 && this.hasRoundRevealEvent(events) && !skipRevealBanner) {
-      this.playRevealBannerThen(playPreCombatThenDamage);
+      this.playRevealBannerThen(playPreCombatThenReveal);
       return;
     }
 
-    playPreCombatThenDamage();
+    playPreCombatThenReveal();
+  }
+
+  private playRevealFocus(revealEnemyIds: Set<string>, onComplete: () => void): void {
+    this.actionAnimationPlaying = true;
+    this.revealFocusPlaying = true;
+    this.revealFocusPendingEnemyIds = new Set(revealEnemyIds);
+    this.render();
+
+    const shade = this.add.rectangle(
+      this.battleLayout.canvas.width / 2,
+      this.battleLayout.canvas.height / 2,
+      this.battleLayout.canvas.width,
+      this.battleLayout.canvas.height,
+      0x020305,
+      0.46,
+    ).setDepth(29).setInteractive().setAlpha(0);
+    const groups = this.createRevealFocusGroups(revealEnemyIds);
+
+    this.tweens.add({
+      targets: shade,
+      alpha: 0.46,
+      duration: 180,
+      ease: 'Sine.easeOut',
+      onComplete: () => this.playRevealFocusGroup(groups, 0, shade, onComplete),
+    });
+  }
+
+  private createRevealFocusGroups(revealEnemyIds: Set<string>): Array<{
+    container: Phaser.GameObjects.Container;
+    cards: Phaser.GameObjects.Container[];
+    score: Phaser.GameObjects.Container;
+    resonant: boolean;
+    flipCards: boolean;
+    shakeKey: string;
+    strong: boolean;
+  }> {
+    const groups: Array<{
+      container: Phaser.GameObjects.Container;
+      cards: Phaser.GameObjects.Container[];
+      score: Phaser.GameObjects.Container;
+      resonant: boolean;
+      flipCards: boolean;
+      shakeKey: string;
+      strong: boolean;
+    }> = [];
+
+    this.battle.enemies.forEach((enemy, index) => {
+      if (
+        !revealEnemyIds.has(enemy.id)
+        || enemy.hand.length === 0
+        || !this.battle.results.some((result) => result.enemy === enemy)
+      ) {
+        return;
+      }
+
+      const seat = this.enemySeatForIndex(index);
+      const hud = this.enemyHudLayout(index);
+      groups.push(this.createRevealFocusGroup(
+        seat.x + hud.hand.x,
+        seat.y + hud.hand.y,
+        enemy.hand,
+        this.scoreEnemy(enemy),
+        this.battleLayout.cards.enemyWidth,
+        this.battleLayout.cards.enemySpacing,
+        hud.scoreSide,
+        hud.scoreGap,
+        true,
+        `enemy:${enemy.id}:${this.battle.round}:${enemy.hand.map(formatCard).join('|')}`,
+      ));
+    });
+
+    groups.push(this.createRevealFocusGroup(
+      this.battleLayout.seats.player.x + this.battleLayout.playerHud.hand.x,
+      this.battleLayout.seats.player.y + this.battleLayout.playerHud.hand.y,
+      this.battle.player.hand,
+      this.battle.playerScore(),
+      this.battleLayout.cards.width,
+      this.battleLayout.cards.spacing,
+      'right',
+      this.battleLayout.playerHud.scoreGap,
+      false,
+      `player:${this.battle.round}:${this.battle.player.hand.map(formatCard).join('|')}`,
+    ));
+    return groups;
+  }
+
+  private createRevealFocusGroup(
+    x: number,
+    y: number,
+    cards: Card[],
+    scoreResult: ScoreResult,
+    cardWidth: number,
+    spacing: number,
+    scoreSide: 'left' | 'right',
+    scoreGap: number,
+    flipCards: boolean,
+    shakeKey: string,
+  ): {
+    container: Phaser.GameObjects.Container;
+    cards: Phaser.GameObjects.Container[];
+    score: Phaser.GameObjects.Container;
+    resonant: boolean;
+    flipCards: boolean;
+    shakeKey: string;
+    strong: boolean;
+  } {
+    const container = this.add.container(x, y).setDepth(31).setAlpha(0);
+    const resonant = this.hasMechanic('resonance') && scoreResult.resonance !== 'none';
+    const cardViews = cards.map((card, index) => {
+      const pose = resolveHandItemPose(index, cards.length, cardWidth, spacing, true);
+      const cardView = createCardView(this, {
+        x: pose.x,
+        y: pose.y,
+        card,
+        width: cardWidth,
+        resonant,
+      }).setAngle(pose.angle).setScale(flipCards ? 0.08 : 1, 1);
+      container.add(cardView);
+      return cardView;
+    });
+    const handWidth = cardWidth + Math.max(0, cards.length - 1) * spacing;
+    const direction = scoreSide === 'right' ? 1 : -1;
+    const score = createScoreBadge(this, {
+      x: direction * (handWidth / 2 + scoreGap),
+      y: 0,
+      point: scoreResult.point,
+      label: t('common.pointUnit'),
+      variant: 'compact',
+      resonance: resonant ? scoreResult.resonance : 'none',
+      multiplier: scoreResult.multiplier,
+      resonanceLabel: resonant ? this.resonanceText(scoreResult) : undefined,
+    }).setAlpha(0);
+    container.add(score);
+    return {
+      container,
+      cards: cardViews,
+      score,
+      resonant,
+      flipCards,
+      shakeKey,
+      strong: scoreResult.resonance === 'strong',
+    };
+  }
+
+  private playRevealFocusGroup(
+    groups: Array<{
+      container: Phaser.GameObjects.Container;
+      cards: Phaser.GameObjects.Container[];
+      score: Phaser.GameObjects.Container;
+      resonant: boolean;
+      flipCards: boolean;
+      shakeKey: string;
+      strong: boolean;
+    }>,
+    index: number,
+    shade: Phaser.GameObjects.Rectangle,
+    onComplete: () => void,
+  ): void {
+    if (index >= groups.length) {
+      this.time.delayedCall(560, () => {
+        const containers = groups.map((group) => group.container);
+        this.tweens.add({
+          targets: [shade, ...containers],
+          alpha: 0,
+          duration: 240,
+          ease: 'Sine.easeIn',
+          onComplete: () => {
+            shade.destroy();
+            containers.forEach((container) => container.destroy(true));
+            this.revealFocusPendingEnemyIds.clear();
+            this.revealFocusPlaying = false;
+            this.actionAnimationPlaying = false;
+            onComplete();
+          },
+        });
+      });
+      return;
+    }
+
+    const group = groups[index];
+    if (group.flipCards) {
+      this.sound.play('cardPlace', { volume: 0.42 });
+    }
+    this.tweens.add({
+      targets: group.container,
+      alpha: 1,
+      duration: group.flipCards ? 100 : 180,
+      ease: 'Sine.easeOut',
+    });
+    const revealScore = () => {
+      if (group.resonant) {
+        this.sound.play('resonanceEcho', { volume: 0.44 });
+        this.playResonanceHandShakeOnce(group.shakeKey, group.container, group.strong);
+      }
+      this.tweens.add({
+        targets: group.score,
+        alpha: 1,
+        scale: { from: 0.82, to: 1 },
+        duration: 180,
+        ease: 'Back.easeOut',
+      });
+      this.time.delayedCall(220, () => this.playRevealFocusGroup(groups, index + 1, shade, onComplete));
+    };
+
+    if (!group.flipCards) {
+      this.time.delayedCall(120, revealScore);
+      return;
+    }
+
+    this.tweens.add({
+      targets: group.cards,
+      scaleX: 1,
+      duration: 260,
+      ease: 'Back.easeOut',
+      onComplete: revealScore,
+    });
   }
 
   private playPreCombatPresentationEvents(events: BattlePresentationEvent[], onComplete: () => void): void {
@@ -3577,11 +3944,16 @@ export class BattleScene extends Phaser.Scene {
         return;
       }
 
-      this.playDealCard(this.dealTargetForEnemy(enemyIndex, cardIndex), () => {
+      this.playDealCard(
+        this.dealTargetForEnemy(enemyIndex, cardIndex),
+        this.dealAngleForEnemy(enemyIndex, cardIndex),
+        'place',
+        () => {
         this.dealtEnemyCards[enemyIndex] = Math.max(this.dealtEnemyCards[enemyIndex], cardIndex + 1);
         this.render();
         this.time.delayedCall(90, () => playCard(cardIndex + 1));
-      });
+        },
+      );
     };
 
     playCard(0);
@@ -3622,7 +3994,7 @@ export class BattleScene extends Phaser.Scene {
       x: position.x,
       y: position.y,
       card: event.previousCard,
-      width: this.battleLayout.cards.width,
+      width: this.battleLayout.cards.enemyWidth,
     }).setDepth(32);
     const talisman = this.add.text(position.x, position.y, '符', {
       fontFamily: 'Arial',
@@ -3645,12 +4017,12 @@ export class BattleScene extends Phaser.Scene {
       onComplete: () => {
         oldCard.destroy(true);
         talisman.destroy();
-        this.playDealCard(position, () => {
+        this.playDealCard(position, this.dealAngleForEnemy(event.targetEnemyIndex, event.cardIndex), 'place', () => {
           const replacement = createCardView(this, {
             x: position.x,
             y: position.y,
             card: event.replacementCard,
-            width: this.battleLayout.cards.width,
+            width: this.battleLayout.cards.enemyWidth,
           }).setDepth(32).setAlpha(0);
           this.sound.play('cardPlace', { volume: 0.46 });
           this.tweens.add({
@@ -3688,6 +4060,14 @@ export class BattleScene extends Phaser.Scene {
 
   private hasRoundRevealEvent(events: BattlePresentationEvent[]): boolean {
     return events.some((event) => event.type === 'round-revealed');
+  }
+
+  private currentRevealEnemyIds(): Set<string> {
+    return new Set(
+      this.battle.enemies
+        .filter((enemy) => enemy.hand.length > 0 && this.battle.results.some((result) => result.enemy === enemy))
+        .map((enemy) => enemy.id),
+    );
   }
 
   private hasBattleEndedEvent(events: BattlePresentationEvent[]): boolean {
@@ -3895,10 +4275,136 @@ export class BattleScene extends Phaser.Scene {
 
       const event = events[index];
       this.playCombatAnimation(event);
-      this.time.delayedCall(this.combatPresentationDelay(event, index === events.length - 1), () => playNext(index + 1));
+      const killRewardHeal = event.type === 'damage'
+        ? (event.killRewardHeal ?? event.guard?.killRewardHeal ?? 0)
+        : 0;
+      const attackDelay = killRewardHeal > 0
+        ? Math.max(1520, this.combatPresentationDelay(event, index === events.length - 1))
+        : this.combatPresentationDelay(event, index === events.length - 1);
+      this.time.delayedCall(attackDelay, () => {
+        if (killRewardHeal <= 0 || event.type !== 'damage') {
+          playNext(index + 1);
+          return;
+        }
+
+        const sourceEnemyId = event.guard?.killRewardHeal
+          ? event.guard.protectorEnemyId
+          : event.enemyId;
+        const sourceEnemyIndex = this.battle.enemies.findIndex((enemy) => enemy.id === sourceEnemyId);
+        this.playKillRewardSoulHeal(sourceEnemyIndex, killRewardHeal, () => playNext(index + 1));
+      });
     };
 
     playNext(0);
+  }
+
+  private playKillRewardSoulHeal(enemyIndex: number, amount: number, onComplete: () => void): void {
+    if (enemyIndex < 0 || amount <= 0) {
+      onComplete();
+      return;
+    }
+
+    const source = this.enemySeatCenter(enemyIndex);
+    const player = new Phaser.Math.Vector2(
+      this.battleLayout.seats.player.x,
+      this.battleLayout.seats.player.y,
+    );
+    const soul = this.add.container(source.x, source.y - 10).setDepth(36);
+    const outer = this.add.circle(0, 0, 18, 0x91d8ff, 0.12)
+      .setStrokeStyle(3, 0xd9f5ff, 0.82);
+    const core = this.add.circle(0, 0, 8, 0xe8fbff, 0.92)
+      .setStrokeStyle(2, 0x73c7ff, 0.9);
+    const glyph = this.add.text(0, 0, '◇', {
+      fontFamily: 'Arial',
+      fontSize: '18px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    glyph.setShadow(0, 0, '#91d8ff', 10, true, true);
+    soul.add([outer, core, glyph]);
+
+    this.playShockwave(source.x, source.y, 0x73c7ff, 92);
+    this.playSoulTrail(source, player, 0x91d8ff);
+    const midpoint = new Phaser.Math.Vector2(
+      (source.x + player.x) / 2 + (source.x <= player.x ? -54 : 54),
+      Math.min(source.y, player.y) - 74,
+    );
+
+    this.tweens.add({
+      targets: soul,
+      x: midpoint.x,
+      y: midpoint.y,
+      scale: 1.25,
+      duration: 390,
+      ease: 'Sine.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: soul,
+          x: player.x,
+          y: player.y,
+          scale: 0.66,
+          duration: 430,
+          ease: 'Sine.easeIn',
+          onComplete: () => {
+            soul.destroy(true);
+            this.sound.play('healSound', { volume: 0.56 });
+            if (this.visualHpOverride) {
+              this.visualHpOverride.player = Math.min(
+                this.battle.player.maxHp,
+                this.visualHpOverride.player + amount,
+              );
+              this.playerHeartMeter?.setHp(this.visualHpOverride.player, true);
+            }
+            this.playPlayerSoulHealImpact(player.x, player.y, amount);
+            this.time.delayedCall(360, onComplete);
+          },
+        });
+      },
+    });
+  }
+
+  private playSoulTrail(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, color: number): void {
+    for (let index = 0; index < 7; index += 1) {
+      const progress = (index + 1) / 8;
+      const mote = this.add.circle(
+        Phaser.Math.Linear(from.x, to.x, progress),
+        Phaser.Math.Linear(from.y, to.y, progress) - Math.sin(progress * Math.PI) * 62,
+        Phaser.Math.Between(3, 6),
+        color,
+        0.7,
+      ).setDepth(35).setAlpha(0);
+      this.tweens.add({
+        targets: mote,
+        alpha: { from: 0, to: 0.82 },
+        scale: { from: 0.5, to: 1.35 },
+        duration: 240,
+        delay: index * 54,
+        yoyo: true,
+        hold: 130,
+        ease: 'Sine.easeInOut',
+        onComplete: () => mote.destroy(),
+      });
+    }
+  }
+
+  private playPlayerSoulHealImpact(x: number, y: number, amount: number): void {
+    const glow = this.add.circle(x, y, 36, 0x78d18a, 0.2)
+      .setDepth(37)
+      .setStrokeStyle(4, 0xb9ffc2, 0.92);
+    const inner = this.add.circle(x, y, 16, 0xe1ffe6, 0.46).setDepth(38);
+    this.playHealGainText(x, y - 88, amount, 40);
+    this.playSoulRedeemParticles(x, y, 10, 0xb9ffc2);
+    this.tweens.add({
+      targets: [glow, inner],
+      alpha: 0,
+      scale: 2.8,
+      duration: 680,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        glow.destroy();
+        inner.destroy();
+      },
+    });
   }
 
   private combatPresentationDelay(event: BattleCombatPresentationEvent, isLast: boolean): number {
@@ -4515,17 +5021,19 @@ export class BattleScene extends Phaser.Scene {
   private flashEnemySeat(index: number, color: number, label: string, textColor: string): void {
     const center = this.enemySeatCenter(index);
     const hud = this.enemyHudLayout(index);
+    const topSeat = this.enemyHudSeat(index) === 'top';
     const overlay = this.add.container(center.x, center.y).setDepth(28);
-    const glow = this.add.rectangle(0, 0, hud.portrait.width + 20, hud.portrait.height + 20, color, 0.12).setStrokeStyle(4, color, 1);
-    const inner = this.add.rectangle(0, 0, hud.portrait.width - 8, hud.portrait.height - 8, color, 0.04).setStrokeStyle(2, color, 0.58);
-    const text = this.add.text(0, -hud.portrait.height / 2 - 38, label, {
+    const radius = Math.min(hud.portrait.width, hud.portrait.height) / 2;
+    const glow = this.add.circle(0, 0, radius + 12, color, 0.12).setStrokeStyle(4, color, 1);
+    const inner = this.add.circle(0, 0, radius - 7, color, 0.04).setStrokeStyle(2, color, 0.58);
+    const text = this.add.text(topSeat ? radius + 18 : 0, topSeat ? -radius + 14 : -radius - 42, label, {
       fontFamily: 'Arial',
       fontSize: '22px',
       color: textColor,
       fontStyle: 'bold',
       stroke: '#101114',
       strokeThickness: 5,
-    }).setOrigin(0.5);
+    }).setOrigin(topSeat ? 0 : 0.5, 0.5);
     text.setShadow(0, 0, textColor, 14, true, true);
     overlay.add([glow, inner, text]);
     overlay.setAlpha(0);
@@ -5655,7 +6163,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private shouldShowEnemyScore(enemy: EnemyState): boolean {
-    return (enemy.revealed || this.battle.roundRevealed) && this.battle.results.some((result) => result.enemy === enemy);
+    return !(this.revealFocusPlaying && this.revealFocusPendingEnemyIds.has(enemy.id))
+      && (enemy.revealed || this.battle.roundRevealed)
+      && this.battle.results.some((result) => result.enemy === enemy);
   }
 
   private isResultPhase(): boolean {

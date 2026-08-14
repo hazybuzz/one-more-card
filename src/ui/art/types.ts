@@ -8,6 +8,13 @@ export interface ImageArtAsset {
   textureKey: string;
   path: string;
   pixelArt?: boolean;
+  fit?: 'stretch' | 'cover';
+}
+
+export interface BackgroundArtAsset extends ImageArtAsset {
+  brightenAlpha?: number;
+  includesTable?: boolean;
+  tableCandlePositions?: Array<{ x: number; y: number; scale?: number }>;
 }
 
 export interface SpriteSheetArtAsset {
@@ -28,6 +35,16 @@ export interface NineSliceArtAsset extends ImageArtAsset {
   bottomHeight: number;
 }
 
+export interface CharacterFrameArtAsset extends ImageArtAsset {
+  displayScale?: number;
+  offsetX?: number;
+  offsetY?: number;
+  leftWidth?: number;
+  rightWidth?: number;
+  topHeight?: number;
+  bottomHeight?: number;
+}
+
 export interface CharacterArtConfig {
   id: string;
   asset: ArtAsset;
@@ -38,11 +55,11 @@ export interface CharacterArtConfig {
 
 export interface BattleThemeArtManifest {
   themeId: TableThemeId;
-  background?: ImageArtAsset;
+  background?: BackgroundArtAsset;
   tableOverlay?: ImageArtAsset;
   foreground?: ImageArtAsset;
-  playerFrame?: NineSliceArtAsset;
-  enemyFrame?: NineSliceArtAsset;
+  playerFrame?: CharacterFrameArtAsset;
+  enemyFrame?: CharacterFrameArtAsset;
   playerPanel?: NineSliceArtAsset;
   enemyPanel?: NineSliceArtAsset;
   actionBar?: NineSliceArtAsset;

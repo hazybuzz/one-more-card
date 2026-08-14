@@ -432,11 +432,7 @@ function createPvpPlayer(id: string, name: string, role: PvpPlayerRole): PvpPlay
 }
 
 function createShuffledPvpDeck(): Card[] {
-  const cards = [
-    ...SUITS.flatMap((suit) => RANKS.map((rank) => ({ suit, rank }))),
-    { rank: '小王' as const },
-    { rank: '大王' as const },
-  ];
+  const cards = SUITS.flatMap((suit) => RANKS.map((rank) => ({ suit, rank })));
 
   for (let index = cards.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));

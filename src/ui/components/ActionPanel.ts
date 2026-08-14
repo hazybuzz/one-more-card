@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { t } from '../../game/i18n';
 import type { BattleActionButtonState } from '../state/UIState';
 
-export type ButtonSound = 'button' | 'card';
+export type ButtonSound = 'button' | 'card' | 'none';
 
 export type ButtonFactory = (
   x: number,
@@ -45,7 +45,7 @@ export class ActionPanel {
         () => options.onAction(buttonState),
         buttonState.danger ? options.colors.danger : options.colors.button,
         '19px',
-        buttonState.id === 'view-hand' || buttonState.id === 'invite-one' ? 'card' : 'button',
+        buttonState.id === 'view-hand' ? 'card' : buttonState.id === 'invite-one' ? 'none' : 'button',
       ));
     });
 

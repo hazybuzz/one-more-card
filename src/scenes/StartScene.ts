@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { preloadCardImages } from '../game/assets';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
 import { t, toggleLanguage } from '../game/i18n';
-import { getEconomyDebugSnapshot, getProgress, resetProgress } from '../game/progress';
+import { getEconomyDebugSnapshot, getProgress, resetTestProgress, switchProgressMode } from '../game/progress';
+import { getRuntimeMode, isTestMode } from '../game/runtimeMode';
 
 const COLORS = {
   bg: 0x101114,
@@ -44,6 +45,7 @@ export class StartScene extends Phaser.Scene {
     this.renderLanguageToggle();
     this.renderSoulCoins();
     this.renderTitle();
+    this.renderRuntimeModeBadge();
     this.renderMenu();
     this.renderDebugActions();
     this.showStatus(this.pendingStatus);
@@ -101,6 +103,23 @@ export class StartScene extends Phaser.Scene {
     subtitle.setShadow(0, 0, '#000000', 5, true, true);
   }
 
+  private renderRuntimeModeBadge(): void {
+    if (!import.meta.env.DEV || !isTestMode()) {
+      return;
+    }
+
+    const badge = this.add.container(640, 286);
+    const panel = this.add.rectangle(0, 0, 310, 34, 0x493a10, 0.96).setStrokeStyle(2, 0xffd85c, 0.92);
+    const label = this.add.text(0, 0, t('runtimeMode.testBadge'), {
+      fontFamily: 'Arial',
+      fontSize: '15px',
+      color: '#ffe99a',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    label.setShadow(0, 0, '#ffd85c', 7, true, true);
+    badge.add([panel, label]);
+  }
+
   private renderMenu(): void {
     this.add.container(640, 360).add([
       this.menuButton(0, 0, 300, 58, t('start.game'), () => {
@@ -128,19 +147,30 @@ export class StartScene extends Phaser.Scene {
   }
 
   private renderDebugActions(): void {
-    const actions = this.add.container(1168, 668);
-    actions.add([
-      this.menuButton(0, 0, 168, 42, t('start.resetGold'), () => {
-        resetProgress();
-        this.scene.restart({ status: t('start.goldReset', { total: getProgress().soulCoins }) });
-      }, '16px'),
-    ]);
+    if (!import.meta.env.DEV) {
+      return;
+    }
 
-    if (import.meta.env.DEV) {
-      actions.add(this.menuButton(0, -52, 168, 42, t('start.economyDebug'), () => {
-        this.showEconomyDebugModal();
+    const actions = this.add.container(1168, 668);
+    const mode = getRuntimeMode();
+    actions.add(this.menuButton(0, 0, 168, 42, mode === 'test'
+      ? t('runtimeMode.switchProduction')
+      : t('runtimeMode.switchTest'), () => {
+      const nextMode = mode === 'test' ? 'production' : 'test';
+      switchProgressMode(nextMode);
+      this.scene.restart({ status: nextMode === 'test' ? t('runtimeMode.testEnabled') : t('runtimeMode.productionEnabled') });
+    }, '15px'));
+
+    if (mode === 'test') {
+      actions.add(this.menuButton(0, -52, 168, 42, t('runtimeMode.resetTest'), () => {
+        resetTestProgress();
+        this.scene.restart({ status: t('runtimeMode.testReset', { total: getProgress().soulCoins }) });
       }, '15px'));
     }
+
+    actions.add(this.menuButton(0, mode === 'test' ? -104 : -52, 168, 42, t('start.economyDebug'), () => {
+      this.showEconomyDebugModal();
+    }, '15px'));
   }
 
   private showEconomyDebugModal(): void {

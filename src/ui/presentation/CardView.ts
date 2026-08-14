@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { Card, cardImageIndex, formatCard } from '../../game/card';
+import { ensureCardFrames } from '../../game/assets';
+import { CARD_FRONT_TEXTURE_KEY, Card, cardFrameName, formatCard } from '../../game/card';
 
 export interface CardViewOptions {
   x: number;
@@ -21,8 +22,12 @@ export function createCardView(scene: Phaser.Scene, options: CardViewOptions): P
   const height = Math.round(options.width * CARD_ASPECT_RATIO);
   const container = scene.add.container(options.x, options.y);
   const visibleCard = hidden ? undefined : options.card;
-  const texture = visibleCard ? `card-${cardImageIndex(visibleCard)}` : 'card-back';
-  const image = scene.add.image(0, 0, texture).setOrigin(0.5);
+  if (visibleCard) {
+    ensureCardFrames(scene);
+  }
+  const frame = visibleCard ? cardFrameName(visibleCard) : undefined;
+  const texture = frame ? CARD_FRONT_TEXTURE_KEY : 'card-back';
+  const image = scene.add.image(0, 0, texture, frame).setOrigin(0.5);
   image.setDisplaySize(options.width, height);
   if (options.muted) {
     image.setAlpha(0.45);

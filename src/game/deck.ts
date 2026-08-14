@@ -32,8 +32,7 @@ export class Deck {
   }
 
   private createDeck(): Card[] {
-    const suitedCards = SUITS.flatMap((suit) => RANKS.filter((rank) => rank !== '小王' && rank !== '大王').map((rank) => ({ suit, rank })));
-    return [...suitedCards, { rank: '小王' }, { rank: '大王' }];
+    return SUITS.flatMap((suit) => RANKS.map((rank) => ({ suit, rank })));
   }
 
   private shuffle(): void {

@@ -10,6 +10,23 @@ export interface Card {
 
 export const SUITS: Suit[] = ['♠', '♥', '♦', '♣'];
 export const RANKS: Rank[] = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+export const CARD_FRONT_TEXTURE_KEY = 'card-fronts';
+
+const CARD_FRAME_SUIT_NAMES: Partial<Record<Suit, string>> = {
+  '♦': 'diamond',
+  '♣': 'club',
+  '♥': 'heart',
+  '♠': 'spade',
+};
+
+export function cardFrameName(card: Card): string | undefined {
+  if (!card.suit || isJoker(card)) {
+    return undefined;
+  }
+
+  const suitName = CARD_FRAME_SUIT_NAMES[card.suit];
+  return suitName ? `${suitName}-${card.rank}` : undefined;
+}
 
 export function cardValue(card: Card): number {
   if (isJoker(card)) {

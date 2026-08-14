@@ -1,4 +1,5 @@
 import { CHAPTERS } from './data/chapters';
+import { getRuntimeMode, setRuntimeMode, type RuntimeMode } from './runtimeMode';
 import type { CosmeticId } from './types/cosmetic';
 import {
   ECONOMY_EXPENSE_SINKS,
@@ -50,7 +51,10 @@ export interface GameProgress {
   story: StoryProgress;
 }
 
-const STORAGE_KEY = 'one-more-card-progress';
+const STORAGE_KEYS: Record<RuntimeMode, string> = {
+  production: 'one-more-card-progress',
+  test: 'one-more-card-test-progress',
+};
 
 const DEFAULT_PROGRESS: GameProgress = {
   soulCoins: 100,
@@ -97,10 +101,40 @@ const DEFAULT_PROGRESS: GameProgress = {
   },
 };
 
+function createTestProgress(): GameProgress {
+  const testProgress = cloneProgress(DEFAULT_PROGRESS);
+  testProgress.soulCoins = 9999;
+  testProgress.economyStats.openingBalance = 9999;
+  testProgress.unlockedTableThemeIds = [...TABLE_THEME_IDS];
+  testProgress.complimentaryTableEntryThemeIds = [];
+  testProgress.story.unlockedLevelIds = CHAPTERS.flatMap((chapter) => chapter.levels.map((level) => level.id));
+  testProgress.story.completedLevelIds = [];
+  return testProgress;
+}
+
 let progress: GameProgress = loadProgress();
 
 export function getProgress(): GameProgress {
   return progress;
+}
+
+export function switchProgressMode(mode: RuntimeMode): void {
+  if (mode === getRuntimeMode()) {
+    return;
+  }
+
+  saveProgress();
+  setRuntimeMode(mode);
+  progress = loadProgress();
+}
+
+export function resetTestProgress(): void {
+  if (getRuntimeMode() !== 'test') {
+    return;
+  }
+
+  progress = createTestProgress();
+  saveProgress();
 }
 
 export function grantSoulCoins(
@@ -329,27 +363,28 @@ export function completeStoryLevel(levelId: string): void {
 }
 
 export function resetProgress(): void {
-  progress = cloneProgress(DEFAULT_PROGRESS);
+  progress = defaultProgressForCurrentMode();
   saveProgress();
 }
 
 function loadProgress(): GameProgress {
+  const defaultProgress = defaultProgressForCurrentMode();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKeyForCurrentMode());
     if (!raw) {
-      return cloneProgress(DEFAULT_PROGRESS);
+      return defaultProgress;
     }
 
     const parsed = JSON.parse(raw) as Partial<GameProgress>;
-    return normalizeProgress(parsed);
+    return normalizeProgress(parsed, defaultProgress);
   } catch {
-    return cloneProgress(DEFAULT_PROGRESS);
+    return defaultProgress;
   }
 }
 
 function saveProgress(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    localStorage.setItem(storageKeyForCurrentMode(), JSON.stringify(progress));
   } catch {
     // Saving can fail in private or embedded browser contexts.
   }
@@ -387,10 +422,11 @@ function appendEconomyTransaction(
   progress.economyTransactions = progress.economyTransactions.slice(-100);
 }
 
-function normalizeProgress(value: Partial<GameProgress>): GameProgress {
-  const defaultProgress = cloneProgress(DEFAULT_PROGRESS);
+function normalizeProgress(value: Partial<GameProgress>, defaultProgress = cloneProgress(DEFAULT_PROGRESS)): GameProgress {
   const soulCoins = normalizeNumber(value.soulCoins, defaultProgress.soulCoins);
-  const unlockedTableThemeIds = normalizeUnlockedTableThemeIds(value.unlockedTableThemeIds);
+  const unlockedTableThemeIds = getRuntimeMode() === 'test'
+    ? [...TABLE_THEME_IDS]
+    : normalizeUnlockedTableThemeIds(value.unlockedTableThemeIds);
   return {
     soulCoins,
     ownedItems: normalizeItems(value.ownedItems),
@@ -409,7 +445,7 @@ function normalizeProgress(value: Partial<GameProgress>): GameProgress {
     formalTableStats: normalizeFormalTableStats(value.formalTableStats),
     economyStats: normalizeEconomyStats(value.economyStats, soulCoins),
     economyTransactions: normalizeEconomyTransactions(value.economyTransactions),
-    story: normalizeStoryProgress(value.story),
+    story: normalizeStoryProgress(value.story, defaultProgress.story),
   };
 }
 
@@ -574,8 +610,8 @@ function normalizeNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
 }
 
-function normalizeStoryProgress(story: unknown): StoryProgress {
-  const defaultStory = cloneStoryProgress(DEFAULT_PROGRESS.story);
+function normalizeStoryProgress(story: unknown, defaultValue = DEFAULT_PROGRESS.story): StoryProgress {
+  const defaultStory = cloneStoryProgress(defaultValue);
   if (!story || typeof story !== 'object' || Array.isArray(story)) {
     return defaultStory;
   }
@@ -668,4 +704,12 @@ function cloneStoryProgress(value: StoryProgress): StoryProgress {
     unlockedLevelIds: [...value.unlockedLevelIds],
     completedLevelIds: [...value.completedLevelIds],
   };
+}
+
+function defaultProgressForCurrentMode(): GameProgress {
+  return getRuntimeMode() === 'test' ? createTestProgress() : cloneProgress(DEFAULT_PROGRESS);
+}
+
+function storageKeyForCurrentMode(): string {
+  return STORAGE_KEYS[getRuntimeMode()];
 }

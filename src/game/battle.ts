@@ -53,12 +53,14 @@ export interface DamageEvent {
   evaded?: boolean;
   shielded?: boolean;
   originalAmount?: number;
+  killRewardHeal?: number;
   guard?: {
     protectorEnemyId: EnemyType;
     protectorEnemyIndex: number;
     protectorHpAfter: number;
     preventedDamage: number;
     legacyAttackBonus?: number;
+    killRewardHeal?: number;
   };
 }
 
@@ -218,8 +220,10 @@ export class Battle {
     const result = this.compareEnemy(enemy);
     this.results.push(result);
     enemy.compared = true;
+    enemy.revealed = true;
     this.logCompareResult(result);
-    this.applyDefeatAndReward(enemy);
+    const killRewardHeal = this.applyDefeatAndReward(enemy);
+    this.attachKillRewardToLatestDamage(enemy.id, killRewardHeal);
 
     if (this.markSoulRedeemPending()) {
       return;
@@ -581,7 +585,7 @@ export class Battle {
 
   private advanceEnemy(): void {
     const enemy = this.currentEnemy;
-    if (enemy) {
+    if (enemy && !enemy.compared) {
       enemy.revealed = false;
     }
 
@@ -716,7 +720,8 @@ export class Battle {
       this.results.push(result);
       enemy.compared = true;
       this.logCompareResult(result);
-      this.applyDefeatAndReward(enemy);
+      const killRewardHeal = this.applyDefeatAndReward(enemy);
+      this.attachKillRewardToLatestDamage(enemy.id, killRewardHeal);
 
       if (this.player.hp <= 0) {
         return;
@@ -766,26 +771,41 @@ export class Battle {
     }
   }
 
-  private applyDefeatAndReward(enemy: EnemyState): void {
+  private applyDefeatAndReward(enemy: EnemyState): number {
     if (enemy.defeated || enemy.hp > 0) {
       this.applyWarHornIfNeeded(enemy);
-      return;
+      return 0;
     }
 
     if (this.markEnemySoulRedeemPending(enemy)) {
-      return;
+      return 0;
     }
 
     enemy.defeated = true;
     if (enemy.summoned) {
       this.logEvent(t('log.summonedEnemyDefeated', { enemy: enemyName(enemy.id) }));
-      return;
+      return 0;
     }
 
     const beforeHeal = this.player.hp;
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
     const healed = this.player.hp - beforeHeal;
     this.logEvent(t('log.enemyDefeatedReward', { enemy: enemyName(enemy.id), healed }));
+    return healed;
+  }
+
+  private attachKillRewardToLatestDamage(enemyId: EnemyType, amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
+
+    for (let index = this.damageEvents.length - 1; index >= 0; index -= 1) {
+      const event = this.damageEvents[index];
+      if (event.type === 'damage' && event.attacker === 'player' && event.enemyId === enemyId) {
+        event.killRewardHeal = amount;
+        return;
+      }
+    }
   }
 
   private prepareEnemyRoundStartPassives(): void {
@@ -841,9 +861,20 @@ export class Battle {
     swordsman.hp = Math.max(0, swordsman.hp - damage);
     const swordsmanDefeated = swordsman.hp <= 0;
     if (swordsmanDefeated) {
-      this.applyDefeatAndReward(swordsman);
+      const killRewardHeal = this.applyDefeatAndReward(swordsman);
       enemy.attackBonus += 2;
       this.logEvent(t('log.chivalryLegacy', { enemy: enemyName(enemy.id) }));
+      return {
+        damageAfter,
+        guard: {
+          protectorEnemyId: swordsman.id,
+          protectorEnemyIndex: this.enemies.indexOf(swordsman),
+          protectorHpAfter: swordsman.hp,
+          preventedDamage: damage,
+          legacyAttackBonus: 2,
+          killRewardHeal,
+        },
+      };
     }
     return {
       damageAfter,
@@ -852,7 +883,7 @@ export class Battle {
         protectorEnemyIndex: this.enemies.indexOf(swordsman),
         protectorHpAfter: swordsman.hp,
         preventedDamage: damage,
-        legacyAttackBonus: swordsmanDefeated ? 2 : undefined,
+        legacyAttackBonus: undefined,
       },
     };
   }

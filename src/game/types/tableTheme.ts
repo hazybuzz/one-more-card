@@ -19,6 +19,15 @@ export interface StakeDifficultyConfig {
   descriptionKey: string;
 }
 
+export interface TableSurfaceVisualConfig {
+  woodColor: number;
+  woodEdgeColor: number;
+  clothColor: number;
+  clothBorderColor: number;
+  motifColor: number;
+  lightColor: number;
+}
+
 export interface TableThemeVisualConfig {
   accentColor: number;
   enemyFrameColor: number;
@@ -29,6 +38,7 @@ export interface TableThemeVisualConfig {
   lineColor: number;
   tableColor: number;
   tableRingColor: number;
+  tableSurface?: TableSurfaceVisualConfig;
   motif: 'tavern' | 'northern' | 'dragon' | 'edo';
 }
 

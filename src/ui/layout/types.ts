@@ -106,6 +106,8 @@ export interface BattleLayoutConfig {
   cards: {
     width: number;
     spacing: number;
+    enemyWidth: number;
+    enemySpacing: number;
   };
   combatantPanel: CombatantPanelLayoutConfig;
 }

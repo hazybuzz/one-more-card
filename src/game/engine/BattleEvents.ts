@@ -60,12 +60,14 @@ export type BattlePresentationEvent =
     evaded?: boolean;
     shielded?: boolean;
     originalAmount?: number;
+    killRewardHeal?: number;
     guard?: {
       protectorEnemyId: EnemyType;
       protectorEnemyIndex: number;
       protectorHpAfter: number;
       preventedDamage: number;
       legacyAttackBonus?: number;
+      killRewardHeal?: number;
     };
   }
   | { type: 'clash'; enemyId: EnemyType; amount: number }
