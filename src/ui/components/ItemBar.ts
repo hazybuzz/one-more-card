@@ -13,6 +13,7 @@ interface ItemBarOptions {
     muted: string;
     panelEnabled: number;
     panelDisabled: number;
+    panelHover: number;
     text: string;
   };
   badge?: string;
@@ -34,6 +35,9 @@ export class ItemBar {
       badgeColor: 0x23884d,
       badgeStrokeColor: 0x78d18a,
       badgeTextColor: '#eaffef',
+      backgroundColor: options.colors.panelEnabled,
+      disabledBackgroundColor: options.colors.panelDisabled,
+      hoverBackgroundColor: options.colors.panelHover,
       onShowTooltip: options.onShowTooltip,
       onHideTooltip: options.onHideTooltip,
       onActivate: options.onOpen,

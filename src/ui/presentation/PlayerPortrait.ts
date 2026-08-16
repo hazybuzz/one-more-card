@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { PLAYER_CHARACTER_ART } from '../art';
+import { PLAYER_CHARACTER_ART, type PortraitBackdropConfig } from '../art';
 import { applyCharacterPortraitPose, createCharacterPortrait } from './CharacterPortrait';
 
 export type PlayerPortraitPose = 'idle' | 'cast' | 'attack' | 'hurt';
@@ -29,8 +29,9 @@ export function configurePlayerPortraitTextures(scene: Phaser.Scene): void {
 export function applyPlayerPortraitPose(
   portrait: Phaser.GameObjects.Image,
   pose: PlayerPortraitPose,
+  backdrop?: PortraitBackdropConfig,
 ): void {
-  applyCharacterPortraitPose(portrait, PLAYER_CHARACTER_ART, pose);
+  applyCharacterPortraitPose(portrait, PLAYER_CHARACTER_ART, pose, backdrop);
 }
 
 export function createPlayerPortrait(
@@ -38,8 +39,9 @@ export function createPlayerPortrait(
   pose: PlayerPortraitPose,
   x: number,
   y: number,
+  backdrop?: PortraitBackdropConfig,
 ): Phaser.GameObjects.Image {
-  const portrait = createCharacterPortrait(scene, PLAYER_CHARACTER_ART, pose, x, y);
+  const portrait = createCharacterPortrait(scene, PLAYER_CHARACTER_ART, pose, x, y, backdrop);
   if (!portrait) {
     throw new Error(`Player portrait texture is not loaded: ${PLAYER_PORTRAIT_TEXTURE}`);
   }

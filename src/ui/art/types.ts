@@ -9,6 +9,10 @@ export interface ImageArtAsset {
   path: string;
   pixelArt?: boolean;
   fit?: 'stretch' | 'cover';
+  x?: number;
+  y?: number;
+  displayWidth?: number;
+  displayHeight?: number;
 }
 
 export interface BackgroundArtAsset extends ImageArtAsset {
@@ -49,8 +53,22 @@ export interface CharacterArtConfig {
   id: string;
   asset: ArtAsset;
   frames: Record<CharacterArtPose, number>;
+  poseOffsets?: Partial<Record<CharacterArtPose, { x: number; y: number }>>;
   displayWidth: number;
   displayHeight: number;
+}
+
+export type PortraitBackdropMotif = 'fate' | 'coins' | 'cards' | 'moon' | 'tavern';
+
+export interface PortraitBackdropConfig {
+  id: string;
+  baseColor: number;
+  secondaryColor: number;
+  accentColor: number;
+  motif: PortraitBackdropMotif;
+  seed: number;
+  rimColor?: number;
+  rimStrength?: number;
 }
 
 export interface BattleThemeArtManifest {

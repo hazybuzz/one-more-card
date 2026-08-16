@@ -12,6 +12,7 @@ export interface CardViewOptions {
   label?: string;
   resonant?: boolean;
   muted?: boolean;
+  ambientGlow?: boolean;
 }
 
 const CARD_ASPECT_RATIO = 1.4;
@@ -31,6 +32,31 @@ export function createCardView(scene: Phaser.Scene, options: CardViewOptions): P
   image.setDisplaySize(options.width, height);
   if (options.muted) {
     image.setAlpha(0.45);
+  }
+  if (options.ambientGlow) {
+    const glowColor = options.resonant && !hidden ? RESONANCE_COLOR : 0x8ba4c7;
+    const mutedAlpha = options.muted ? 0.35 : 1;
+    const outerGlow = scene.add.rectangle(0, 0, options.width + 10, height + 10, glowColor, 0.04)
+      .setStrokeStyle(7, glowColor, 0.12);
+    const edgeGlow = scene.add.rectangle(0, 0, options.width + 3, height + 3, 0x000000, 0)
+      .setStrokeStyle(2, glowColor, 0.24);
+    container.add([outerGlow, edgeGlow]);
+
+    const rankSeed = options.card?.rank
+      ? Array.from(options.card.rank).reduce((total, character) => total + character.charCodeAt(0), 0)
+      : 0;
+    const phaseOffset = options.x * 19 + options.y * 7 + rankSeed * 113;
+    const updateGlow = (): void => {
+      const pulse = 0.5 + Math.sin((scene.time.now + phaseOffset) / 680) * 0.5;
+      outerGlow.setAlpha((0.22 + pulse * 0.38) * mutedAlpha);
+      edgeGlow.setAlpha((0.34 + pulse * 0.42) * mutedAlpha);
+      outerGlow.setScale(0.985 + pulse * 0.035);
+    };
+    scene.events.on(Phaser.Scenes.Events.UPDATE, updateGlow);
+    updateGlow();
+    container.once(Phaser.GameObjects.Events.DESTROY, () => {
+      scene.events.off(Phaser.Scenes.Events.UPDATE, updateGlow);
+    });
   }
   container.add(image);
 

@@ -7,7 +7,7 @@ const ENEMY_PORTRAIT_SIZE = 140;
 const EVERNIGHT_CHARACTER_FRAME = {
   kind: 'image' as const,
   textureKey: 'theme-evernight-character-frame',
-  path: '/image/env-assets/evernight/border.png',
+  path: '/image/env-assets/evernight/c-border-512.png',
   displayScale: 1.1,
   offsetY: 0,
 };
@@ -27,6 +27,9 @@ export const PLAYER_CHARACTER_ART: CharacterArtConfig = {
     cast: 1,
     attack: 2,
     hurt: 3,
+  },
+  poseOffsets: {
+    cast: { x: 6, y: 0 },
   },
   displayWidth: PLAYER_PORTRAIT_SIZE,
   displayHeight: PLAYER_PORTRAIT_SIZE,
@@ -106,8 +109,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayWidth: 128,
+    displayHeight: 128,
   },
   paladin: {
     id: 'paladin',
@@ -365,14 +368,10 @@ const BATTLE_THEME_ART: Record<TableThemeId, BattleThemeArtManifest> = {
     themeId: 'evernight_tavern',
     background: {
       kind: 'image',
-      textureKey: 'theme-evernight-background',
+      textureKey: 'theme-evernight-battle-background',
       path: '/image/env-assets/evernight/battle-background.png',
-      fit: 'cover',
+      fit: 'stretch',
       includesTable: true,
-      tableCandlePositions: [
-        { x: 500, y: 280, scale: 0.72 },
-        { x: 780, y: 280, scale: 0.72 },
-      ],
     },
     playerFrame: EVERNIGHT_CHARACTER_FRAME,
     enemyFrame: EVERNIGHT_CHARACTER_FRAME,

@@ -13,6 +13,10 @@ interface SkillBarOptions {
     muted: string;
     resonance: string;
     text: string;
+    accent: number;
+    panelEnabled: number;
+    panelDisabled: number;
+    panelHover: number;
   };
   tooltipOrigin: {
     x: number;
@@ -48,10 +52,13 @@ export class SkillBar {
       x: offsetX,
       y: offsetY,
       icon: skill.icon,
-      color: 0xffd86b,
+      color: options.colors.accent,
       textColor: options.colors.resonance,
       enabled: skill.enabled,
       cooldown: skill.cooldown,
+      backgroundColor: options.colors.panelEnabled,
+      disabledBackgroundColor: options.colors.panelDisabled,
+      hoverBackgroundColor: options.colors.panelHover,
       onShowTooltip: () => options.onShowTooltip(tooltipX, tooltipY, title, tooltip),
       onHideTooltip: options.onHideTooltip,
       onActivate: () => options.onUse(id, title, tooltip, tooltipX, tooltipY),

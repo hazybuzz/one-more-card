@@ -102,55 +102,24 @@ export class CombatantPanel {
         options.skin!.rightWidth,
         options.skin!.topHeight,
         options.skin!.bottomHeight,
-      ).setAlpha(options.defeated ? 0.62 : 1)
-      : scene.add.rectangle(0, 0, options.width, options.height, fillColor)
-        .setStrokeStyle(2, borderColor, options.defeated ? 0.62 : 1);
-    const header = scene.add.rectangle(
-      0,
-      -options.height / 2 + frame.headerCenterTopInset,
-      options.width - 4,
-      frame.headerHeight,
-      0x080a0e,
-      options.defeated ? 0.16 : 0.24,
-    );
-    const headerDivider = scene.add.rectangle(
-      0,
-      -options.height / 2 + frame.headerDividerTopInset,
-      options.width - frame.horizontalInset,
-      1,
-      options.lineColor,
-      0.42,
-    );
-    const contentDivider = scene.add.rectangle(
-      layout.score.x + frame.contentDividerScoreOffsetX,
-      frame.contentDividerY,
-      1,
-      Math.max(frame.contentDividerMinimumHeight, options.height - frame.contentDividerHeightInset),
-      options.lineColor,
-      0.2,
-    );
-    container.add([body, header, headerDivider, contentDivider]);
-
-    if (options.variant === 'player') {
-      container.add(scene.add.circle(layout.portrait.x, layout.portrait.y, frame.playerPortraitRadius, 0x101a25, 0.56)
-        .setStrokeStyle(1, options.accentColor, 0.3));
-    }
+      ).setAlpha(options.defeated ? 0.54 : 0.82)
+      : scene.add.rectangle(0, 0, options.width, options.height, fillColor, options.defeated ? 0.36 : 0.48)
+        .setStrokeStyle(2, borderColor, options.defeated ? 0.46 : 0.7);
+    const innerOutline = scene.add.rectangle(0, 0, options.width - 10, options.height - 10, 0x000000, 0)
+      .setStrokeStyle(1, 0xffffff, options.defeated ? 0.06 : 0.12);
+    const contentDivider = options.variant === 'player'
+      ? scene.add.rectangle(0, 68, options.width - 28, 1, options.lineColor, 0.28)
+      : scene.add.rectangle(0, 8, 1, options.height - 28, options.lineColor, 0.22);
+    container.add([body, innerOutline, contentDivider]);
 
     if (options.active && !options.defeated) {
       const focusColor = options.focusColor ?? options.accentColor;
       const focusOutline = scene.add.rectangle(0, 0, options.width + frame.focusPadding, options.height + frame.focusPadding, focusColor, 0.025)
-        .setStrokeStyle(4, focusColor, 0.95);
-      const focusMarker = scene.add.rectangle(
-        0,
-        -options.height / 2 - frame.focusMarkerGap,
-        frame.focusMarkerSize,
-        frame.focusMarkerSize,
-        focusColor,
-        1,
-      ).setAngle(45);
-      container.add([focusOutline, focusMarker]);
+        .setStrokeStyle(3, focusColor, 0.92);
+      const focusEdge = scene.add.rectangle(0, -options.height / 2 + 3, Math.min(104, options.width * 0.32), 3, focusColor, 0.92);
+      container.add([focusOutline, focusEdge]);
       scene.tweens.add({
-        targets: [focusOutline, focusMarker],
+        targets: [focusOutline, focusEdge],
         alpha: { from: 0.48, to: 1 },
         duration: 920,
         ease: 'Sine.easeInOut',
@@ -158,7 +127,7 @@ export class CombatantPanel {
         repeat: -1,
       });
       focusOutline.once(Phaser.GameObjects.Events.DESTROY, () => {
-        scene.tweens.killTweensOf([focusOutline, focusMarker]);
+        scene.tweens.killTweensOf([focusOutline, focusEdge]);
       });
     }
 

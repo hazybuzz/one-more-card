@@ -13,6 +13,9 @@ export interface AbilitySlotOptions {
   badgeColor?: number;
   badgeStrokeColor?: number;
   badgeTextColor?: string;
+  backgroundColor?: number;
+  disabledBackgroundColor?: number;
+  hoverBackgroundColor?: number;
   onActivate?: () => void;
   onShowTooltip?: () => void;
   onHideTooltip?: () => void;
@@ -25,8 +28,11 @@ export class AbilitySlot {
     const enabled = options.enabled ?? true;
     const diameter = options.diameter ?? 44;
     const radius = diameter / 2;
+    const backgroundColor = options.backgroundColor ?? 0x282d37;
+    const disabledBackgroundColor = options.disabledBackgroundColor ?? 0x1b1e25;
+    const hoverBackgroundColor = options.hoverBackgroundColor ?? 0x373e4b;
     this.container = scene.add.container(options.x ?? 0, options.y ?? 0);
-    const background = scene.add.circle(0, 0, radius, enabled ? 0x282d37 : 0x1b1e25, 0.96)
+    const background = scene.add.circle(0, 0, radius, enabled ? backgroundColor : disabledBackgroundColor, 0.96)
       .setStrokeStyle(2, enabled ? options.color : 0x4a4f5a, enabled ? 0.96 : 0.62);
     const glow = scene.add.circle(0, 0, radius - 5, options.color, enabled ? 0.14 : 0.04);
     const icon = scene.add.text(0, -1, options.icon, {
@@ -57,11 +63,11 @@ export class AbilitySlot {
 
     background.setInteractive({ useHandCursor: enabled && Boolean(options.onActivate) });
     background.on('pointerover', () => {
-      background.setFillStyle(enabled ? 0x373e4b : 0x242832);
+      background.setFillStyle(enabled ? hoverBackgroundColor : disabledBackgroundColor);
       options.onShowTooltip?.();
     });
     background.on('pointerout', () => {
-      background.setFillStyle(enabled ? 0x282d37 : 0x1b1e25);
+      background.setFillStyle(enabled ? backgroundColor : disabledBackgroundColor);
       options.onHideTooltip?.();
     });
     background.on('pointerdown', () => {

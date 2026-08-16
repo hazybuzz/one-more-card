@@ -31,29 +31,36 @@ function isNineSliceSkin(asset: CharacterFrameArtAsset): asset is NineSliceChara
 
 export class CharacterFrame {
   readonly container: Phaser.GameObjects.Container;
+  readonly portraitBackdropLayer: Phaser.GameObjects.Container;
   readonly portraitLayer: Phaser.GameObjects.Container;
 
   constructor(scene: Phaser.Scene, options: CharacterFrameOptions) {
-    this.container = scene.add.container(options.x, options.y);
+    this.container = scene.make.container({
+      x: options.x,
+      y: options.y,
+      add: false,
+    });
     const alpha = options.muted ? 0.45 : 1;
     const shape = options.shape ?? 'rectangle';
 
     if (shape === 'circle') {
-      this.portraitLayer = scene.add.container(0, 0).setAlpha(alpha);
+      this.portraitBackdropLayer = scene.make.container({ x: 0, y: 0, add: false }).setAlpha(alpha);
+      this.portraitLayer = scene.make.container({ x: 0, y: 0, add: false });
       this.createCircularFrame(scene, options, alpha);
       return;
     }
 
     const background = scene.add.rectangle(0, 0, options.width, options.height, options.backgroundColor ?? 0x10151d, 0.92)
       .setStrokeStyle(2, options.accentColor, 0.3 * alpha);
-    this.portraitLayer = scene.add.container(0, 0).setAlpha(alpha);
+    this.portraitBackdropLayer = scene.make.container({ x: 0, y: 0, add: false }).setAlpha(alpha);
+    this.portraitLayer = scene.make.container({ x: 0, y: 0, add: false });
     const innerBorder = scene.add.rectangle(0, 0, options.width - 10, options.height - 10, 0x000000, 0)
       .setStrokeStyle(1, 0xffffff, 0.15 * alpha);
     const outerBorder = scene.add.rectangle(0, 0, options.width + 8, options.height + 8, 0x000000, 0)
       .setStrokeStyle(options.active ? 4 : 2, options.accentColor, (options.active ? 1 : 0.72) * alpha);
     const namePlate = scene.add.rectangle(0, options.height / 2 - 14, options.width - 12, 24, 0x090b10, 0.88)
       .setStrokeStyle(1, options.accentColor, 0.42 * alpha);
-    this.container.add([background, this.portraitLayer]);
+    this.container.add([background, this.portraitBackdropLayer, this.portraitLayer]);
 
     const skin = options.skin;
     const hasSkin = Boolean(skin && scene.textures.exists(skin.textureKey));
@@ -121,6 +128,11 @@ export class CharacterFrame {
 
   addPortrait(portrait: Phaser.GameObjects.GameObject): void {
     this.portraitLayer.add(portrait);
+    this.container.bringToTop(this.portraitLayer);
+  }
+
+  addPortraitBackdrop(backdrop: Phaser.GameObjects.GameObject): void {
+    this.portraitBackdropLayer.add(backdrop);
   }
 
   private createCircularFrame(scene: Phaser.Scene, options: CharacterFrameOptions, alpha: number): void {
@@ -130,21 +142,32 @@ export class CharacterFrame {
     if (options.backdrop === 'diamond' && !hasSkin) {
       this.container.add(this.createDiamondBackdrop(scene, radius, options.accentColor, alpha, Boolean(options.active)));
     }
-    const background = scene.add.circle(0, 0, radius, options.backgroundColor ?? 0x10151d, 0.92)
+    const ambientHalo = this.createCircularAmbientHalo(
+      scene,
+      radius,
+      options.accentColor,
+      alpha,
+      options.x * 17 + options.y * 11,
+    );
+    this.container.add(ambientHalo);
+    const background = scene.add.circle(0, 0, radius, options.backgroundColor ?? 0x080a0f, 1)
       .setStrokeStyle(2, options.accentColor, 0.32 * alpha);
-    const innerBorder = scene.add.circle(0, 0, radius - 7, 0x000000, 0)
-      .setStrokeStyle(1, 0xffffff, 0.17 * alpha);
-    const outerBorder = scene.add.circle(0, 0, radius + 4, 0x000000, 0)
-      .setStrokeStyle(options.active ? 4 : 2, options.accentColor, (options.active ? 1 : 0.76) * alpha);
-    this.container.add([background, this.portraitLayer]);
+    this.container.add([background, this.portraitBackdropLayer, this.portraitLayer]);
     if (skin && hasSkin) {
       const scale = skin.displayScale ?? 1;
-      this.container.add(scene.add.image(
-        skin.offsetX ?? 0,
-        skin.offsetY ?? 0,
-        skin.textureKey,
-      ).setDisplaySize(options.width * scale, options.height * scale).setAlpha(alpha));
+      const skinOverlay = scene.make.image({
+        x: skin.offsetX ?? 0,
+        y: skin.offsetY ?? 0,
+        key: skin.textureKey,
+        add: false,
+      });
+      skinOverlay.setDisplaySize(options.width * scale, options.height * scale).setAlpha(alpha);
+      this.container.add(skinOverlay);
     } else {
+      const innerBorder = scene.add.circle(0, 0, radius - 7, 0x000000, 0)
+        .setStrokeStyle(1, 0xffffff, 0.17 * alpha);
+      const outerBorder = scene.add.circle(0, 0, radius + 4, 0x000000, 0)
+        .setStrokeStyle(options.active ? 4 : 2, options.accentColor, (options.active ? 1 : 0.76) * alpha);
       this.container.add([innerBorder, outerBorder]);
     }
 
@@ -190,6 +213,35 @@ export class CharacterFrame {
     focusBorder.once(Phaser.GameObjects.Events.DESTROY, () => {
       scene.tweens.killTweensOf([themeGlow, focusBorder, ...segments]);
     });
+  }
+
+  private createCircularAmbientHalo(
+    scene: Phaser.Scene,
+    radius: number,
+    color: number,
+    alpha: number,
+    phaseOffset: number,
+  ): Phaser.GameObjects.Container {
+    const halo = scene.add.container(0, 0);
+    const outerGlow = scene.add.circle(0, 0, radius + 6, 0x000000, 0)
+      .setStrokeStyle(8, color, 0.12 * alpha);
+    const edgeGlow = scene.add.circle(0, 0, radius + 2, 0x000000, 0)
+      .setStrokeStyle(2, color, 0.28 * alpha);
+    halo.add([outerGlow, edgeGlow]);
+
+    const updateGlow = (): void => {
+      const pulse = 0.5 + Math.sin((scene.time.now + phaseOffset) / 760) * 0.5;
+      outerGlow.setAlpha((0.34 + pulse * 0.46) * alpha);
+      edgeGlow.setAlpha((0.48 + pulse * 0.42) * alpha);
+      outerGlow.setScale(0.985 + pulse * 0.035);
+      edgeGlow.setScale(0.995 + pulse * 0.012);
+    };
+    scene.events.on(Phaser.Scenes.Events.UPDATE, updateGlow);
+    updateGlow();
+    halo.once(Phaser.GameObjects.Events.DESTROY, () => {
+      scene.events.off(Phaser.Scenes.Events.UPDATE, updateGlow);
+    });
+    return halo;
   }
 
   private createDiamondBackdrop(

@@ -60,6 +60,9 @@ export interface PlayerHudLayoutConfig {
   portrait: LayoutRect;
   name: LayoutPoint;
   hand: LayoutPoint;
+  handGap: number;
+  utilityBar: LayoutPoint;
+  utilityGap: number;
   actions: LayoutPoint;
   scoreGap: number;
   orbitRadiusX: number;
