@@ -1,4 +1,5 @@
 export * from './CatalogCard';
+export * from './CatalogSceneShell';
 export * from './CatalogDetailPanel';
 export * from './CatalogLayout';
 export * from './CatalogViewModel';

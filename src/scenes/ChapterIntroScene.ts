@@ -1,7 +1,19 @@
 import Phaser from 'phaser';
+import { DISPLAY_FONT_FAMILY, GAME_FONT_FAMILY } from '../ui/themes/typography';
 import { stopLobbyMusic } from '../game/audio';
-import { getIntroSequence, type IntroSequenceConfig } from '../game/data/introSequences';
+import {
+  getIntroSequence,
+  type IntroSequenceConfig,
+  type IntroStageAction,
+} from '../game/data/introSequences';
 import { t } from '../game/i18n';
+import { StoryCharacterStage } from '../ui/story/StoryCharacterStage';
+import { StoryCardPushEffect } from '../ui/story/StoryCardPushEffect';
+import {
+  configureStoryArtTextures,
+  preloadStoryArt,
+  STORY_BACKGROUND,
+} from '../ui/story/StoryArtPreloader';
 
 const COLORS = {
   bg: 0x020203,
@@ -37,6 +49,8 @@ export class ChapterIntroScene extends Phaser.Scene {
   private narrationIndex = 0;
   private titleText?: Phaser.GameObjects.Text;
   private centerText?: Phaser.GameObjects.Text;
+  private storyStage?: StoryCharacterStage;
+  private pushedCardStack?: Phaser.GameObjects.Container;
 
   constructor() {
     super('ChapterIntroScene');
@@ -50,11 +64,17 @@ export class ChapterIntroScene extends Phaser.Scene {
     this.narrationIndex = 0;
     this.finished = false;
     this.timers = [];
+    this.storyStage = undefined;
+    this.pushedCardStack = undefined;
   }
 
   preload(): void {
     if (!this.intro) {
       return;
+    }
+
+    if (this.intro.cast?.length) {
+      preloadStoryArt(this, this.intro);
     }
 
     if (!this.cache.audio.exists(this.intro.bgm.key)) {
@@ -81,15 +101,53 @@ export class ChapterIntroScene extends Phaser.Scene {
       this.sound.play(this.intro?.shuffleSfx.key ?? 'cardShuffle', { volume: this.intro?.shuffleSfx.volume ?? 0.7 });
     }));
 
-    this.renderSkipHint();
-    this.renderTableau();
+    if (this.intro.cast?.length) {
+      configureStoryArtTextures(this, this.intro);
+      this.renderCinematicStage();
+    } else {
+      this.renderTableau();
+    }
     this.createTextObjects();
+    this.renderSkipHint();
     this.bindSkipInput();
+  }
+
+  private renderCinematicStage(): void {
+    if (!this.intro?.cast?.length) {
+      return;
+    }
+
+    const background = this.add.image(637, 360, STORY_BACKGROUND.key)
+      .setDisplaySize(1310, 737)
+      .setAlpha(0);
+    this.add.rectangle(640, 360, 1280, 720, 0x020203, 0.22);
+
+    this.tweens.add({
+      targets: background,
+      alpha: 1,
+      duration: 1300,
+      ease: 'Sine.easeOut',
+    });
+    this.tweens.add({
+      targets: background,
+      x: 643,
+      duration: 14000,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    this.storyStage = new StoryCharacterStage(
+      this,
+      this.intro.cast,
+      this.intro.stagePreset ?? 'solo',
+    );
+    this.storyStage.playEntrance();
   }
 
   private renderSkipHint(): void {
     this.add.text(1166, 674, t('intro.skip'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '15px',
       color: COLORS.muted,
     }).setOrigin(1, 0.5).setAlpha(0.68);
@@ -141,21 +199,27 @@ export class ChapterIntroScene extends Phaser.Scene {
       return;
     }
 
-    this.titleText = this.add.text(640, 246, t(this.intro.titleKey), {
-      fontFamily: 'Arial',
+    const cinematic = Boolean(this.intro.cast?.length);
+    const crowdedStage = this.intro.stagePreset === 'fullTable';
+    const bossStage = this.intro.stagePreset === 'bossEntrance';
+    const titleY = crowdedStage ? 132 : bossStage ? 166 : cinematic ? 188 : 246;
+    const bodyY = crowdedStage ? 224 : bossStage ? 276 : cinematic ? 316 : 332;
+    const bodyWidth = crowdedStage ? 720 : bossStage ? 600 : cinematic ? 520 : 760;
+    this.titleText = this.add.text(640, titleY, t(this.intro.titleKey), {
+      fontFamily: DISPLAY_FONT_FAMILY,
       fontSize: '56px',
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5).setAlpha(0);
     this.titleText.setShadow(0, 0, COLORS.accent, 16, true, true);
 
-    this.centerText = this.add.text(640, 332, '', {
-      fontFamily: 'Arial',
+    this.centerText = this.add.text(640, bodyY, '', {
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '25px',
       color: COLORS.text,
       align: 'center',
       lineSpacing: 14,
-      wordWrap: { width: 760 },
+      wordWrap: { width: bodyWidth },
     }).setOrigin(0.5).setAlpha(0);
 
     this.timers.push(this.time.delayedCall(650, () => this.showOpeningStep()));
@@ -233,6 +297,8 @@ export class ChapterIntroScene extends Phaser.Scene {
     }
 
     if (this.intro.showTitle !== false) {
+      this.storyStage?.setSpeaker(undefined);
+      this.executeStageActions(this.intro.openingActions);
       this.phase = 'narration';
       this.narrationIndex = this.intro.narrationKeys.length;
       this.fadeText(this.titleText, t(this.intro.titleKey));
@@ -248,6 +314,8 @@ export class ChapterIntroScene extends Phaser.Scene {
     }
 
     this.phase = 'narration';
+    this.storyStage?.setSpeaker(undefined);
+    this.executeStageActions(this.intro.openingActions);
     this.narrationIndex = this.intro.narrationKeys.length;
     this.centerText?.setStyle({
       fontSize: '25px',
@@ -265,6 +333,7 @@ export class ChapterIntroScene extends Phaser.Scene {
     }
 
     this.phase = 'narration';
+    this.storyStage?.setSpeaker(undefined);
     this.centerText.setStyle({
       fontSize: '25px',
       color: COLORS.text,
@@ -287,6 +356,8 @@ export class ChapterIntroScene extends Phaser.Scene {
     }
 
     if (step.type === 'dialogue') {
+      this.storyStage?.setSpeaker(step.speakerId);
+      this.executeStageActions(step.actions);
       this.centerText.setStyle({
         fontSize: '30px',
         color: COLORS.accent,
@@ -296,6 +367,8 @@ export class ChapterIntroScene extends Phaser.Scene {
       this.centerText.setShadow(0, 0, COLORS.accent, 10, true, true);
       this.fadeText(this.centerText, t(step.textKey), 240);
     } else if (step.type === 'narration') {
+      this.executeStageActions(step.actions);
+      this.storyStage?.setSpeaker(undefined);
       this.centerText.setStyle({
         fontSize: '26px',
         color: COLORS.text,
@@ -304,14 +377,9 @@ export class ChapterIntroScene extends Phaser.Scene {
       });
       this.centerText.setShadow(0, 0, '#000000', 6, true, true);
       this.fadeText(this.centerText, t(step.textKey), 240);
-      if (step.textKey === 'intro.chapter1.pushCards') {
-        this.time.delayedCall(260, () => {
-          if (!this.finished) {
-            this.sound.play(CARD_PACK_TAKE_OUT_KEY, { volume: 0.72 });
-          }
-        });
-      }
     } else {
+      this.executeStageActions(step.actions);
+      this.storyStage?.focusTitle();
       this.centerText.setStyle({
         fontSize: '34px',
         color: COLORS.text,
@@ -326,6 +394,31 @@ export class ChapterIntroScene extends Phaser.Scene {
     if (this.stepIndex >= this.intro.steps.length - 1) {
       this.phase = 'readyToFinish';
     }
+  }
+
+  private executeStageActions(actions?: IntroStageAction[]): void {
+    actions?.forEach((action) => {
+      if (action.type === 'revealActor') {
+        this.storyStage?.revealActor(action.actorId);
+        return;
+      }
+
+      if (action.type === 'revealActors') {
+        this.storyStage?.revealActors(action.actorIds, action.staggerMs);
+        return;
+      }
+
+      this.time.delayedCall(260, () => {
+        if (this.finished) {
+          return;
+        }
+
+        this.sound.play(CARD_PACK_TAKE_OUT_KEY, { volume: 0.72 });
+        if (!this.pushedCardStack) {
+          this.pushedCardStack = StoryCardPushEffect.play(this);
+        }
+      });
+    });
   }
 
   private fadeText(text: Phaser.GameObjects.Text | undefined, content: string, duration = 420): void {

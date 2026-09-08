@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GAME_FONT_FAMILY } from '../themes/typography';
 import type { TableThemeVisualConfig } from '../../game/types/tableTheme';
 import type { BattleThemeArtManifest, ImageArtAsset } from '../art';
 import {
@@ -90,6 +91,7 @@ function renderArtLayer(scene: Phaser.Scene, asset: ImageArtAsset, depth: number
   } else {
     image.setDisplaySize(1280, 720);
   }
+  image.setAlpha(asset.alpha ?? 1);
   return image;
 }
 
@@ -122,7 +124,7 @@ function renderNorthernTheme(scene: Phaser.Scene, visual: TableThemeVisualConfig
     const x = 640 + Math.cos(angle) * 178;
     const y = 350 + Math.sin(angle) * 178;
     const rune = scene.add.text(x, y, glyph, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '22px',
       color: visual.glowColor,
       fontStyle: 'bold',
@@ -341,7 +343,7 @@ function renderDragonGateTheme(scene: Phaser.Scene, visual: TableThemeVisualConf
   renderLantern(scene, 1138, 238, visual);
   scene.add.rectangle(640, 186, 300, 58, 0x1f0a0d, 0.92).setStrokeStyle(3, visual.tableRingColor, 0.68);
   const sign = scene.add.text(640, 186, '龍門', {
-    fontFamily: 'Arial',
+    fontFamily: GAME_FONT_FAMILY,
     fontSize: '32px',
     color: visual.glowColor,
     fontStyle: 'bold',
@@ -364,7 +366,7 @@ function renderDragonGateTheme(scene: Phaser.Scene, visual: TableThemeVisualConf
     const x = 640 + Math.cos(angle) * 132;
     const y = 350 + Math.sin(angle) * 132;
     const text = scene.add.text(x, y, glyph, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '24px',
       color: visual.glowColor,
       fontStyle: 'bold',
@@ -397,7 +399,7 @@ function renderEdoTheme(scene: Phaser.Scene, visual: TableThemeVisualConfig): vo
     const x = 640 + Math.cos(angle) * 134;
     const y = 350 + Math.sin(angle) * 134;
     const text = scene.add.text(x, y, glyph, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '24px',
       color: visual.glowColor,
       fontStyle: 'bold',

@@ -13,6 +13,7 @@ export interface ImageArtAsset {
   y?: number;
   displayWidth?: number;
   displayHeight?: number;
+  alpha?: number;
 }
 
 export interface BackgroundArtAsset extends ImageArtAsset {
@@ -54,6 +55,7 @@ export interface CharacterArtConfig {
   asset: ArtAsset;
   frames: Record<CharacterArtPose, number>;
   poseOffsets?: Partial<Record<CharacterArtPose, { x: number; y: number }>>;
+  displayOffset?: { x: number; y: number };
   displayWidth: number;
   displayHeight: number;
 }
@@ -74,6 +76,7 @@ export interface PortraitBackdropConfig {
 export interface BattleThemeArtManifest {
   themeId: TableThemeId;
   background?: BackgroundArtAsset;
+  backgroundVariants?: BackgroundArtAsset[];
   tableOverlay?: ImageArtAsset;
   foreground?: ImageArtAsset;
   playerFrame?: CharacterFrameArtAsset;
@@ -81,6 +84,9 @@ export interface BattleThemeArtManifest {
   playerPanel?: NineSliceArtAsset;
   enemyPanel?: NineSliceArtAsset;
   actionBar?: NineSliceArtAsset;
+  actionButton?: NineSliceArtAsset;
+  modalPanel?: NineSliceArtAsset;
+  tooltipPanel?: NineSliceArtAsset;
 }
 
 export interface BattleArtSelection {

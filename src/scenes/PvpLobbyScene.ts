@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { DISPLAY_FONT_FAMILY, GAME_FONT_FAMILY } from '../ui/themes/typography';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
 import { t } from '../game/i18n';
 import { pvpClient } from '../game/pvp/PvpClient';
@@ -112,14 +113,14 @@ export class PvpLobbyScene extends Phaser.Scene {
 
   private renderHeader(): void {
     this.add.text(640, 74, t('pvp.title'), {
-      fontFamily: 'Arial',
+      fontFamily: DISPLAY_FONT_FAMILY,
       fontSize: '46px',
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 10, true, true);
 
     this.add.text(640, 122, t('pvp.subtitle'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '17px',
       color: COLORS.muted,
     }).setOrigin(0.5);
@@ -133,7 +134,7 @@ export class PvpLobbyScene extends Phaser.Scene {
     const panel = this.add.container(330, 385);
     panel.add(this.add.rectangle(0, 0, 500, 420, COLORS.panel, 0.96).setStrokeStyle(2, COLORS.line));
     panel.add(this.add.text(-210, -174, t('pvp.connection'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '26px',
       color: COLORS.text,
       fontStyle: 'bold',
@@ -164,7 +165,7 @@ export class PvpLobbyScene extends Phaser.Scene {
     const panel = this.add.container(910, 268);
     panel.add(this.add.rectangle(0, 0, 560, 188, COLORS.panel, 0.96).setStrokeStyle(2, COLORS.line));
     panel.add(this.add.text(-236, -74, t('pvp.roomStatus'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '26px',
       color: COLORS.text,
       fontStyle: 'bold',
@@ -172,7 +173,7 @@ export class PvpLobbyScene extends Phaser.Scene {
 
     const statusColor = this.connected ? COLORS.green : COLORS.dangerText;
     const status = this.add.text(-236, -36, `${t('pvp.status')} ${this.status}`, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '17px',
       color: statusColor,
       wordWrap: { width: 472 },
@@ -182,7 +183,7 @@ export class PvpLobbyScene extends Phaser.Scene {
 
     if (!this.roomState) {
       panel.add(this.add.text(-236, 14, t('pvp.noRoom'), {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '16px',
         color: COLORS.muted,
         wordWrap: { width: 472 },
@@ -191,14 +192,14 @@ export class PvpLobbyScene extends Phaser.Scene {
     }
 
     panel.add(this.add.text(-236, 0, `${t('pvp.room')} ${this.roomState.roomId}`, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '22px',
       color: COLORS.accentText,
       fontStyle: 'bold',
     }).setShadow(0, 0, COLORS.accentText, 8, true, true));
 
     panel.add(this.add.text(42, 4, `${t('pvp.phase')} ${this.phaseLabel(this.roomState.phase)}`, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '17px',
       color: COLORS.text,
     }));
@@ -208,18 +209,18 @@ export class PvpLobbyScene extends Phaser.Scene {
       const isSelf = player.id === this.roomState?.selfId;
       panel.add(this.add.rectangle(0, y + 8, 472, 34, isSelf ? 0x2a3027 : COLORS.panelAlt, 0.92).setStrokeStyle(1, isSelf ? 0x78d18a : COLORS.line));
       panel.add(this.add.text(-218, y - 2, `${player.name}${isSelf ? ` ${t('pvp.self')}` : ''}`, {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '16px',
         color: COLORS.text,
         fontStyle: 'bold',
       }));
       panel.add(this.add.text(56, y - 2, player.ready ? t('pvp.playerReady') : t('pvp.playerWaiting'), {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '15px',
         color: player.ready ? COLORS.green : COLORS.muted,
       }));
       panel.add(this.add.text(154, y - 2, player.connected ? t('pvp.online') : t('pvp.offline'), {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '14px',
         color: player.connected ? COLORS.green : COLORS.dangerText,
       }));
@@ -236,7 +237,7 @@ export class PvpLobbyScene extends Phaser.Scene {
     const panel = this.add.container(910, 514);
     panel.add(this.add.rectangle(0, 0, 560, 284, COLORS.panel, 0.96).setStrokeStyle(2, COLORS.line));
     panel.add(this.add.text(-236, -118, t('pvp.roomList'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '26px',
       color: COLORS.text,
       fontStyle: 'bold',
@@ -245,7 +246,7 @@ export class PvpLobbyScene extends Phaser.Scene {
 
     if (!this.connected) {
       panel.add(this.add.text(-236, -64, t('pvp.roomListOffline'), {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '16px',
         color: COLORS.muted,
         wordWrap: { width: 472 },
@@ -255,7 +256,7 @@ export class PvpLobbyScene extends Phaser.Scene {
 
     if (this.roomList.length === 0) {
       panel.add(this.add.text(-236, -64, t('pvp.noRooms'), {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '16px',
         color: COLORS.muted,
         wordWrap: { width: 472 },
@@ -271,18 +272,18 @@ export class PvpLobbyScene extends Phaser.Scene {
       const rect = this.add.rectangle(0, y + 16, 492, 38, fill, 0.94).setStrokeStyle(1, isCurrent ? 0x78d18a : joinable ? COLORS.accent : COLORS.line);
       panel.add(rect);
       panel.add(this.add.text(-226, y + 3, `${room.roomId} · ${room.hostName}`, {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '16px',
         color: joinable ? COLORS.text : COLORS.muted,
         fontStyle: 'bold',
       }));
       panel.add(this.add.text(18, y + 4, t('pvp.roomPlayers', { count: room.playerCount, max: room.maxPlayers }), {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '14px',
         color: COLORS.muted,
       }));
       panel.add(this.add.text(132, y + 4, this.roomJoinStatus(room), {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '14px',
         color: joinable ? COLORS.green : COLORS.muted,
       }));
@@ -302,13 +303,13 @@ export class PvpLobbyScene extends Phaser.Scene {
     const active = this.activeField === key;
     const field = this.add.container(x, y);
     field.add(this.add.text(0, 0, label, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '15px',
       color: COLORS.muted,
     }));
     const rect = this.add.rectangle(210, 42, 420, 44, active ? 0x242936 : 0x20232a, 0.96).setStrokeStyle(2, active ? COLORS.accent : COLORS.line);
     const value = this.add.text(14, 30, this.fields[key] || t('pvp.emptyInput'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '18px',
       color: this.fields[key] ? COLORS.text : COLORS.muted,
       fixedWidth: 390,
@@ -339,7 +340,7 @@ export class PvpLobbyScene extends Phaser.Scene {
     const stroke = enabled ? variant === 'success' ? 0x78d18a : COLORS.line : 0x343741;
     const rect = this.add.rectangle(0, 0, width, height, fill).setStrokeStyle(2, stroke);
     const text = this.add.text(0, 0, label, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize,
       color: enabled ? COLORS.text : COLORS.muted,
     }).setOrigin(0.5);

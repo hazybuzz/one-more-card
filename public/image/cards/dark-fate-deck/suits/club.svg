@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="club-fill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#465462"/>
+      <stop offset="0.48" stop-color="#242b33"/>
+      <stop offset="1" stop-color="#11161c"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 6C23 6 18 13 19 21C10 19 4 25 5 34C6 43 15 47 23 42C23 49 20 55 15 59H49C44 55 41 49 41 42C49 47 58 43 59 34C60 25 54 19 45 21C46 13 41 6 32 6Z"
+    fill="url(#club-fill)" stroke="#080b0e" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M25 13C28 10 34 9 38 12" fill="none" stroke="#7d8b98" stroke-width="3" stroke-linecap="round" opacity="0.65"/>
+</svg>

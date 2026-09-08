@@ -80,7 +80,8 @@ export function createCharacterPortrait(
     return undefined;
   }
 
-  return scene.add.image(x, y, textureKey)
+  const displayOffset = config.displayOffset ?? { x: 0, y: 0 };
+  return scene.add.image(x + displayOffset.x, y + displayOffset.y, textureKey)
     .setOrigin(0.5)
     .setDisplaySize(config.displayWidth, config.displayHeight);
 }

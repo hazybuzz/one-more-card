@@ -1,6 +1,27 @@
+@font-face {
+  font-family: 'Noto Serif SC';
+  src: url('/fonts/noto-serif-sc/NotoSerifSC-Project.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Almendra SC';
+  src: url('/fonts/almendra-sc/AlmendraSC-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
+
 :root {
   color-scheme: dark;
-  background: #090a0d;
+  --viewport-shell-top: #111319;
+  --viewport-shell-middle: #090a0e;
+  --viewport-shell-bottom: #030405;
+  --viewport-shell-edge: #000000;
+  background: var(--viewport-shell-edge);
+  font-family: 'Almendra SC', 'Noto Serif SC', 'PingFang SC', 'Microsoft YaHei', serif;
 }
 
 html,
@@ -8,23 +29,46 @@ body,
 #game {
   width: 100%;
   height: 100%;
+  min-height: 100%;
   margin: 0;
 }
 
+html {
+  background: var(--viewport-shell-edge);
+}
+
 body {
+  min-width: 320px;
+  min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
-  background: linear-gradient(180deg, #1a1c22 0%, #0d0f13 52%, #060709 100%);
+  background:
+    linear-gradient(90deg, var(--viewport-shell-edge), transparent 18%, transparent 82%, var(--viewport-shell-edge)),
+    linear-gradient(180deg, var(--viewport-shell-top) 0%, var(--viewport-shell-middle) 46%, var(--viewport-shell-bottom) 100%);
+  font-family: inherit;
 }
 
 #game {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(145deg, #17191e 0%, #0b0d11 58%, #050608 100%);
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: transparent;
 }
 
 #game canvas {
   display: block;
   max-width: 100%;
   max-height: 100%;
+  box-shadow: 0 0 48px 18px rgb(0 0 0 / 42%);
+}
+
+@media (max-aspect-ratio: 1 / 1) {
+  body {
+    background:
+      linear-gradient(180deg, var(--viewport-shell-edge), transparent 14%, transparent 86%, var(--viewport-shell-edge)),
+      linear-gradient(90deg, var(--viewport-shell-top) 0%, var(--viewport-shell-middle) 50%, var(--viewport-shell-bottom) 100%);
+  }
 }

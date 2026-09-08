@@ -1,5 +1,6 @@
 import type { EnemyId } from '../../game/types/enemy';
 import type { TableThemeId } from '../../game/types/tableTheme';
+import { DRAGON_GATE_PALETTE } from './dragonGateArt';
 import type { PortraitBackdropConfig } from './types';
 
 export type PortraitCombatantId = 'player' | EnemyId;
@@ -58,13 +59,117 @@ const EVERNIGHT_STORY_BACKDROP: PortraitBackdropConfig = {
   rimStrength: 0.36,
 };
 
+const NORTHERN_LONGHOUSE_BACKDROPS: Partial<Record<PortraitCombatantId, PortraitBackdropConfig>> = {
+  player: {
+    id: 'northern-player-fate',
+    baseColor: 0x101722,
+    secondaryColor: 0x26364a,
+    accentColor: 0xe0bd62,
+    motif: 'fate',
+    seed: 89,
+    rimColor: 0xf1d98a,
+    rimStrength: 0.62,
+  },
+  viking_warrior: {
+    id: 'northern-viking-ember',
+    baseColor: 0x1d1112,
+    secondaryColor: 0x4a2020,
+    accentColor: 0xdc583d,
+    motif: 'cards',
+    seed: 101,
+    rimColor: 0xf07b55,
+    rimStrength: 0.66,
+  },
+  rune_shaman: {
+    id: 'northern-shaman-runes',
+    baseColor: 0x0d1b18,
+    secondaryColor: 0x1e4338,
+    accentColor: 0x84dfb2,
+    motif: 'tavern',
+    seed: 113,
+    rimColor: 0xc2f4da,
+    rimStrength: 0.58,
+  },
+  valkyrie: {
+    id: 'northern-valkyrie-frost',
+    baseColor: 0x0e1824,
+    secondaryColor: 0x254c68,
+    accentColor: 0x79cbea,
+    motif: 'moon',
+    seed: 127,
+    rimColor: 0xc8efff,
+    rimStrength: 0.72,
+  },
+  einherjar: {
+    id: 'northern-einherjar-spirit',
+    baseColor: 0x0b1722,
+    secondaryColor: 0x1d4961,
+    accentColor: 0x69d8ef,
+    motif: 'moon',
+    seed: 139,
+    rimColor: 0xc9f7ff,
+    rimStrength: 0.78,
+  },
+};
+
+const DRAGON_GATE_BACKDROPS: Partial<Record<PortraitCombatantId, PortraitBackdropConfig>> = {
+  player: {
+    id: 'dragon-gate-player-fate-stone',
+    baseColor: DRAGON_GATE_PALETTE.ink,
+    secondaryColor: 0x352422,
+    accentColor: DRAGON_GATE_PALETTE.oldGold,
+    motif: 'fate',
+    seed: 151,
+    rimColor: DRAGON_GATE_PALETTE.parchment,
+    rimStrength: 0.62,
+  },
+  swordsman: {
+    id: 'dragon-gate-swordsman-sword-aura',
+    baseColor: DRAGON_GATE_PALETTE.ink,
+    secondaryColor: DRAGON_GATE_PALETTE.lacquer,
+    accentColor: DRAGON_GATE_PALETTE.deepRed,
+    motif: 'cards',
+    seed: 163,
+    rimColor: 0xd05a4f,
+    rimStrength: 0.68,
+  },
+  songstress: {
+    id: 'dragon-gate-songstress-silk-dance',
+    baseColor: 0x211016,
+    secondaryColor: 0x542333,
+    accentColor: DRAGON_GATE_PALETTE.silkRose,
+    motif: 'tavern',
+    seed: 179,
+    rimColor: 0xf0a4b2,
+    rimStrength: 0.58,
+  },
+  taoist: {
+    id: 'dragon-gate-taoist-jade-trigram',
+    baseColor: 0x0b1816,
+    secondaryColor: 0x183b35,
+    accentColor: DRAGON_GATE_PALETTE.jade,
+    motif: 'moon',
+    seed: 193,
+    rimColor: 0xa2dfcc,
+    rimStrength: 0.6,
+  },
+};
+
 export function getPortraitBackdrop(
   themeId: TableThemeId,
   combatantId: PortraitCombatantId,
 ): PortraitBackdropConfig | undefined {
-  if (themeId !== 'evernight_tavern') {
-    return undefined;
+  if (themeId === 'evernight_tavern') {
+    return EVERNIGHT_BACKDROPS[combatantId] ?? EVERNIGHT_STORY_BACKDROP;
   }
 
-  return EVERNIGHT_BACKDROPS[combatantId] ?? EVERNIGHT_STORY_BACKDROP;
+  if (themeId === 'northern_longhouse') {
+    return NORTHERN_LONGHOUSE_BACKDROPS[combatantId];
+  }
+
+  if (themeId === 'dragon_gate') {
+    return DRAGON_GATE_BACKDROPS[combatantId];
+  }
+
+  return undefined;
 }

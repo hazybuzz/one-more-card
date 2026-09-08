@@ -2,6 +2,7 @@ import type { BattleAction } from '../../game/engine';
 import type { BattleState } from '../../game/engine';
 import type { ItemId } from '../../game/types/item';
 import type { BattleActionId, BattleMechanicId } from '../../game/types/level';
+import type { BattleIconId } from '../art';
 
 export type SkillSlotId = 'shift' | 'summon';
 
@@ -33,6 +34,7 @@ export interface SkillSlotState {
   titleKey: string;
   tooltipKey: string;
   icon: string;
+  iconArtId?: BattleIconId;
 }
 
 export interface ItemButtonState {
@@ -215,6 +217,7 @@ function createShiftSkillState(state: BattleState, inputLocked: boolean): SkillS
     titleKey: 'skill.resonanceShift.name',
     tooltipKey: cooldown > 0 ? 'skill.cooldown.tooltip' : 'skill.resonanceShift.tooltip',
     icon: '◇',
+    iconArtId: 'resonance-shift',
   };
 }
 
@@ -233,6 +236,7 @@ function createSummonSkillState(state: BattleState, inputLocked: boolean): Skill
     titleKey: 'skill.resonanceSummon.name',
     tooltipKey: cooldown > 0 ? 'skill.cooldown.tooltip' : 'skill.resonanceSummon.tooltip',
     icon: '✦',
+    iconArtId: 'resonance-summon',
   };
 }
 

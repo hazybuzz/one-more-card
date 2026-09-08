@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GAME_FONT_FAMILY } from '../ui/themes/typography';
 import { preloadCardImages } from '../game/assets';
 import { playBattleMusic, preloadBattleMusic, stopBattleMusic, stopLobbyMusic } from '../game/audio';
 import { cardValue } from '../game/card';
@@ -160,7 +161,7 @@ export class PvpBattleScene extends Phaser.Scene {
 
   private renderNoState(): void {
     this.add.text(640, 310, t('pvp.battle.noState'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '26px',
       color: COLORS.text,
     }).setOrigin(0.5);
@@ -175,13 +176,13 @@ export class PvpBattleScene extends Phaser.Scene {
     }
 
     this.add.text(640, 38, t('pvp.battle.title'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '32px',
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 8, true, true);
     this.add.text(640, 72, `${t('pvp.room')} ${this.state.roomId}   ${t('pvp.phase')} ${t(`pvp.phase.${this.state.phase}`)}`, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '16px',
       color: COLORS.muted,
     }).setOrigin(0.5);
@@ -202,7 +203,7 @@ export class PvpBattleScene extends Phaser.Scene {
 
     if (!player) {
       panel.add(this.add.text(0, 0, t('pvp.battle.waitingOpponent'), {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '22px',
         color: COLORS.muted,
       }).setOrigin(0.5));
@@ -211,25 +212,25 @@ export class PvpBattleScene extends Phaser.Scene {
 
     const titleColor = isSelf ? COLORS.green : COLORS.accentText;
     panel.add(this.add.text(-width / 2 + 24, -height / 2 + 18, `${player.name}${isSelf ? ` ${t('pvp.self')}` : ''}`, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '22px',
       color: titleColor,
       fontStyle: 'bold',
     }));
     panel.add(this.add.text(width / 2 - 272, -height / 2 + 20, `AP ${player.actionPoints}/${player.maxActionPoints}`, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '25px',
       color: COLORS.apText,
       fontStyle: 'bold',
     }).setShadow(0, 0, COLORS.apText, 10, true, true));
     panel.add(this.add.text(width / 2 - 132, -height / 2 + 20, `HP ${player.hp}/${player.maxHp}`, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '25px',
       color: COLORS.dangerText,
       fontStyle: 'bold',
     }).setShadow(0, 0, COLORS.dangerText, 10, true, true));
     panel.add(this.add.text(-width / 2 + 24, height / 2 - 42, this.playerStatusText(player, isSelf), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '15px',
       color: player.secondDrawRisk ? COLORS.dangerText : COLORS.muted,
     }));
@@ -249,6 +250,7 @@ export class PvpBattleScene extends Phaser.Scene {
         hidden: card.hidden,
         width: cardWidth,
         resonant: this.shouldHighlightCard(player, isSelf),
+        boom: this.realtimeScoreFor(player)?.resonance === 'boom',
       }));
 
       if (isSelf && this.swapSelecting && this.canSelectSwapCard(player)) {
@@ -277,14 +279,14 @@ export class PvpBattleScene extends Phaser.Scene {
     const panel = this.add.container(640, 360);
     panel.add(this.add.rectangle(0, 0, 470, 196, COLORS.panel, 0.94).setStrokeStyle(2, COLORS.line));
     panel.add(this.add.text(0, -72, t('pvp.battle.round', { round: this.state.round }), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '28px',
       color: COLORS.text,
       fontStyle: 'bold',
     }).setOrigin(0.5));
 
     this.timerText = this.add.text(0, -34, '', {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '21px',
       color: COLORS.accentText,
       fontStyle: 'bold',
@@ -293,7 +295,7 @@ export class PvpBattleScene extends Phaser.Scene {
     this.updateTimerText();
 
     const roleText = this.add.text(0, -4, this.duelRoleText(), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '15px',
       color: COLORS.text,
       align: 'center',
@@ -302,7 +304,7 @@ export class PvpBattleScene extends Phaser.Scene {
     panel.add(roleText);
 
     panel.add(this.add.text(0, 38, this.centerStatusText(), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '16px',
       color: COLORS.muted,
       align: 'center',
@@ -312,7 +314,7 @@ export class PvpBattleScene extends Phaser.Scene {
     const result = this.roundResultText();
     if (result) {
       const text = this.add.text(0, 78, result, {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '16px',
         color: COLORS.accentText,
         align: 'center',
@@ -391,7 +393,7 @@ export class PvpBattleScene extends Phaser.Scene {
     const panel = this.add.container(640, 360).setDepth(41);
     panel.add(this.add.rectangle(0, 0, 620, 430, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.accent));
     panel.add(this.add.text(0, -182, t('pvp.battle.skillWindowTitle'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '28px',
       color: COLORS.text,
       fontStyle: 'bold',
@@ -401,7 +403,7 @@ export class PvpBattleScene extends Phaser.Scene {
       max: self.maxActionPoints,
       used: self.hasUsedSkillThisPhase ? t('pvp.battle.phaseSkillUsed') : t('pvp.battle.phaseSkillUnused'),
     }) : '', {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '15px',
       color: COLORS.muted,
     }).setOrigin(0.5));
@@ -440,14 +442,14 @@ export class PvpBattleScene extends Phaser.Scene {
     const panel = this.add.container(640, 360).setDepth(51);
     panel.add(this.add.rectangle(0, 0, 520, 210, COLORS.panel, 0.98).setStrokeStyle(2, COLORS.accent));
     panel.add(this.add.text(0, -66, t('pvp.battle.privateNoticeTitle'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '24px',
       color: COLORS.accentText,
       fontStyle: 'bold',
       align: 'center',
     }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 8, true, true));
     panel.add(this.add.text(0, -10, this.state.privateNotice, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '20px',
       color: COLORS.text,
       align: 'center',
@@ -465,26 +467,26 @@ export class PvpBattleScene extends Phaser.Scene {
     const fill = enabled ? 0x2a2e38 : COLORS.disabled;
     const rect = this.add.rectangle(0, 0, 280, 116, fill).setStrokeStyle(2, enabled ? COLORS.accent : COLORS.line);
     const iconText = this.add.text(-112, -28, icon, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '26px',
       color: enabled ? COLORS.accentText : COLORS.muted,
       fontStyle: 'bold',
     }).setOrigin(0.5);
     const name = this.add.text(-78, -40, t(`pvp.skill.${skillId}.name`), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '18px',
       color: enabled ? COLORS.text : COLORS.muted,
       fontStyle: 'bold',
     });
     const description = this.add.text(-78, -10, t(`pvp.skill.${skillId}.desc`), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '13px',
       color: enabled ? COLORS.muted : '#777b86',
       wordWrap: { width: 196 },
       lineSpacing: 3,
     });
     const cost = this.add.text(-78, 36, t('pvp.skill.cost', { cost: 1 }), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '12px',
       color: enabled ? COLORS.accentText : COLORS.muted,
     });
@@ -516,7 +518,7 @@ export class PvpBattleScene extends Phaser.Scene {
     }
 
     this.add.text(108, 98, t('pvp.battle.settlementOpen'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '13px',
       color: COLORS.muted,
       align: 'center',
@@ -540,7 +542,7 @@ export class PvpBattleScene extends Phaser.Scene {
 
     const titleColor = victory ? COLORS.green : COLORS.dangerText;
     panel.add(this.add.text(0, -112, victory ? t('pvp.battle.settlementVictory') : t('pvp.battle.settlementDefeat'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '34px',
       color: titleColor,
       fontStyle: 'bold',
@@ -551,20 +553,20 @@ export class PvpBattleScene extends Phaser.Scene {
       : t('pvp.battle.coinLoss', { amount: Math.abs(economy.amount) });
     const amountColor = economy.amount >= 0 ? COLORS.green : COLORS.dangerText;
     panel.add(this.add.text(0, -46, amountText, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '25px',
       color: amountColor,
       fontStyle: 'bold',
     }).setOrigin(0.5).setShadow(0, 0, amountColor, 8, true, true));
 
     panel.add(this.add.text(0, -4, t('pvp.battle.coinTotal', { total: economy.total }), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '18px',
       color: COLORS.text,
     }).setOrigin(0.5));
 
     panel.add(this.add.text(0, 36, requested ? t('pvp.battle.rematchWaiting') : t('pvp.battle.rematchHint'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '15px',
       color: requested ? COLORS.accentText : COLORS.muted,
       align: 'center',
@@ -588,14 +590,14 @@ export class PvpBattleScene extends Phaser.Scene {
     const panel = this.add.container(1110, 374);
     panel.add(this.add.rectangle(0, 0, 260, 520, COLORS.panel, 0.94).setStrokeStyle(2, COLORS.line));
     panel.add(this.add.text(-106, -238, t('pvp.battle.log'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '20px',
       color: COLORS.text,
       fontStyle: 'bold',
     }));
     this.state.logs.slice(0, 12).forEach((line, index) => {
       panel.add(this.add.text(-106, -198 + index * 34, line, {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '13px',
         color: index === 0 ? COLORS.accentText : COLORS.muted,
         wordWrap: { width: 214 },
@@ -608,7 +610,7 @@ export class PvpBattleScene extends Phaser.Scene {
     const fill = enabled ? COLORS.button : COLORS.disabled;
     const rect = this.add.rectangle(0, 0, width, height, fill).setStrokeStyle(2, enabled ? COLORS.line : 0x343741);
     const text = this.add.text(0, 0, label, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize,
       color: enabled ? COLORS.text : COLORS.muted,
     }).setOrigin(0.5);
@@ -689,7 +691,9 @@ export class PvpBattleScene extends Phaser.Scene {
 
     const winner = this.state.players.find((player) => player.id === result.winnerId);
     const loser = this.state.players.find((player) => player.id === result.loserId);
-    const resonanceText = result.resonance === 'strong'
+    const resonanceText = result.resonance === 'boom'
+      ? t('score.boom')
+      : result.resonance === 'strong'
       ? t('pvp.battle.strongResonance')
       : result.resonance === 'resonance'
         ? t('pvp.battle.resonance')
@@ -884,7 +888,7 @@ export class PvpBattleScene extends Phaser.Scene {
     const y = isSelf ? 492 : 104;
     const isSkill = this.speechBubble.variant === 'skill';
     const text = this.add.text(x, y, this.speechBubble.text, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '17px',
       color: isSkill ? COLORS.accentText : '#15171c',
       fontStyle: 'bold',
@@ -958,6 +962,7 @@ export class PvpBattleScene extends Phaser.Scene {
       point: score.point,
       label: t('common.pointUnit'),
       scale: 0.72,
+      resonance: score.resonance,
     }));
   }
 
@@ -1149,7 +1154,7 @@ export class PvpBattleScene extends Phaser.Scene {
       return;
     }
 
-    const resonant = result.resonance === 'resonance' || result.resonance === 'strong';
+    const resonant = result.resonance !== undefined && result.resonance !== 'none';
     playDamageProjectile(this, {
       from: this.playerPosition(winner),
       to: this.playerPosition(loser),
@@ -1276,7 +1281,7 @@ export class PvpBattleScene extends Phaser.Scene {
     return this.state.lastRoundResult?.scores[player.id];
   }
 
-  private realtimeScoreFor(player: PublicPvpPlayerState): { rawTotal: number; point: number; resonance: 'none' | 'resonance' | 'strong'; values: string[] } | undefined {
+  private realtimeScoreFor(player: PublicPvpPlayerState): { rawTotal: number; point: number; resonance: 'none' | 'resonance' | 'strong' | 'boom'; values: string[] } | undefined {
     const revealedScore = this.visibleScoreFor(player);
     if (revealedScore) {
       return {

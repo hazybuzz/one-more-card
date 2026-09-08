@@ -1,9 +1,13 @@
 import type { EnemyId } from '../../game/types/enemy';
 import type { TableThemeId } from '../../game/types/tableTheme';
-import type { BattleThemeArtManifest, CharacterArtConfig } from './types';
+import type { BackgroundArtAsset, BattleThemeArtManifest, CharacterArtConfig } from './types';
+import { EVERNIGHT_BUTTON_SKIN } from './commonUiArt';
+import { DRAGON_GATE_THEME_ART } from './dragonGateArt';
+import { NORTHERN_LONGHOUSE_THEME_ART } from './northernLonghouseArt';
 
-const PLAYER_PORTRAIT_SIZE = 144;
+const PLAYER_PORTRAIT_SIZE = 140;
 const ENEMY_PORTRAIT_SIZE = 140;
+const LARGE_COMPOSITION_PORTRAIT_SIZE = 112;
 const EVERNIGHT_CHARACTER_FRAME = {
   kind: 'image' as const,
   textureKey: 'theme-evernight-character-frame',
@@ -11,6 +15,70 @@ const EVERNIGHT_CHARACTER_FRAME = {
   displayScale: 1.1,
   offsetY: 0,
 };
+
+export type EvernightBackgroundVariantId = 'classic' | 'sevenColor' | 'fiveColor' | 'overhead' | 'overheadPixel';
+
+export const EVERNIGHT_BACKGROUND_VARIANTS: ReadonlyArray<{
+  id: EvernightBackgroundVariantId;
+  labelKey: string;
+  asset: BackgroundArtAsset;
+}> = [
+    {
+      id: 'classic',
+      labelKey: 'battle.backgroundStyle.classic',
+      asset: {
+        kind: 'image',
+        textureKey: 'theme-evernight-battle-background-classic',
+        path: '/image/env-assets/evernight/battle-background.png',
+        fit: 'stretch',
+        includesTable: true,
+      },
+    },
+    {
+      id: 'sevenColor',
+      labelKey: 'battle.backgroundStyle.sevenColor',
+      asset: {
+        kind: 'image',
+        textureKey: 'theme-evernight-battle-background-seven-color',
+        path: '/image/env-assets/evernight/battle-background-seven-color.png',
+        fit: 'stretch',
+        includesTable: true,
+      },
+    },
+    {
+      id: 'fiveColor',
+      labelKey: 'battle.backgroundStyle.fiveColor',
+      asset: {
+        kind: 'image',
+        textureKey: 'theme-evernight-battle-background-five-color',
+        path: '/image/env-assets/evernight/battle-background-five-color.png',
+        fit: 'stretch',
+        includesTable: true,
+      },
+    },
+    {
+      id: 'overhead',
+      labelKey: 'battle.backgroundStyle.overhead',
+      asset: {
+        kind: 'image',
+        textureKey: 'theme-evernight-battle-background-overhead',
+        path: '/image/env-assets/evernight/battle-background-overhead.png',
+        fit: 'stretch',
+        includesTable: true,
+      },
+    },
+    {
+      id: 'overheadPixel',
+      labelKey: 'battle.backgroundStyle.overheadPixel',
+      asset: {
+        kind: 'image',
+        textureKey: 'theme-evernight-battle-background-overhead-pixel',
+        path: '/image/env-assets/evernight/battle-background-overhead-pixel-master.png',
+        fit: 'stretch',
+        includesTable: true,
+      },
+    },
+  ];
 
 export const PLAYER_CHARACTER_ART: CharacterArtConfig = {
   id: 'fateweaver',
@@ -52,8 +120,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayWidth: LARGE_COMPOSITION_PORTRAIT_SIZE,
+    displayHeight: LARGE_COMPOSITION_PORTRAIT_SIZE,
   },
   goblin: {
     id: 'goblin',
@@ -109,8 +177,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: 128,
-    displayHeight: 128,
+    displayWidth: LARGE_COMPOSITION_PORTRAIT_SIZE,
+    displayHeight: LARGE_COMPOSITION_PORTRAIT_SIZE,
   },
   paladin: {
     id: 'paladin',
@@ -128,8 +196,9 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayOffset: { x: 0, y: -6 },
+    displayWidth: LARGE_COMPOSITION_PORTRAIT_SIZE,
+    displayHeight: LARGE_COMPOSITION_PORTRAIT_SIZE,
   },
   merchant: {
     id: 'merchant',
@@ -147,8 +216,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayWidth: LARGE_COMPOSITION_PORTRAIT_SIZE,
+    displayHeight: LARGE_COMPOSITION_PORTRAIT_SIZE,
   },
   keeper: {
     id: 'keeper',
@@ -166,8 +235,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayWidth: LARGE_COMPOSITION_PORTRAIT_SIZE,
+    displayHeight: LARGE_COMPOSITION_PORTRAIT_SIZE,
   },
   viking_warrior: {
     id: 'viking-warrior',
@@ -204,8 +273,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayWidth: ENEMY_PORTRAIT_SIZE * 0.85,
+    displayHeight: ENEMY_PORTRAIT_SIZE * 0.85,
   },
   valkyrie: {
     id: 'valkyrie',
@@ -366,18 +435,31 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
 const BATTLE_THEME_ART: Record<TableThemeId, BattleThemeArtManifest> = {
   evernight_tavern: {
     themeId: 'evernight_tavern',
-    background: {
-      kind: 'image',
-      textureKey: 'theme-evernight-battle-background',
-      path: '/image/env-assets/evernight/battle-background.png',
-      fit: 'stretch',
-      includesTable: true,
-    },
+    background: EVERNIGHT_BACKGROUND_VARIANTS.find((variant) => variant.id === 'classic')!.asset,
     playerFrame: EVERNIGHT_CHARACTER_FRAME,
     enemyFrame: EVERNIGHT_CHARACTER_FRAME,
+    actionButton: EVERNIGHT_BUTTON_SKIN,
+    modalPanel: {
+      kind: 'image',
+      textureKey: 'theme-evernight-modal-panel',
+      path: '/image/ui/evernight/modal-panel.png',
+      leftWidth: 56,
+      rightWidth: 56,
+      topHeight: 48,
+      bottomHeight: 48,
+    },
+    tooltipPanel: {
+      kind: 'image',
+      textureKey: 'theme-evernight-tooltip-panel',
+      path: '/image/ui/evernight/tooltip-panel.png',
+      leftWidth: 34,
+      rightWidth: 34,
+      topHeight: 30,
+      bottomHeight: 30,
+    },
   },
-  northern_longhouse: { themeId: 'northern_longhouse' },
-  dragon_gate: { themeId: 'dragon_gate' },
+  northern_longhouse: NORTHERN_LONGHOUSE_THEME_ART,
+  dragon_gate: DRAGON_GATE_THEME_ART,
   edo_teahouse: { themeId: 'edo_teahouse' },
 };
 

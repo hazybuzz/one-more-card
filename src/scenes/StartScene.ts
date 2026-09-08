@@ -1,9 +1,14 @@
 import Phaser from 'phaser';
+import { DISPLAY_FONT_FAMILY, GAME_FONT_FAMILY } from '../ui/themes/typography';
 import { preloadCardImages } from '../game/assets';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
-import { t, toggleLanguage } from '../game/i18n';
+import { getLanguage, t, toggleLanguage } from '../game/i18n';
 import { getEconomyDebugSnapshot, getProgress, resetTestProgress, switchProgressMode } from '../game/progress';
 import { getRuntimeMode, isTestMode } from '../game/runtimeMode';
+import { EVERNIGHT_BUTTON_SKIN } from '../ui/art/commonUiArt';
+import { MedievalButton, type MedievalButtonVariant } from '../ui/components/MedievalButton';
+import { SoulCoinDisplay } from '../ui/components/SoulCoinDisplay';
+import { START_LAYOUT } from '../ui/layout/startLayout';
 
 const COLORS = {
   bg: 0x101114,
@@ -14,9 +19,25 @@ const COLORS = {
   accent: 0xe8cf73,
   accentText: '#e8cf73',
   dangerText: '#ff4b5f',
-  button: 0x303542,
-  buttonHover: 0x41495b,
+  warmLight: 0xb8813f,
 };
+
+type MenuButtonVariant = 'primary' | 'secondary' | 'utility';
+
+const START_BACKGROUND_KEY = 'evernight-start-background';
+const START_BACKGROUND_PATH = '/image/env-assets/evernight/start-background.png';
+const START_TITLE_LOGOS = {
+  zh: {
+    key: 'start-title-logo-zh',
+    path: '/image/ui/start/title-logo-zh.png',
+    width: 352,
+  },
+  en: {
+    key: 'start-title-logo-en',
+    path: '/image/ui/start/title-logo-en.png',
+    width: 520,
+  },
+} as const;
 
 export class StartScene extends Phaser.Scene {
   private statusText?: Phaser.GameObjects.Text;
@@ -34,6 +55,15 @@ export class StartScene extends Phaser.Scene {
   preload(): void {
     preloadLobbyMusic(this);
     preloadCardImages(this);
+    if (!this.textures.exists(START_BACKGROUND_KEY)) {
+      this.load.image(START_BACKGROUND_KEY, START_BACKGROUND_PATH);
+    }
+    Object.values(START_TITLE_LOGOS).forEach(({ key, path }) => {
+      if (!this.textures.exists(key)) {
+        this.load.image(key, path);
+      }
+    });
+    SoulCoinDisplay.preload(this);
     if (!this.cache.audio.exists('buttonClick')) {
       this.load.audio('buttonClick', '/audio/switch28.ogg');
     }
@@ -52,55 +82,93 @@ export class StartScene extends Phaser.Scene {
   }
 
   private addBackground(): void {
-    this.add.rectangle(640, 360, 1280, 720, COLORS.bg);
-    this.add.circle(640, 360, 248, 0x191c22, 0.92).setStrokeStyle(2, COLORS.line);
-    this.add.circle(640, 360, 168, 0x101114, 0.52).setStrokeStyle(1, 0x2b303c);
-    this.add.rectangle(640, 360, 1280, 1, COLORS.line, 0.28);
-    this.add.rectangle(640, 360, 1, 720, COLORS.line, 0.18);
+    const { width, height } = START_LAYOUT.canvas;
+
+    this.add.rectangle(width / 2, height / 2, width, height, COLORS.bg);
+
+    if (this.textures.exists(START_BACKGROUND_KEY)) {
+      this.add.image(width / 2, height / 2, START_BACKGROUND_KEY).setDisplaySize(width, height);
+    } else {
+      this.addFallbackBackground();
+    }
+
+    this.add.rectangle(width / 2, height / 2, width, height, 0x050608, 0.14);
+    this.add.rectangle(width / 2, 2, width, 4, 0x020304, 0.9);
+    this.add.rectangle(width / 2, height - 2, width, 4, 0x020304, 0.9);
+  }
+
+  private addFallbackBackground(): void {
+    const art = START_LAYOUT.artSafeArea;
+
+    // Low-contrast tavern geometry marks the composition reserved for final art.
+    this.add.rectangle(art.x + art.width / 2, art.y + art.height / 2, art.width, art.height, 0x15171c, 0.72);
+    this.add.rectangle(640, 518, 1080, 118, 0x19140f, 0.98).setStrokeStyle(2, 0x4a3523, 0.72);
+    this.add.rectangle(640, 468, 1080, 18, 0x332417, 0.95);
+    this.add.rectangle(680, 235, 780, 5, 0x3a2c20, 0.8);
+    this.add.rectangle(680, 318, 780, 5, 0x3a2c20, 0.8);
+    this.add.rectangle(208, 208, 126, 190, 0x0b1520, 0.9).setStrokeStyle(5, 0x302a25, 0.92);
+    this.add.rectangle(208, 208, 4, 184, 0x302a25, 0.9);
+    this.add.rectangle(208, 208, 120, 4, 0x302a25, 0.9);
+
+    [374, 476, 578, 702, 804, 906, 1008].forEach((x, index) => {
+      const bottleHeight = 30 + (index % 3) * 8;
+      this.add.rectangle(x, 218 - bottleHeight / 2, 16, bottleHeight, 0x302c28, 0.92);
+      this.add.rectangle(x, 196 - bottleHeight, 6, 10, 0x302c28, 0.92);
+    });
+
+    [346, 640, 934].forEach((x) => {
+      this.add.rectangle(x, 426, 12, 48, 0x8e6b3a, 0.7);
+      this.add.triangle(x, 394, -8, 13, 0, -13, 8, 13, COLORS.warmLight, 0.9);
+    });
   }
 
   private renderSoulCoins(): void {
-    const container = this.add.container(1118, 50);
-    const panel = this.add.rectangle(0, 0, 236, 52, COLORS.panel, 0.95).setStrokeStyle(2, COLORS.accent);
-    const label = this.add.text(-96, -13, t('progress.soulCoins'), {
-      fontFamily: 'Arial',
-      fontSize: '16px',
-      color: COLORS.muted,
+    const layout = START_LAYOUT.soulCoins;
+    SoulCoinDisplay.render(this, {
+      ...layout,
+      value: getProgress().soulCoins,
     });
-    const value = this.add.text(96, 0, `${getProgress().soulCoins}`, {
-      fontFamily: 'Arial',
-      fontSize: '28px',
-      color: COLORS.accentText,
-      fontStyle: 'bold',
-    }).setOrigin(1, 0.5);
-    value.setShadow(0, 0, COLORS.accentText, 10, true, true);
-    container.add([panel, label, value]);
   }
 
   private renderLanguageToggle(): void {
-    this.add.container(92, 50).add([
-      this.menuButton(0, 0, 144, 44, t('language.button'), () => {
+    const layout = START_LAYOUT.language;
+    this.add.container(layout.x, layout.y).add([
+      this.menuButton(0, 0, layout.width, layout.height, t('language.button'), () => {
         toggleLanguage();
         this.scene.restart();
-      }, '16px'),
+      }, '15px', 'utility'),
     ]);
   }
 
   private renderTitle(): void {
-    const title = this.add.text(640, 178, t('start.title'), {
-      fontFamily: 'Arial',
-      fontSize: '70px',
-      color: COLORS.text,
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    title.setShadow(0, 0, COLORS.dangerText, 14, true, true);
+    const layout = START_LAYOUT.brand;
+    const logo = START_TITLE_LOGOS[getLanguage()];
 
-    const subtitle = this.add.text(640, 240, t('start.subtitle'), {
-      fontFamily: 'Arial',
+    if (this.textures.exists(logo.key)) {
+      const title = this.add.image(layout.centerX, layout.titleY + 12, logo.key).setOrigin(0.5);
+      title.setDisplaySize(logo.width, logo.width / title.width * title.height);
+    } else {
+      const title = this.add.text(layout.centerX, layout.titleY, t('start.title'), {
+        fontFamily: DISPLAY_FONT_FAMILY,
+        fontSize: '66px',
+        color: COLORS.text,
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      title.setShadow(0, 0, COLORS.dangerText, 14, true, true);
+    }
+
+    const subtitle = this.add.text(layout.centerX, layout.subtitleY + 24, t('start.subtitle'), {
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '19px',
       color: COLORS.muted,
+      align: 'center',
+      wordWrap: { width: layout.width, useAdvancedWrap: true },
+      lineSpacing: 6,
     }).setOrigin(0.5);
     subtitle.setShadow(0, 0, '#000000', 5, true, true);
+
+    this.add.rectangle(layout.centerX, layout.dividerY, 112, 2, COLORS.accent, 0.82);
+    this.add.rectangle(layout.centerX, layout.dividerY + 4, 248, 1, COLORS.line, 0.54);
   }
 
   private renderRuntimeModeBadge(): void {
@@ -108,10 +176,10 @@ export class StartScene extends Phaser.Scene {
       return;
     }
 
-    const badge = this.add.container(640, 286);
-    const panel = this.add.rectangle(0, 0, 310, 34, 0x493a10, 0.96).setStrokeStyle(2, 0xffd85c, 0.92);
+    const badge = this.add.container(1122, 94);
+    const panel = this.add.rectangle(0, 0, 236, 28, 0x493a10, 0.96).setStrokeStyle(1, 0xffd85c, 0.92);
     const label = this.add.text(0, 0, t('runtimeMode.testBadge'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '15px',
       color: '#ffe99a',
       fontStyle: 'bold',
@@ -121,28 +189,45 @@ export class StartScene extends Phaser.Scene {
   }
 
   private renderMenu(): void {
-    this.add.container(640, 360).add([
-      this.menuButton(0, 0, 300, 58, t('start.game'), () => {
-        this.scene.start('TableSelectScene');
-      }),
-      this.menuButton(0, 70, 260, 56, t('start.story'), () => {
-        this.scene.start('StorySelectScene');
-      }),
-      this.menuButton(0, 140, 260, 56, t('start.pvp'), () => {
-        this.scene.start('PvpLobbyScene');
-      }),
-      this.menuButton(0, 210, 260, 56, t('start.shop'), () => {
+    const layout = START_LAYOUT.menu;
+    const menu = this.add.container(layout.x, layout.y);
+    const primaryCenterX = layout.primaryWidth / 2;
+    const utilityRowWidth = layout.utilityWidth * 2 + layout.utilityGap;
+    const utilityLeft = (layout.primaryWidth - utilityRowWidth) / 2;
+    const secondaryTop = layout.primaryHeight + layout.rowGap;
+    const utilityTop = secondaryTop + layout.secondaryHeight + layout.rowGap;
+
+    menu.add(this.menuButton(primaryCenterX, layout.primaryHeight / 2, layout.primaryWidth, layout.primaryHeight, t('start.game'), () => {
+      this.scene.start('TableSelectScene');
+    }, '24px', 'primary'));
+
+    menu.add(this.menuButton(primaryCenterX, secondaryTop + layout.secondaryHeight / 2, layout.secondaryWidth, layout.secondaryHeight, t('start.story'), () => {
+      this.scene.start('StorySelectScene');
+    }, '21px', 'secondary'));
+
+    menu.add([
+      this.menuButton(utilityLeft + layout.utilityWidth / 2, utilityTop + layout.utilityHeight / 2, layout.utilityWidth, layout.utilityHeight, t('start.shop'), () => {
         this.scene.start('ShopScene');
-      }),
-      this.menuButton(0, 280, 260, 56, t('start.inventory'), () => {
+      }, '18px', 'utility'),
+      this.menuButton(utilityLeft + layout.utilityWidth + layout.utilityGap + layout.utilityWidth / 2, utilityTop + layout.utilityHeight / 2, layout.utilityWidth, layout.utilityHeight, t('start.inventory'), () => {
         this.scene.start('InventoryScene');
-      }),
+      }, '18px', 'utility'),
     ]);
 
-    this.statusText = this.add.text(640, 664, '', {
-      fontFamily: 'Arial',
+    if (isTestMode()) {
+      const pvpTop = utilityTop + layout.utilityHeight + layout.rowGap;
+      menu.add(this.menuButton(primaryCenterX, pvpTop + 22, layout.secondaryWidth, 44, t('start.pvp'), () => {
+        this.scene.start('PvpLobbyScene');
+      }, '16px', 'utility'));
+    }
+
+    const statusLayout = START_LAYOUT.status;
+    this.statusText = this.add.text(statusLayout.centerX, statusLayout.y, '', {
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '17px',
       color: COLORS.accentText,
+      align: 'center',
+      wordWrap: { width: statusLayout.width },
     }).setOrigin(0.5);
   }
 
@@ -156,10 +241,10 @@ export class StartScene extends Phaser.Scene {
     actions.add(this.menuButton(0, 0, 168, 42, mode === 'test'
       ? t('runtimeMode.switchProduction')
       : t('runtimeMode.switchTest'), () => {
-      const nextMode = mode === 'test' ? 'production' : 'test';
-      switchProgressMode(nextMode);
-      this.scene.restart({ status: nextMode === 'test' ? t('runtimeMode.testEnabled') : t('runtimeMode.productionEnabled') });
-    }, '15px'));
+        const nextMode = mode === 'test' ? 'production' : 'test';
+        switchProgressMode(nextMode);
+        this.scene.restart({ status: nextMode === 'test' ? t('runtimeMode.testEnabled') : t('runtimeMode.productionEnabled') });
+      }, '15px'));
 
     if (mode === 'test') {
       actions.add(this.menuButton(0, -52, 168, 42, t('runtimeMode.resetTest'), () => {
@@ -185,7 +270,7 @@ export class StartScene extends Phaser.Scene {
     modal.add(this.add.rectangle(0, 0, 1280, 720, 0x050608, 0.76).setInteractive());
     modal.add(this.add.rectangle(0, 0, 820, 570, COLORS.panel, 0.99).setStrokeStyle(2, COLORS.accent));
     modal.add(this.add.text(0, -246, t('economyDebug.title'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '30px',
       color: COLORS.text,
       fontStyle: 'bold',
@@ -198,7 +283,7 @@ export class StartScene extends Phaser.Scene {
       t('economyDebug.totalSpent', { amount: stats.totalSpent }),
       t('economyDebug.recentCount', { count: snapshot.economyTransactions.length }),
     ].join('    '), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '16px',
       color: COLORS.accentText,
       align: 'center',
@@ -232,13 +317,13 @@ export class StartScene extends Phaser.Scene {
     const column = this.add.container(x, y);
     column.add(this.add.rectangle(170, 122, 340, 300, 0x111318, 0.72).setStrokeStyle(1, COLORS.line));
     column.add(this.add.text(22, 0, title, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '21px',
       color: COLORS.text,
       fontStyle: 'bold',
     }));
     column.add(this.add.text(22, 48, lines.join('\n'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '17px',
       color: COLORS.muted,
       lineSpacing: 15,
@@ -259,25 +344,34 @@ export class StartScene extends Phaser.Scene {
     URL.revokeObjectURL(url);
   }
 
-  private menuButton(x: number, y: number, width: number, height: number, label: string, onClick: () => void, fontSize = '22px'): Phaser.GameObjects.Container {
-    const button = this.add.container(x, y);
-    const rect = this.add.rectangle(0, 0, width, height, COLORS.button).setStrokeStyle(2, COLORS.line);
-    const text = this.add.text(0, 0, label, {
-      fontFamily: 'Arial',
+  private menuButton(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+    onClick: () => void,
+    fontSize = '22px',
+    variant: MenuButtonVariant = 'secondary',
+  ): Phaser.GameObjects.Container {
+    const medievalVariant: MedievalButtonVariant = variant === 'primary'
+      ? 'primary'
+      : variant === 'utility' ? 'secondary' : 'normal';
+
+    return MedievalButton.render(this, {
+      x: x - width / 2,
+      y: y - height / 2,
+      width,
+      height,
+      label,
       fontSize,
-      color: COLORS.text,
-    }).setOrigin(0.5);
-
-    rect.setInteractive({ useHandCursor: true });
-    rect.on('pointerover', () => rect.setFillStyle(COLORS.buttonHover));
-    rect.on('pointerout', () => rect.setFillStyle(COLORS.button));
-    rect.on('pointerdown', () => {
-      this.playButtonClick();
-      onClick();
+      variant: medievalVariant,
+      skin: EVERNIGHT_BUTTON_SKIN,
+      onActivate: () => {
+        this.playButtonClick();
+        onClick();
+      },
     });
-
-    button.add([rect, text]);
-    return button;
   }
 
   private playButtonClick(): void {

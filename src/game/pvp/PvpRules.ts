@@ -1,5 +1,5 @@
 import { Card, RANKS, SUITS } from '../card';
-import { scoreHand } from '../scoring';
+import { compareScoreResults, scoreHand } from '../scoring';
 import type { PvpAction, PvpPlayerRole, PvpPlayerState, PvpPublicRoomState, PvpRoomState, PvpSkillId } from './PvpTypes';
 
 export const PVP_MAX_HP = 8;
@@ -262,7 +262,7 @@ export function resolvePvpRoundIfReady(room: PvpRoomState, now = Date.now()): bo
     playerB.resonanceCount += 1;
   }
 
-  const comparison = comparePvpScores(scoreA, scoreB);
+  const comparison = compareScoreResults(scoreA, scoreB);
   if (comparison === 0) {
     room.lastRoundResult = {
       round: room.round,
@@ -573,26 +573,6 @@ function decrementSkillCooldowns(cooldowns: Record<string, number>): Record<stri
   return Object.fromEntries(
     Object.entries(cooldowns).map(([skillId, rounds]) => [skillId, Math.max(0, rounds - 1)]),
   );
-}
-
-function comparePvpScores(scoreA: ReturnType<typeof scoreHand>, scoreB: ReturnType<typeof scoreHand>): number {
-  if (scoreA.point !== scoreB.point) {
-    return scoreA.point - scoreB.point;
-  }
-
-  return resonancePower(scoreA.resonance) - resonancePower(scoreB.resonance);
-}
-
-function resonancePower(resonance: ReturnType<typeof scoreHand>['resonance']): number {
-  if (resonance === 'strong') {
-    return 2;
-  }
-
-  if (resonance === 'resonance') {
-    return 1;
-  }
-
-  return 0;
 }
 
 function findPlayer(room: PvpRoomState, playerId: string): PvpPlayerState | undefined {

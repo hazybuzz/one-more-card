@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GAME_FONT_FAMILY } from '../themes/typography';
 
 export interface DamageProjectileOptions {
   from: Phaser.Math.Vector2;
@@ -27,7 +28,7 @@ export function playDamageProjectile(scene: Phaser.Scene, options: DamageProject
   projectile.add(scene.add.circle(0, 0, 18, options.color, 0.34));
   projectile.add(scene.add.circle(0, 0, 9, 0xffffff, 0.92));
   const rune = scene.add.text(0, 0, options.label.slice(0, 2), {
-    fontFamily: 'Arial',
+    fontFamily: GAME_FONT_FAMILY,
     fontSize: '13px',
     color: '#f2f2ed',
   }).setOrigin(0.5);

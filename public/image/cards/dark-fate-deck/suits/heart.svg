@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="heart-fill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c3424f"/>
+      <stop offset="0.52" stop-color="#a32634"/>
+      <stop offset="1" stop-color="#741622"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 57C27 49 7 38 7 22C7 11 15 6 24 8C28 9 31 12 32 16C34 12 37 9 41 8C50 6 57 11 57 22C57 38 37 49 32 57Z"
+    fill="url(#heart-fill)" stroke="#4a1018" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M17 15C21 12 26 13 29 18" fill="none" stroke="#e37a82" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+</svg>

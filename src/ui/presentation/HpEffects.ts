@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GAME_FONT_FAMILY } from '../themes/typography';
 
 export interface FloatingTextOptions {
   x: number;
@@ -13,7 +14,7 @@ export interface FloatingTextOptions {
 export function showFloatingText(scene: Phaser.Scene, options: FloatingTextOptions): Phaser.GameObjects.Text {
   const color = options.color ?? '#ef6f6c';
   const text = scene.add.text(options.x, options.y, options.text, {
-    fontFamily: 'Arial',
+    fontFamily: GAME_FONT_FAMILY,
     fontSize: options.fontSize ?? '28px',
     color,
     stroke: '#101114',

@@ -9,6 +9,7 @@ import { ShopScene } from './scenes/ShopScene';
 import { StartScene } from './scenes/StartScene';
 import { StorySelectScene } from './scenes/StorySelectScene';
 import { TableSelectScene } from './scenes/TableSelectScene';
+import { DISPLAY_FONT_NAME, GAME_FONT_NAME } from './ui/themes/typography';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -23,4 +24,19 @@ const config: Phaser.Types.Core.GameConfig = {
   },
 };
 
-new Phaser.Game(config);
+async function bootstrap(): Promise<void> {
+  if ('fonts' in document) {
+    try {
+      await Promise.all([
+        document.fonts.load(`16px "${GAME_FONT_NAME}"`),
+        document.fonts.load(`32px "${DISPLAY_FONT_NAME}"`),
+      ]);
+    } catch (error) {
+      console.warn('Unable to preload the game fonts; using the system fallback.', error);
+    }
+  }
+
+  new Phaser.Game(config);
+}
+
+void bootstrap();

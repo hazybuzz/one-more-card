@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { DISPLAY_FONT_FAMILY } from '../themes/typography';
 
 export interface StageBannerOptions {
   text: string;
@@ -22,7 +23,7 @@ export function playStageBanner(scene: Phaser.Scene, options: StageBannerOptions
   const container = scene.add.container(options.x ?? 640, options.y ?? 342).setDepth(70);
   const blocker = scene.add.rectangle(0, 18, 1280, 720, 0x000000, 0.01).setInteractive();
   const text = scene.add.text(0, 0, options.text, {
-    fontFamily: 'Arial',
+    fontFamily: DISPLAY_FONT_FAMILY,
     fontSize: options.fontSize ?? '104px',
     color,
     fontStyle: 'bold',
@@ -62,4 +63,3 @@ export function playStageBanner(scene: Phaser.Scene, options: StageBannerOptions
 
   return container;
 }
-

@@ -1,10 +1,16 @@
 import Phaser from 'phaser';
+import type { NineSliceArtAsset } from '../art';
+import { GAME_FONT_FAMILY } from '../themes/typography';
+import { MedievalButton } from './MedievalButton';
+import { MedievalPanel } from './MedievalPanel';
 
 interface BlockingMessageModalOptions {
   title: string;
   body: string;
   buttonLabel: string;
   onClose: () => void;
+  panelSkin?: NineSliceArtAsset;
+  buttonSkin?: NineSliceArtAsset;
   colors: {
     panel: number;
     line: number;
@@ -27,9 +33,15 @@ export class BlockingMessageModal {
     const panelHeight = Phaser.Math.Clamp(240 + estimatedLines * 24, 320, 540);
     const titleY = -panelHeight / 2 + 48;
     const buttonY = panelHeight / 2 - 64;
-    const panel = scene.add.rectangle(0, 0, panelWidth, panelHeight, options.colors.panel, 0.98).setStrokeStyle(2, options.colors.accent);
+    const panel = MedievalPanel.render(scene, {
+      width: panelWidth,
+      height: panelHeight,
+      skin: options.panelSkin,
+      fallbackFill: options.colors.panel,
+      fallbackLine: options.colors.line,
+    });
     const title = scene.add.text(0, titleY, options.title, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '30px',
       color: options.colors.accentText,
       fontStyle: 'bold',
@@ -37,7 +49,7 @@ export class BlockingMessageModal {
     title.setShadow(0, 0, options.colors.accentText, 10, true, true);
 
     const body = scene.add.text(0, -8, options.body, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '18px',
       color: options.colors.text,
       align: 'center',
@@ -45,19 +57,15 @@ export class BlockingMessageModal {
       wordWrap: { width: bodyWidth, useAdvancedWrap: true },
     }).setOrigin(0.5);
 
-    const button = scene.add.container(-100, buttonY - 25);
-    const rect = scene.add.rectangle(100, 25, 200, 50, options.colors.button).setStrokeStyle(2, options.colors.line);
-    const label = scene.add.text(100, 25, options.buttonLabel, {
-      fontFamily: 'Arial',
-      fontSize: '20px',
-      color: options.colors.text,
-    }).setOrigin(0.5);
-
-    rect.setInteractive({ useHandCursor: true });
-    rect.on('pointerover', () => rect.setFillStyle(options.colors.buttonHover));
-    rect.on('pointerout', () => rect.setFillStyle(options.colors.button));
-    rect.on('pointerdown', () => options.onClose());
-    button.add([rect, label]);
+    const button = MedievalButton.render(scene, {
+      x: -100,
+      y: buttonY - 25,
+      width: 200,
+      height: 50,
+      label: options.buttonLabel,
+      skin: options.buttonSkin,
+      onActivate: options.onClose,
+    });
 
     container.add([overlay, panel, title, body, button]);
     return container;

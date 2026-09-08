@@ -1,4 +1,7 @@
 import Phaser from 'phaser';
+import { GAME_FONT_FAMILY } from '../themes/typography';
+import { CATALOG_LEATHER_PANEL_SKIN } from '../art/commonUiArt';
+import { SOUL_COIN_TEXTURE_KEY } from '../components/SoulCoinDisplay';
 import { t } from '../../game/i18n';
 import type { CatalogEntryViewModel } from './CatalogViewModel';
 
@@ -8,6 +11,7 @@ interface CatalogCardOptions {
   height: number;
   selected: boolean;
   metaText: string;
+  priceText?: string;
   actionLabel?: string;
   colors: {
     panel: number;
@@ -28,28 +32,55 @@ export class CatalogCard {
   static render(scene: Phaser.Scene, options: CatalogCardOptions): Phaser.GameObjects.Container {
     const { entry, width, height } = options;
     const container = scene.add.container(0, 0);
+    let selected = options.selected;
     const border = entry.equipped ? options.colors.equipped : options.selected ? options.colors.accent : options.colors.line;
-    const background = scene.add.rectangle(0, 0, width, height, options.colors.panel, 0.98).setStrokeStyle(2, border);
+    const selectionHalo = scene.add.rectangle(0, 0, width + 4, height + 4, options.colors.accent, 0.055)
+      .setStrokeStyle(2, options.colors.accent, 0.78)
+      .setAlpha(selected ? 1 : 0);
+    container.add(selectionHalo);
+    const hasPanelSkin = scene.textures.exists(CATALOG_LEATHER_PANEL_SKIN.textureKey);
+    const background = hasPanelSkin
+      ? scene.add.nineslice(
+        0,
+        0,
+        CATALOG_LEATHER_PANEL_SKIN.textureKey,
+        undefined,
+        width,
+        height,
+        CATALOG_LEATHER_PANEL_SKIN.leftWidth,
+        CATALOG_LEATHER_PANEL_SKIN.rightWidth,
+        CATALOG_LEATHER_PANEL_SKIN.topHeight,
+        CATALOG_LEATHER_PANEL_SKIN.bottomHeight,
+      )
+      : scene.add.rectangle(0, 0, width, height, options.colors.panel, 0.98).setStrokeStyle(2, border);
+    const applyBackgroundState = (state: 'rest' | 'hover'): void => {
+      if (background instanceof Phaser.GameObjects.NineSlice) {
+        const restTint = entry.equipped ? 0xc8eaff : selected ? 0xffdfad : 0xd0b99d;
+        background.setTint(state === 'hover' ? 0xffe2b8 : restTint);
+        return;
+      }
+      background.setFillStyle(state === 'hover' ? options.colors.panelHover : options.colors.panel, 0.98);
+      background.setStrokeStyle(2, state === 'hover' ? options.colors.accent : border);
+    };
+    applyBackgroundState('rest');
     background.setInteractive({ useHandCursor: true });
     background.on(Phaser.Input.Events.POINTER_OVER, () => {
-      background.setFillStyle(options.colors.panelHover, 0.98);
-      background.setStrokeStyle(2, options.colors.accent);
+      applyBackgroundState('hover');
       options.onSelect();
     });
     background.on(Phaser.Input.Events.POINTER_OUT, () => {
-      background.setFillStyle(options.colors.panel, 0.98);
-      background.setStrokeStyle(2, border);
+      applyBackgroundState('rest');
     });
     background.on(Phaser.Input.Events.POINTER_DOWN, options.onSelect);
     container.add(background);
 
-    const visualY = -height / 2 + 39;
-    container.add(scene.add.rectangle(0, visualY, 64, 58, 0x111319, 0.78).setStrokeStyle(1, border, 0.75));
+    const visualY = -height / 2 + 42;
+    container.add(scene.add.rectangle(0, visualY, 58, 54, 0x160d09, 0.94).setStrokeStyle(1, 0x8e683c, 0.88));
     if (entry.visual.thumbnailTextureKey && scene.textures.exists(entry.visual.thumbnailTextureKey)) {
-      container.add(scene.add.image(0, visualY, entry.visual.thumbnailTextureKey).setDisplaySize(56, 50));
+      container.add(scene.add.image(0, visualY, entry.visual.thumbnailTextureKey).setDisplaySize(50, 46));
     } else {
       const icon = scene.add.text(0, visualY - 1, entry.visual.fallbackIcon, {
-        fontFamily: 'Arial',
+        fontFamily: GAME_FONT_FAMILY,
         fontSize: '30px',
         color: entry.equipped ? '#9fe7ff' : options.colors.accentText,
         fontStyle: 'bold',
@@ -58,22 +89,59 @@ export class CatalogCard {
       container.add(icon);
     }
 
-    container.add(scene.add.text(0, 1, t(entry.nameKey), {
-      fontFamily: 'Arial',
-      fontSize: '17px',
-      color: options.colors.text,
+    container.add(scene.add.text(0, 0, t(entry.nameKey), {
+      fontFamily: GAME_FONT_FAMILY,
+      fontSize: '16px',
+      color: '#f1dfc0',
       fontStyle: 'bold',
       align: 'center',
-      wordWrap: { width: width - 22 },
+      wordWrap: { width: width - 28 },
     }).setOrigin(0.5));
-    container.add(scene.add.text(0, 25, options.metaText, {
-      fontFamily: 'Arial',
-      fontSize: '13px',
-      color: entry.equipped ? '#9fe7ff' : options.colors.muted,
-    }).setOrigin(0.5));
-    if (options.actionLabel && options.onAction) {
-      container.add(options.createButton(-72, height / 2 - 33, 144, 30, options.actionLabel, options.onAction));
+    const metaColor = entry.equipped ? '#9fe7ff' : '#bda991';
+    if (options.priceText && scene.textures.exists(SOUL_COIN_TEXTURE_KEY)) {
+      const metaRow = scene.add.container(0, 24);
+      const price = scene.add.text(0, 0, options.priceText, {
+        fontFamily: GAME_FONT_FAMILY,
+        fontSize: '14px',
+        color: options.colors.accentText,
+      }).setOrigin(0, 0.5);
+      const coin = scene.add.image(0, 1.5, SOUL_COIN_TEXTURE_KEY).setDisplaySize(10, 10);
+      const ownership = options.metaText
+        ? scene.add.text(0, 0, `· ${options.metaText}`, {
+          fontFamily: GAME_FONT_FAMILY,
+          fontSize: '14px',
+          color: metaColor,
+        }).setOrigin(0, 0.5)
+        : undefined;
+      const totalWidth = price.width + 4 + 10 + (ownership ? 7 + ownership.width : 0);
+      let cursorX = -totalWidth / 2;
+      price.setX(cursorX);
+      cursorX += price.width + 4;
+      coin.setX(cursorX + 5);
+      cursorX += 10;
+      if (ownership) {
+        ownership.setX(cursorX + 7);
+        metaRow.add(ownership);
+      }
+      metaRow.add([price, coin]);
+      container.add(metaRow);
+    } else {
+      container.add(scene.add.text(0, 24, options.metaText, {
+        fontFamily: GAME_FONT_FAMILY,
+        fontSize: '14px',
+        color: metaColor,
+      }).setOrigin(0.5));
     }
+    if (options.actionLabel && options.onAction) {
+      container.add(options.createButton(-78, height / 2 - 44, 156, 30, options.actionLabel, options.onAction));
+    }
+
+    container.setDataEnabled();
+    container.setData('setSelected', (nextSelected: boolean): void => {
+      selected = nextSelected;
+      selectionHalo.setAlpha(selected ? 1 : 0);
+      applyBackgroundState('rest');
+    });
 
     return container;
   }

@@ -1,8 +1,12 @@
 import Phaser from 'phaser';
+import { GAME_FONT_FAMILY } from '../ui/themes/typography';
 import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
 import { COSMETICS, type CosmeticConfig } from '../game/cosmetics';
 import { t } from '../game/i18n';
 import { ITEMS, type ItemDefinition } from '../game/items';
+import { configureBattleIconTextures, getBattleIconArtByResourceKey, preloadBattleIcons } from '../ui/art';
+import { EVERNIGHT_BUTTON_SKIN } from '../ui/art/commonUiArt';
+import { MedievalButton } from '../ui/components/MedievalButton';
 import {
   addCosmetic,
   addItem,
@@ -14,7 +18,9 @@ import {
 } from '../game/progress';
 import {
   CatalogCard,
+  CATALOG_BACKGROUND_KEY,
   CatalogDetailPanel,
+  CatalogSceneShell,
   CategoryTabs,
   createCosmeticCatalogEntry,
   createItemCatalogEntry,
@@ -47,6 +53,7 @@ export class ShopScene extends Phaser.Scene {
   private selectedEntryId?: string;
   private scrollGrid?: ScrollableGrid<CatalogEntryViewModel>;
   private detailPanel?: Phaser.GameObjects.Container;
+  private readonly cardViews = new Map<string, Phaser.GameObjects.Container>();
 
   constructor() {
     super('ShopScene');
@@ -54,12 +61,15 @@ export class ShopScene extends Phaser.Scene {
 
   preload(): void {
     preloadLobbyMusic(this);
+    preloadBattleIcons(this);
+    CatalogSceneShell.preload(this);
     if (!this.cache.audio.exists('buttonClick')) {
       this.load.audio('buttonClick', '/audio/switch28.ogg');
     }
   }
 
   create(): void {
+    configureBattleIconTextures(this);
     playLobbyMusic(this);
     this.render();
   }
@@ -68,9 +78,16 @@ export class ShopScene extends Phaser.Scene {
     this.scrollGrid?.destroy();
     this.scrollGrid = undefined;
     this.detailPanel = undefined;
+    this.cardViews.clear();
     this.children.removeAll(true);
-    this.addBackground();
-    this.renderHeader();
+    CatalogSceneShell.render(this, {
+      title: t('shop.title'),
+      backLabel: t('shop.returnLobby'),
+      soulCoins: getProgress().soulCoins,
+      backgroundTextureKey: CATALOG_BACKGROUND_KEY,
+      backgroundShadeAlpha: 0.7,
+      onBack: () => this.scene.start('StartScene'),
+    });
 
     const entries = this.catalogEntries();
     const activeEntries = entriesForCategory(entries, this.activeCategory);
@@ -84,47 +101,17 @@ export class ShopScene extends Phaser.Scene {
     this.renderStatus(status);
   }
 
-  private addBackground(): void {
-    this.add.rectangle(640, 360, 1280, 720, COLORS.bg);
-    this.add.circle(640, 372, 300, 0x191c22, 0.58).setStrokeStyle(1, COLORS.line, 0.55);
-    this.add.line(640, 124, 0, 0, 1224, 0, COLORS.line, 0.7).setLineWidth(1);
-  }
-
-  private renderHeader(): void {
-    this.add.text(640, 62, t('shop.title'), {
-      fontFamily: 'Arial',
-      fontSize: '38px',
-      color: COLORS.text,
-      fontStyle: 'bold',
-    }).setOrigin(0.5).setShadow(0, 0, COLORS.accentText, 9, true, true);
-
-    this.add.container(24, 30).add(this.button(0, 0, 176, 44, t('shop.returnLobby'), () => {
-      this.scene.start('StartScene');
-    }, '16px'));
-
-    const coinPanel = this.add.container(1118, 52);
-    coinPanel.add(this.add.rectangle(0, 0, 236, 52, COLORS.panel, 0.96).setStrokeStyle(2, COLORS.accent));
-    coinPanel.add(this.add.text(-96, -13, t('progress.soulCoins'), {
-      fontFamily: 'Arial',
-      fontSize: '16px',
-      color: COLORS.muted,
-    }));
-    const value = this.add.text(96, 0, `${getProgress().soulCoins}`, {
-      fontFamily: 'Arial',
-      fontSize: '28px',
-      color: COLORS.accentText,
-      fontStyle: 'bold',
-    }).setOrigin(1, 0.5);
-    value.setShadow(0, 0, COLORS.accentText, 10, true, true);
-    coinPanel.add(value);
-  }
-
   private catalogEntries(): CatalogEntryViewModel[] {
     const progress = getProgress();
-    const itemEntries = ITEMS.map((item) => createItemCatalogEntry(item, {
-      soulCoins: progress.soulCoins,
-      ownedCount: progress.ownedItems[item.id] ?? 0,
-    }));
+    const itemEntries = ITEMS.map((item) => {
+      const iconArt = getBattleIconArtByResourceKey(item.resourceKey);
+      return createItemCatalogEntry(item, {
+        soulCoins: progress.soulCoins,
+        ownedCount: progress.ownedItems[item.id] ?? 0,
+        thumbnailTextureKey: iconArt?.textureKey,
+        previewTextureKey: iconArt?.textureKey,
+      });
+    });
     const cosmeticEntries = COSMETICS.map((cosmetic) => createCosmeticCatalogEntry(cosmetic, {
       soulCoins: progress.soulCoins,
       ownedCount: ownsCosmetic(cosmetic.id) ? 1 : 0,
@@ -135,7 +122,7 @@ export class ShopScene extends Phaser.Scene {
 
   private renderCategoryTabs(entries: CatalogEntryViewModel[]): void {
     this.add.text(CATALOG_LAYOUT.sidebarX, 132, t('shop.categories'), {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '15px',
       color: COLORS.muted,
     });
@@ -177,13 +164,13 @@ export class ShopScene extends Phaser.Scene {
   private renderCatalogGrid(entries: CatalogEntryViewModel[]): void {
     const sectionLabel = this.categoryLabel(this.activeCategory);
     this.add.text(CATALOG_LAYOUT.gridX, 126, sectionLabel, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '22px',
       color: COLORS.text,
       fontStyle: 'bold',
     });
     this.add.text(CATALOG_LAYOUT.gridX + CATALOG_LAYOUT.gridWidth - 14, 132, `${entries.length}`, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '14px',
       color: COLORS.muted,
     }).setOrigin(1, 0.5);
@@ -195,7 +182,7 @@ export class ShopScene extends Phaser.Scene {
       height: CATALOG_LAYOUT.gridHeight,
       columns: 3,
       cellWidth: 204,
-      cellHeight: 158,
+      cellHeight: 174,
       columnGap: 14,
       rowGap: 14,
       scrollbar: {
@@ -204,27 +191,32 @@ export class ShopScene extends Phaser.Scene {
         trackColor: COLORS.panelAlt,
       },
     });
-    this.scrollGrid.setItems(entries, (_scene, entry) => CatalogCard.render(this, {
-      entry,
-      width: 196,
-      height: 150,
-      selected: entry.id === this.selectedEntryId,
-      metaText: this.cardMetaText(entry),
-      actionLabel: this.actionLabel(entry),
-      colors: {
-        panel: COLORS.panel,
-        panelHover: COLORS.panelAlt,
-        line: COLORS.line,
-        accent: COLORS.accent,
-        accentText: COLORS.accentText,
-        text: COLORS.text,
-        muted: COLORS.muted,
-        equipped: COLORS.equipped,
-      },
-      createButton: (x, y, width, height, label, onClick) => this.button(x, y, width, height, label, onClick, '14px'),
-      onSelect: () => this.selectEntry(entry.id),
-      onAction: () => this.activateEntry(entry),
-    }));
+    this.scrollGrid.setItems(entries, (_scene, entry) => {
+      const card = CatalogCard.render(this, {
+        entry,
+        width: 196,
+        height: 166,
+        selected: entry.id === this.selectedEntryId,
+        metaText: this.cardMetaText(entry),
+        priceText: this.cardPriceText(entry),
+        actionLabel: this.actionLabel(entry),
+        colors: {
+          panel: COLORS.panel,
+          panelHover: COLORS.panelAlt,
+          line: COLORS.line,
+          accent: COLORS.accent,
+          accentText: COLORS.accentText,
+          text: COLORS.text,
+          muted: COLORS.muted,
+          equipped: COLORS.equipped,
+        },
+        createButton: (x, y, width, height, label, onClick) => this.button(x, y, width, height, label, onClick, '14px'),
+        onSelect: () => this.selectEntry(entry.id),
+        onAction: () => this.activateEntry(entry),
+      });
+      this.cardViews.set(entry.id, card);
+      return card;
+    });
   }
 
   private selectEntry(entryId: string): void {
@@ -232,10 +224,21 @@ export class ShopScene extends Phaser.Scene {
       return;
     }
 
+    const previousEntryId = this.selectedEntryId;
     this.selectedEntryId = entryId;
+    this.setCardSelected(previousEntryId, false);
+    this.setCardSelected(entryId, true);
     this.detailPanel?.destroy(true);
     const entries = entriesForCategory(this.catalogEntries(), this.activeCategory);
     this.renderSelectedEntry(entries);
+  }
+
+  private setCardSelected(entryId: string | undefined, selected: boolean): void {
+    if (!entryId) {
+      return;
+    }
+    const setSelected = this.cardViews.get(entryId)?.getData('setSelected') as ((value: boolean) => void) | undefined;
+    setSelected?.(selected);
   }
 
   private renderSelectedEntry(entries: CatalogEntryViewModel[]): void {
@@ -275,14 +278,21 @@ export class ShopScene extends Phaser.Scene {
 
   private cardMetaText(entry: CatalogEntryViewModel): string {
     if (entry.ownership === 'stackable') {
-      return `${t('shop.price', { price: entry.price })}  ·  ${t('shop.owned', { count: entry.ownedCount })}`;
+      return t('shop.owned', { count: entry.ownedCount });
     }
 
     if (entry.equipped) {
       return t('shop.equipped');
     }
 
-    return entry.ownedCount > 0 ? t('shop.ownedPermanent') : t('shop.price', { price: entry.price });
+    return entry.ownedCount > 0 ? t('shop.ownedPermanent') : t('shop.notOwned');
+  }
+
+  private cardPriceText(entry: CatalogEntryViewModel): string | undefined {
+    if (entry.ownership === 'permanent' && entry.ownedCount > 0) {
+      return undefined;
+    }
+    return t('shop.price', { price: entry.price });
   }
 
   private ownershipText(entry: CatalogEntryViewModel): string {
@@ -323,7 +333,7 @@ export class ShopScene extends Phaser.Scene {
   private renderStatus(status: string): void {
     const message = status || t('shop.futureUse');
     const text = this.add.text(640, 682, message, {
-      fontFamily: 'Arial',
+      fontFamily: GAME_FONT_FAMILY,
       fontSize: '16px',
       color: status ? COLORS.accentText : COLORS.muted,
       align: 'center',
@@ -374,25 +384,20 @@ export class ShopScene extends Phaser.Scene {
     label: string,
     onClick: () => void,
     fontSize = '20px',
-    fill = COLORS.button,
   ): Phaser.GameObjects.Container {
-    const button = this.add.container(x, y);
-    const rect = this.add.rectangle(width / 2, height / 2, width, height, fill).setStrokeStyle(2, COLORS.line);
-    const text = this.add.text(width / 2, height / 2, label, {
-      fontFamily: 'Arial',
+    return MedievalButton.render(this, {
+      x,
+      y,
+      width,
+      height,
+      label,
       fontSize,
-      color: COLORS.text,
-    }).setOrigin(0.5);
-
-    rect.setInteractive({ useHandCursor: true });
-    rect.on(Phaser.Input.Events.POINTER_OVER, () => rect.setFillStyle(COLORS.buttonHover));
-    rect.on(Phaser.Input.Events.POINTER_OUT, () => rect.setFillStyle(fill));
-    rect.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      this.playButtonClick();
-      onClick();
+      skin: EVERNIGHT_BUTTON_SKIN,
+      onActivate: () => {
+        this.playButtonClick();
+        onClick();
+      },
     });
-    button.add([rect, text]);
-    return button;
   }
 
   private playButtonClick(): void {

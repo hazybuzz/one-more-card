@@ -77,6 +77,7 @@ function preloadAsset(scene: Phaser.Scene, asset: ArtAsset): void {
 function themeAssets(theme: BattleThemeArtManifest): ArtAsset[] {
   const assets = [
     theme.background,
+    ...(theme.backgroundVariants ?? []),
     theme.tableOverlay,
     theme.foreground,
     theme.playerFrame,
@@ -84,6 +85,9 @@ function themeAssets(theme: BattleThemeArtManifest): ArtAsset[] {
     theme.playerPanel,
     theme.enemyPanel,
     theme.actionBar,
+    theme.actionButton,
+    theme.modalPanel,
+    theme.tooltipPanel,
   ].filter((asset): asset is ImageArtAsset => Boolean(asset));
   return [...new Map(assets.map((asset) => [asset.textureKey, asset])).values()];
 }

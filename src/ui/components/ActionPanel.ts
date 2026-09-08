@@ -22,6 +22,7 @@ interface ActionPanelOptions {
   buttons: BattleActionButtonState[];
   colors: {
     button: number;
+    primary: number;
     danger: number;
   };
   createButton: ButtonFactory;
@@ -36,6 +37,9 @@ export class ActionPanel {
     const offsetX = options.centered && options.buttons.length > 0 ? -rightEdge / 2 : 0;
 
     options.buttons.forEach((buttonState) => {
+      const primaryAction = buttonState.id === 'compare'
+        || buttonState.id === 'player-stand'
+        || buttonState.id === 'view-hand';
       container.add(options.createButton(
         buttonState.x + offsetX,
         0,
@@ -43,7 +47,9 @@ export class ActionPanel {
         48,
         t(buttonState.labelKey),
         () => options.onAction(buttonState),
-        buttonState.danger ? options.colors.danger : options.colors.button,
+        buttonState.danger
+          ? options.colors.danger
+          : primaryAction ? options.colors.primary : options.colors.button,
         '19px',
         buttonState.id === 'view-hand' ? 'card' : buttonState.id === 'invite-one' ? 'none' : 'button',
       ));

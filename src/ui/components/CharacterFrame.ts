@@ -22,6 +22,11 @@ type NineSliceCharacterFrameArtAsset = CharacterFrameArtAsset & {
   bottomHeight: number;
 };
 
+const ACTIVE_FRAME_PULSE_DURATION = 2200;
+const ACTIVE_SEGMENT_DURATION = 760;
+const ACTIVE_SEGMENT_DELAY = 520;
+const ACTIVE_SEGMENT_REPEAT_DELAY = 1400;
+
 function isNineSliceSkin(asset: CharacterFrameArtAsset): asset is NineSliceCharacterFrameArtAsset {
   return asset.leftWidth !== undefined
     && asset.rightWidth !== undefined
@@ -85,11 +90,11 @@ export class CharacterFrame {
       const focusWidth = options.width + 14;
       const focusHeight = options.height + 14;
       const themeGlow = scene.add.rectangle(0, 0, focusWidth + 8, focusHeight + 8, 0x000000, 0)
-        .setStrokeStyle(4, options.accentColor, 0.38);
+        .setStrokeStyle(3, options.accentColor, 0.22);
       const separator = scene.add.rectangle(0, 0, focusWidth + 3, focusHeight + 3, 0x000000, 0)
         .setStrokeStyle(6, 0x050608, 0.92);
       const focusBorder = scene.add.rectangle(0, 0, focusWidth, focusHeight, 0x000000, 0)
-        .setStrokeStyle(2, 0xfff6df, 0.92);
+        .setStrokeStyle(1, 0xfff6df, 0.58);
       const horizontalLength = Math.round(options.width * 0.3);
       const verticalLength = Math.round(options.height * 0.26);
       const segments = [
@@ -102,8 +107,8 @@ export class CharacterFrame {
 
       scene.tweens.add({
         targets: [themeGlow, focusBorder],
-        alpha: { from: 0.52, to: 1 },
-        duration: 760,
+        alpha: { from: 0.4, to: 0.72 },
+        duration: ACTIVE_FRAME_PULSE_DURATION,
         yoyo: true,
         repeat: -1,
         ease: 'Sine.easeInOut',
@@ -111,12 +116,12 @@ export class CharacterFrame {
       segments.forEach((segment, index) => {
         scene.tweens.add({
           targets: segment,
-          alpha: { from: 0.16, to: 1 },
-          duration: 220,
-          delay: index * 240,
+          alpha: { from: 0.1, to: 0.55 },
+          duration: ACTIVE_SEGMENT_DURATION,
+          delay: index * ACTIVE_SEGMENT_DELAY,
           yoyo: true,
           repeat: -1,
-          repeatDelay: 520,
+          repeatDelay: ACTIVE_SEGMENT_REPEAT_DELAY,
           ease: 'Sine.easeInOut',
         });
       });
@@ -177,11 +182,11 @@ export class CharacterFrame {
 
     const focusRadius = radius + 10;
     const themeGlow = scene.add.circle(0, 0, focusRadius + 5, 0x000000, 0)
-      .setStrokeStyle(5, options.accentColor, 0.34);
+      .setStrokeStyle(3, options.accentColor, 0.2);
     const separator = scene.add.circle(0, 0, focusRadius + 1, 0x000000, 0)
       .setStrokeStyle(6, 0x050608, 0.92);
     const focusBorder = scene.add.circle(0, 0, focusRadius - 2, 0x000000, 0)
-      .setStrokeStyle(2, 0xfff6df, 0.94);
+      .setStrokeStyle(1, 0xfff6df, 0.58);
     const segments = Array.from({ length: 4 }, (_, index) => this.focusArc(
       scene,
       focusRadius + 2,
@@ -192,8 +197,8 @@ export class CharacterFrame {
 
     scene.tweens.add({
       targets: [themeGlow, focusBorder],
-      alpha: { from: 0.5, to: 1 },
-      duration: 760,
+      alpha: { from: 0.4, to: 0.72 },
+      duration: ACTIVE_FRAME_PULSE_DURATION,
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
@@ -201,12 +206,12 @@ export class CharacterFrame {
     segments.forEach((segment, index) => {
       scene.tweens.add({
         targets: segment,
-        alpha: { from: 0.14, to: 1 },
-        duration: 240,
-        delay: index * 220,
+        alpha: { from: 0.1, to: 0.55 },
+        duration: ACTIVE_SEGMENT_DURATION,
+        delay: index * ACTIVE_SEGMENT_DELAY,
         yoyo: true,
         repeat: -1,
-        repeatDelay: 500,
+        repeatDelay: ACTIVE_SEGMENT_REPEAT_DELAY,
         ease: 'Sine.easeInOut',
       });
     });
@@ -341,8 +346,8 @@ export class CharacterFrame {
   }
 
   private focusArc(scene: Phaser.Scene, radius: number, startAngle: number, endAngle: number): Phaser.GameObjects.Graphics {
-    const arc = scene.add.graphics().setAlpha(0.14);
-    arc.lineStyle(5, 0xffffff, 0.98);
+    const arc = scene.add.graphics().setAlpha(0.1);
+    arc.lineStyle(3, 0xfff6df, 0.72);
     arc.beginPath();
     arc.arc(0, 0, radius, startAngle, endAngle, false);
     arc.strokePath();
@@ -356,9 +361,9 @@ export class CharacterFrame {
     width: number,
     height: number,
   ): Phaser.GameObjects.Container {
-    const segment = scene.add.container(x, y).setAlpha(0.16);
-    const glow = scene.add.rectangle(0, 0, width + 6, height + 6, 0xfff1c7, 0.22);
-    const core = scene.add.rectangle(0, 0, width, height, 0xffffff, 0.98);
+    const segment = scene.add.container(x, y).setAlpha(0.1);
+    const glow = scene.add.rectangle(0, 0, width + 6, height + 6, 0xfff1c7, 0.14);
+    const core = scene.add.rectangle(0, 0, width, height, 0xfff6df, 0.72);
     segment.add([glow, core]);
     return segment;
   }

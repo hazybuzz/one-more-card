@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { getBattleIconArt } from '../art';
 import { AbilitySlot } from './AbilitySlot';
 
 interface ItemBarOptions {
@@ -28,7 +29,9 @@ export class ItemBar {
       x: options.x,
       y: options.y,
       icon: '□',
-      color: options.colors.accent,
+      iconTextureKey: getBattleIconArt('inventory-bag').textureKey,
+      variant: 'item',
+      color: 0x69c98b,
       textColor: options.colors.accentText,
       enabled: options.enabled,
       badge: options.badge,

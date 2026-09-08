@@ -945,6 +945,18 @@ function scoreHand(cards) {
   const rawTotal = cards.reduce((total, card) => total + cardValue(card), 0);
   const sameSuit = hasSameSuitWithJokers(cards);
   const sameRank = cards.length >= 2 && cards.every((card) => !isJoker(card) && card.rank === cards[0].rank);
+  const boom = sameRank && (cards.length === 3 || cards.length === 4);
+  if (boom) {
+    return {
+      rawTotal,
+      point: rawTotal % 10,
+      resonance: 'boom',
+      multiplier: cards.length === 4 ? 8 : 4,
+      reason: 'boom',
+      boomSize: cards.length,
+      boomRank: cards[0].rank,
+    };
+  }
   const resonance = sameSuit || sameRank
     ? cards.length >= 3 ? 'strong' : 'resonance'
     : 'none';
@@ -987,11 +999,30 @@ function hasSameSuitWithJokers(cards) {
 }
 
 function compareScores(scoreA, scoreB) {
+  const boomA = scoreA.resonance === 'boom';
+  const boomB = scoreB.resonance === 'boom';
+  if (boomA || boomB) {
+    if (boomA !== boomB) {
+      return boomA ? 1 : -1;
+    }
+
+    const sizeDifference = (scoreA.boomSize ?? 0) - (scoreB.boomSize ?? 0);
+    if (sizeDifference !== 0) {
+      return sizeDifference;
+    }
+
+    return boomRankPower(scoreA.boomRank) - boomRankPower(scoreB.boomRank);
+  }
+
   if (scoreA.point !== scoreB.point) {
     return scoreA.point - scoreB.point;
   }
 
   return resonancePower(scoreA.resonance) - resonancePower(scoreB.resonance);
+}
+
+function boomRankPower(rank) {
+  return ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'].indexOf(rank);
 }
 
 function resonancePower(resonance) {

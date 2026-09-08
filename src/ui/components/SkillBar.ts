@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { t } from '../../game/i18n';
+import { getBattleIconArt } from '../art';
 import type { SkillSlotId, SkillSlotState } from '../state/UIState';
 import { AbilitySlot } from './AbilitySlot';
 
@@ -48,14 +49,20 @@ export class SkillBar {
     const tooltip = t(skill.tooltipKey, { rounds: skill.cooldown });
     const tooltipX = options.tooltipOrigin.x + options.x + offsetX + (options.direction === 'horizontal' ? 0 : 70);
     const tooltipY = options.tooltipOrigin.y + options.y + offsetY - 98;
+    const iconTextureKey = skill.iconArtId ? getBattleIconArt(skill.iconArtId).textureKey : undefined;
     return new AbilitySlot(scene, {
       x: offsetX,
       y: offsetY,
       icon: skill.icon,
-      color: options.colors.accent,
+      iconTextureKey,
+      variant: 'active',
+      radiateWhenEnabled: true,
+      color: 0xd8b45e,
       textColor: options.colors.resonance,
       enabled: skill.enabled,
+      unavailable: !skill.enabled && skill.cooldown <= 0,
       cooldown: skill.cooldown,
+      cooldownMax: 2,
       backgroundColor: options.colors.panelEnabled,
       disabledBackgroundColor: options.colors.panelDisabled,
       hoverBackgroundColor: options.colors.panelHover,

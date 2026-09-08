@@ -1,0 +1,26 @@
+export const START_LAYOUT = {
+  canvas: { width: 1280, height: 720 },
+  language: { x: 78, y: 48, width: 124, height: 40 },
+  soulCoins: { x: 1122, y: 48, width: 236, height: 52 },
+  brand: {
+    centerX: 640,
+    titleY: 166,
+    subtitleY: 242,
+    dividerY: 312,
+    width: 390,
+  },
+  menu: {
+    x: 462,
+    y: 332,
+    primaryWidth: 356,
+    primaryHeight: 64,
+    secondaryWidth: 320,
+    secondaryHeight: 54,
+    utilityWidth: 152,
+    utilityHeight: 50,
+    rowGap: 14,
+    utilityGap: 16,
+  },
+  status: { centerX: 640, y: 636, width: 480 },
+  artSafeArea: { x: 0, y: 0, width: 1280, height: 720 },
+} as const;

@@ -6,7 +6,7 @@ import { enemyName, t } from './i18n';
 import { Deck } from './deck';
 import { EnemyState, createEnemiesForLevel, decideInvite } from './enemy';
 import { EnemyType } from './enemy';
-import { ResonanceKind, ScoreResult, scoreHand } from './scoring';
+import { ResonanceKind, ScoreResult, compareScoreResults, scoreHand } from './scoring';
 import { chooseResonanceShift, chooseResonanceSummonTarget, isResonanceSummonMatch } from './skills/resonanceSkills';
 import type { BattlePresentationEvent } from './engine/BattleEvents';
 import type { BattleMechanicId, FixedRoundConfig, FixedRoundEnemyConfig, LevelConfig } from './types/level';
@@ -620,7 +620,7 @@ export class Battle {
     let originalDamage: number | undefined;
     let guard: DamageEvent['guard'];
 
-    const comparison = compareScores(playerScore, enemyScore);
+    const comparison = compareScoreResults(playerScore, enemyScore);
 
     if (comparison > 0) {
       outcome = 'win';
@@ -1294,14 +1294,23 @@ export class Battle {
 
   private compareResonanceText(result: BattleResult): string {
     if (result.outcome === 'win' && result.playerScore.resonance !== 'none') {
-      return t('log.triggerResonance', { resonance: result.playerScore.resonance === 'strong' ? t('log.triggerResonanceStrong') : t('log.triggerResonanceNormal') });
+      return this.triggeredHandText(result.playerScore);
     }
 
     if (result.outcome === 'lose' && result.enemyScore.resonance !== 'none') {
-      return t('log.triggerResonance', { resonance: result.enemyScore.resonance === 'strong' ? t('log.triggerResonanceStrong') : t('log.triggerResonanceNormal') });
+      return this.triggeredHandText(result.enemyScore);
     }
 
     return '';
+  }
+
+  private triggeredHandText(score: ScoreResult): string {
+    const label = score.resonance === 'boom'
+      ? t('score.boomWithRank', { rank: score.boomRank ?? '' })
+      : score.resonance === 'strong'
+        ? t('log.triggerResonanceStrong')
+        : t('log.triggerResonanceNormal');
+    return t('log.triggerResonance', { resonance: label });
   }
 
   private updateBattleOutcome(): void {
@@ -1435,6 +1444,10 @@ export class Battle {
 }
 
 export function describeScore(score: ScoreResult): string {
+  if (score.resonance === 'boom') {
+    return t('score.describeBoom', { rank: score.boomRank ?? '', count: score.boomSize ?? 3 });
+  }
+
   const resonance = score.resonance === 'strong'
     ? t('score.strongResonance', { multiplier: score.multiplier })
     : score.resonance === 'resonance'
@@ -1453,26 +1466,6 @@ function describeOutcome(result: BattleResult): string {
   }
 
   return t('score.outcome.draw');
-}
-
-function compareScores(playerScore: ScoreResult, enemyScore: ScoreResult): number {
-  if (playerScore.point !== enemyScore.point) {
-    return playerScore.point - enemyScore.point;
-  }
-
-  return resonanceRank(playerScore.resonance) - resonanceRank(enemyScore.resonance);
-}
-
-function resonanceRank(resonance: ResonanceKind): number {
-  if (resonance === 'strong') {
-    return 2;
-  }
-
-  if (resonance === 'resonance') {
-    return 1;
-  }
-
-  return 0;
 }
 
 function randomItem<T>(items: T[]): T | undefined {
