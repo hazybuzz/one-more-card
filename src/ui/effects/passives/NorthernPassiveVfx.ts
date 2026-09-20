@@ -74,7 +74,6 @@ export function playWarHornVfx(context: PassiveVfxContext): void {
         scene.time.delayedCall(510, () => {
           context.feedback?.revealEnemyAttackBonus?.(event.targetEnemyIndexes[index]);
           playTargetImpact(scene, target, [WAR.red, WAR.orange, WAR.gold]);
-          createFloatingText(scene, target, t('battle.passive.attackUp'), '#ff8a65', WAR.deep);
         });
       });
     });
@@ -130,13 +129,6 @@ export function playRuneBlessingVfx(context: PassiveVfxContext): void {
           context.feedback?.revealEnemyAttackBonus?.(targetIndex);
         }
         playTargetImpact(scene, target, [RUNE.blue, landingColor, RUNE.ice]);
-        createFloatingText(
-          scene,
-          target,
-          isHeal ? t('battle.passive.hpUp') : t('battle.passive.attackUp'),
-          isHeal ? '#9cf1b7' : '#a9e5ff',
-          RUNE.deep,
-        );
       },
     });
   });

@@ -46,7 +46,7 @@ export const NORTHERN_LONGHOUSE_THEME_ART: BattleThemeArtManifest = {
     textureKey: 'theme-northern-longhouse-battle-background',
     path: '/image/ui/table-select/preview-northern-master.png',
     fit: 'stretch',
-    alpha: 0.7,
+    alpha: 0.6,
     includesTable: true,
   },
   playerFrame: {

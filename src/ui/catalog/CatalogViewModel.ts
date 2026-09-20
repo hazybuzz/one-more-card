@@ -14,6 +14,8 @@ export type CatalogOwnership = 'stackable' | 'permanent';
 export interface CatalogVisualConfig {
   thumbnailTextureKey?: string;
   previewTextureKey?: string;
+  textureAngle?: number;
+  accentColor?: number;
   fallbackIcon: string;
 }
 
@@ -37,6 +39,8 @@ interface CatalogEntryContext {
   equipped?: boolean;
   thumbnailTextureKey?: string;
   previewTextureKey?: string;
+  textureAngle?: number;
+  accentColor?: number;
 }
 
 export function createItemCatalogEntry(
@@ -57,6 +61,8 @@ export function createItemCatalogEntry(
     visual: {
       thumbnailTextureKey: context.thumbnailTextureKey,
       previewTextureKey: context.previewTextureKey,
+      textureAngle: context.textureAngle,
+      accentColor: context.accentColor,
       fallbackIcon: item.icon,
     },
   };
@@ -80,6 +86,8 @@ export function createCosmeticCatalogEntry(
     visual: {
       thumbnailTextureKey: context.thumbnailTextureKey,
       previewTextureKey: context.previewTextureKey,
+      textureAngle: context.textureAngle,
+      accentColor: context.accentColor,
       fallbackIcon: cosmetic.icon,
     },
   };

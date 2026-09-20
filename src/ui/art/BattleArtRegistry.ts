@@ -3,6 +3,7 @@ import type { TableThemeId } from '../../game/types/tableTheme';
 import type { BackgroundArtAsset, BattleThemeArtManifest, CharacterArtConfig } from './types';
 import { EVERNIGHT_BUTTON_SKIN } from './commonUiArt';
 import { DRAGON_GATE_THEME_ART } from './dragonGateArt';
+import { EDO_TEAHOUSE_THEME_ART } from './edoTeahouseArt';
 import { NORTHERN_LONGHOUSE_THEME_ART } from './northernLonghouseArt';
 
 const PLAYER_PORTRAIT_SIZE = 140;
@@ -387,8 +388,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayWidth: ENEMY_PORTRAIT_SIZE * 0.9,
+    displayHeight: ENEMY_PORTRAIT_SIZE * 0.9,
   },
   ninja: {
     id: 'ninja',
@@ -406,8 +407,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayWidth: ENEMY_PORTRAIT_SIZE * 0.9,
+    displayHeight: ENEMY_PORTRAIT_SIZE * 0.9,
   },
   oiran: {
     id: 'oiran',
@@ -425,8 +426,8 @@ const ENEMY_CHARACTER_ART: Partial<Record<EnemyId, CharacterArtConfig>> = {
       attack: 2,
       hurt: 3,
     },
-    displayWidth: ENEMY_PORTRAIT_SIZE,
-    displayHeight: ENEMY_PORTRAIT_SIZE,
+    displayWidth: ENEMY_PORTRAIT_SIZE * 0.9,
+    displayHeight: ENEMY_PORTRAIT_SIZE * 0.9,
   },
 };
 
@@ -460,7 +461,7 @@ const BATTLE_THEME_ART: Record<TableThemeId, BattleThemeArtManifest> = {
   },
   northern_longhouse: NORTHERN_LONGHOUSE_THEME_ART,
   dragon_gate: DRAGON_GATE_THEME_ART,
-  edo_teahouse: { themeId: 'edo_teahouse' },
+  edo_teahouse: EDO_TEAHOUSE_THEME_ART,
 };
 
 export function getBattleThemeArt(themeId: TableThemeId): BattleThemeArtManifest {

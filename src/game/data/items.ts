@@ -42,6 +42,11 @@ export const ITEM_CONFIGS: Record<ItemId, ItemConfig> = {
     maxUsesPerBattle: 1,
     resourceKey: 'item_holy_shield',
   },
+  resonance_dice: {
+    id: 'resonance_dice', price: 15, icon: '⚄',
+    nameKey: 'item.resonanceDice.name', descriptionKey: 'item.resonanceDice.desc',
+    useTiming: 'player-turn', effectId: 'resonance_reroll', resourceKey: 'item_resonance_dice',
+  },
 };
 
 export const ITEMS: ItemConfig[] = Object.values(ITEM_CONFIGS);

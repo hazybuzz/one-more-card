@@ -24,6 +24,9 @@ export interface MeteorProjectileOptions {
   from: Phaser.Math.Vector2;
   to: Phaser.Math.Vector2;
   textureKey: string;
+  artTint?: number;
+  artGlowAlpha?: number;
+  artSpin?: Partial<Record<ResonanceKind, number>>;
   palette: MeteorProjectilePalette;
   resonance?: ResonanceKind;
   rotationOffset?: number;
@@ -114,7 +117,24 @@ export function playMeteorProjectileEffect(scene: Phaser.Scene, options: MeteorP
   const art = scene.add.image(0, 0, options.textureKey)
     .setDisplaySize(tier.size, tier.size)
     .setRotation(angle + (options.rotationOffset ?? 0));
-  projectile.add([meteorTail, outerGlow, innerGlow, art]);
+  if (options.artTint !== undefined) {
+    art.setTint(options.artTint);
+  }
+  const artGlow = options.artGlowAlpha
+    ? scene.add.image(0, 0, options.textureKey)
+      .setDisplaySize(tier.size * 1.06, tier.size * 1.06)
+      .setRotation(art.rotation)
+      .setAlpha(options.artGlowAlpha)
+      .setBlendMode(Phaser.BlendModes.ADD)
+    : undefined;
+  if (artGlow && options.artTint !== undefined) {
+    artGlow.setTint(options.artTint);
+  }
+  projectile.add([meteorTail, outerGlow, innerGlow]);
+  if (artGlow) {
+    projectile.add(artGlow);
+  }
+  projectile.add(art);
   projectile.setScale(0.76).setAlpha(1);
 
   const glowTween = scene.tweens.add({
@@ -144,6 +164,15 @@ export function playMeteorProjectileEffect(scene: Phaser.Scene, options: MeteorP
   }
 
   const duration = Phaser.Math.Clamp(520 + distance * 0.28, 600, 760);
+  const artSpin = options.artSpin?.[resonance];
+  if (artSpin) {
+    scene.tweens.add({
+      targets: artGlow ? [artGlow, art] : art,
+      angle: art.angle + artSpin,
+      duration,
+      ease: 'Linear',
+    });
+  }
   let lastTrailAt = -Infinity;
   scene.tweens.add({
     targets: projectile,
@@ -159,7 +188,7 @@ export function playMeteorProjectileEffect(scene: Phaser.Scene, options: MeteorP
         return;
       }
       lastTrailAt = scene.time.now;
-      spawnAfterimage(scene, projectile, art.rotation, tier, options.textureKey, options.palette, projectileDepth);
+      spawnAfterimage(scene, projectile, art.rotation, tier, options.textureKey, options.palette, projectileDepth, options.artTint);
     },
     onComplete: () => {
       glowTween.stop();
@@ -179,7 +208,7 @@ function resolveTier(
   };
 }
 
-function createMeteorTail(
+export function createMeteorTail(
   scene: Phaser.Scene,
   tier: MeteorProjectileTier,
   resonance: ResonanceKind,
@@ -204,6 +233,7 @@ function spawnAfterimage(
   textureKey: string,
   palette: MeteorProjectilePalette,
   projectileDepth: number,
+  artTint?: number,
 ): void {
   const glow = scene.add.circle(
     projectile.x,
@@ -218,6 +248,9 @@ function spawnAfterimage(
     .setAlpha(tier.trailAlpha)
     .setDepth(projectileDepth - 2)
     .setBlendMode(Phaser.BlendModes.ADD);
+  if (artTint !== undefined) {
+    echo.setTint(artTint);
+  }
   scene.tweens.add({
     targets: [glow, echo],
     alpha: 0,

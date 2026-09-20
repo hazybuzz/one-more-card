@@ -1,5 +1,4 @@
 import { Battle, type BattleInitOptions, type SkillResult } from '../battle';
-import { t } from '../i18n';
 import type { BattleAction } from './BattleTypes';
 import type { BattlePresentationEvent } from './BattleEvents';
 
@@ -56,6 +55,10 @@ export class BattleEngine extends Battle {
     return result;
   }
 
+  clearPendingPresentationEvents(): void {
+    this.presentationEvents = []; this.clearDamageEvents(); this.passiveEffectEvents = [];
+  }
+
   consumePresentationEvents(): BattlePresentationEvent[] {
     const events = [
       ...this.presentationEvents,
@@ -65,6 +68,7 @@ export class BattleEngine extends Battle {
           return {
             type: 'clash',
             enemyId: event.enemyId,
+            enemyInstanceId: event.enemyInstanceId,
             amount: event.amount,
           };
         }
@@ -73,12 +77,14 @@ export class BattleEngine extends Battle {
           type: 'damage',
           attacker: event.attacker ?? 'enemy',
           enemyId: event.enemyId,
+          enemyInstanceId: event.enemyInstanceId,
           amount: event.amount,
           resonance: event.resonance,
           hpAfter: event.hpAfter,
           evaded: event.evaded,
           shielded: event.shielded,
           originalAmount: event.originalAmount,
+          ...(event.iaijutsuBonus ? { iaijutsuBonus: event.iaijutsuBonus } : {}),
           killRewardHeal: event.killRewardHeal,
           guard: event.guard,
         };
@@ -178,7 +184,7 @@ export class BattleEngine extends Battle {
       this.presentationEvents.push({
         type: 'enemy-speech',
         enemyId: invitedEnemy.id,
-        text: invitedEnemy.acceptedInvite ? t('battle.speech.draw') : t('battle.speech.pass'),
+        intent: invitedEnemy.acceptedInvite ? 'accept' : 'reject',
       });
     }
 

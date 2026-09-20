@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { ENDLESS_NPC_ART_IDS, getNpcSourceTheme } from '../../game/data/npcOrigins';
 import type { EnemyId } from '../../game/types/enemy';
 import { getBattleThemeArt, getEnemyCharacterArt, PLAYER_CHARACTER_ART } from './BattleArtRegistry';
 import type { ArtAsset, BattleArtSelection, BattleThemeArtManifest, CharacterArtConfig, ImageArtAsset } from './types';
@@ -16,8 +17,7 @@ export function preloadBattleArt(scene: Phaser.Scene, selection: BattleArtSelect
     }
   });
 
-  const theme = getBattleThemeArt(selection.themeId);
-  themeAssets(theme).forEach((asset) => preloadAsset(scene, asset));
+  selectionThemeAssets(selection).forEach((asset) => preloadAsset(scene, asset));
 }
 
 export function configureBattleArtTextures(scene: Phaser.Scene, selection: BattleArtSelection): void {
@@ -28,7 +28,7 @@ export function configureBattleArtTextures(scene: Phaser.Scene, selection: Battl
       assets.push(art.asset);
     }
   });
-  assets.push(...themeAssets(getBattleThemeArt(selection.themeId)));
+  assets.push(...selectionThemeAssets(selection));
 
   assets.forEach((asset) => {
     if (asset.pixelArt && scene.textures.exists(asset.textureKey)) {
@@ -38,8 +38,9 @@ export function configureBattleArtTextures(scene: Phaser.Scene, selection: Battl
 }
 
 function characterArtIds(selection: BattleArtSelection): EnemyId[] {
-  const ids = new Set<EnemyId>(selection.enemyIds);
-  const pending = [...selection.enemyIds];
+  const selected = selection.preloadAllNpcArt ? ENDLESS_NPC_ART_IDS : selection.enemyIds;
+  const ids = new Set<EnemyId>(selected);
+  const pending = [...selected];
 
   while (pending.length > 0) {
     const enemyId = pending.pop()!;
@@ -52,6 +53,17 @@ function characterArtIds(selection: BattleArtSelection): EnemyId[] {
   }
 
   return [...ids];
+}
+
+function selectionThemeAssets(selection: BattleArtSelection): ArtAsset[] {
+  const assets = themeAssets(getBattleThemeArt(selection.themeId));
+  const origins = new Set(characterArtIds(selection).map(getNpcSourceTheme));
+  for (const origin of origins) {
+    const theme = getBattleThemeArt(origin);
+    if (theme.enemyFrame) assets.push(theme.enemyFrame);
+    if (theme.enemyPanel) assets.push(theme.enemyPanel);
+  }
+  return [...new Map(assets.map((asset) => [asset.textureKey, asset])).values()];
 }
 
 function preloadCharacterArt(scene: Phaser.Scene, config: CharacterArtConfig): void {

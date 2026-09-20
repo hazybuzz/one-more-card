@@ -1,7 +1,12 @@
+import type { EndlessEndReason } from '../endless/EndlessSettlement';
+import type { EndlessBattleAccounting } from '../endless/EndlessLedger';
+import type { EndlessRosterState } from '../endless/EndlessRoster';
+import type { TableThemeId } from '../types/tableTheme';
 import type { Card } from '../card';
 import type { EnemyType } from '../enemy';
 import type { BattleOutcome, BattlePhase } from '../types/battle';
 import type { BattleActionId, LevelConfig } from '../types/level';
+import type { SkillId } from '../types/skill';
 import type { ResonanceKind, ScoreResult } from '../scoring';
 
 export interface BattlePlayerState {
@@ -24,6 +29,9 @@ export interface BattlePlayerState {
 }
 
 export interface BattleEnemyState {
+  instanceId: string;
+  seatIndex: number;
+  sourceThemeId: TableThemeId;
   id: EnemyType;
   hp: number;
   maxHp: number;
@@ -40,10 +48,12 @@ export interface BattleEnemyState {
   attackBonus: number;
   roundAttackBonus: number;
   taoistTalismaned: boolean;
+  talismanSourceInstanceId?: string;
   iaijutsuStacks: number;
   smokeScreenArmed: boolean;
   smokeScreenUsed: boolean;
   hanamiFanTargetId?: EnemyType;
+  hanamiFanTargetInstanceId?: string;
   hanamiDamageBank: number;
   summoned: boolean;
   summonCount: number;
@@ -62,6 +72,10 @@ export interface BattleResultState {
 }
 
 export interface BattleState {
+  mode: 'story' | 'formal' | 'endless';
+  endlessRoster?: EndlessRosterState;
+  endlessAccounting?: EndlessBattleAccounting;
+  endlessEndReason?: EndlessEndReason;
   levelId?: string;
   levelConfig?: LevelConfig;
   levelIntroLessonKey?: string;
@@ -69,12 +83,14 @@ export interface BattleState {
   battleOutcome: BattleOutcome;
   currentEnemyIndex: number;
   currentEnemyId?: EnemyType;
+  currentEnemyInstanceId?: string;
   round: number;
   currentFixedRoundId?: string;
   currentLessonKey?: string;
   currentTutorialBeforeCompareKey?: string;
   currentPlayerTurnLessonKey?: string;
   availableActions?: BattleActionId[];
+  availableSkills?: SkillId[];
   maxPlayerDrawsThisRound: number;
   roundRevealed: boolean;
   pendingSoulRedeem: boolean;

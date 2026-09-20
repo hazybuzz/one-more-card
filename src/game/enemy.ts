@@ -1,16 +1,20 @@
+import { getNpcSourceTheme } from './data/npcOrigins';
 import { Card, isJoker } from './card';
 import { ENEMY_CONFIGS, ENEMY_LIST } from './data/enemies';
 import { t } from './i18n';
 import { scoreHand } from './scoring';
 import type { EnemyConfig, EnemyId } from './types/enemy';
 import type { LevelConfig } from './types/level';
-import type { TableThemeConfig } from './types/tableTheme';
+import type { TableThemeConfig, TableThemeId } from './types/tableTheme';
 
 export type EnemyType = EnemyId;
 
 export type EnemyDefinition = Pick<EnemyConfig, 'id' | 'maxHp'>;
 
 export interface EnemyState extends EnemyDefinition {
+  instanceId: string;
+  seatIndex: number;
+  sourceThemeId: TableThemeId;
   hp: number;
   hand: Card[];
   revealed: boolean;
@@ -25,10 +29,12 @@ export interface EnemyState extends EnemyDefinition {
   attackBonus: number;
   roundAttackBonus: number;
   taoistTalismaned: boolean;
+  talismanSourceInstanceId?: string;
   iaijutsuStacks: number;
   smokeScreenArmed: boolean;
   smokeScreenUsed: boolean;
   hanamiFanTargetId?: EnemyId;
+  hanamiFanTargetInstanceId?: string;
   hanamiDamageBank: number;
   summoned: boolean;
   summonCount: number;
@@ -41,6 +47,10 @@ export interface EnemyDecision {
 
 export const ENEMIES: EnemyDefinition[] = ENEMY_LIST.map(({ id, maxHp }) => ({ id, maxHp }));
 
+export function createEnemyInstancePrefix(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `battle-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function createEnemies(): EnemyState[] {
   return createEnemiesForLevel();
 }
@@ -49,45 +59,41 @@ export function createEnemiesForLevel(
   level?: LevelConfig,
   tableTheme?: TableThemeConfig,
   enemyHpModifier = 0,
+  instancePrefix: string = createEnemyInstancePrefix(),
 ): EnemyState[] {
   const enemyIds = level?.enemyIds ?? tableTheme?.enemyIds ?? ENEMIES.map((enemy) => enemy.id);
-  return enemyIds.map((enemyId) => {
-    const enemyConfig = ENEMY_CONFIGS[enemyId];
-    const baseEnemy = enemyConfig ? { id: enemyConfig.id, maxHp: enemyConfig.maxHp } : undefined;
-    if (!baseEnemy) {
-      throw new Error(`Unknown enemy id: ${enemyId}`);
-    }
-
-    const adjustedThemeHp = tableTheme && enemyId !== 'einherjar'
-      ? Math.max(1, baseEnemy.maxHp + enemyHpModifier)
-      : baseEnemy.maxHp;
-    const maxHp = level?.enemyHpOverrides?.[enemyId] ?? adjustedThemeHp;
-    return {
-      ...baseEnemy,
-      maxHp,
-      hp: maxHp,
-      hand: [],
-      revealed: false,
-      compared: false,
-      passiveTriggered: false,
-      passiveTriggeredThisRound: false,
-      soulRedeemUsed: false,
-      defeated: false,
-      attackBonus: 0,
-      roundAttackBonus: 0,
-      taoistTalismaned: false,
-      iaijutsuStacks: 0,
-      smokeScreenArmed: false,
-      smokeScreenUsed: false,
-      hanamiFanTargetId: undefined,
-      hanamiDamageBank: 0,
-      summoned: false,
-      summonCount: 0,
-    };
+  return enemyIds.map((enemyId, index) => {
+    const baseHp = ENEMY_CONFIGS[enemyId]?.maxHp;
+    if (baseHp === undefined) throw new Error(`Unknown enemy id: ${enemyId}`);
+    const adjustedHp = tableTheme && enemyId !== 'einherjar' ? Math.max(1, baseHp + enemyHpModifier) : baseHp;
+    return createEnemyState(enemyId, {
+      instanceId: `${instancePrefix}:${index + 1}`, seatIndex: index,
+      maxHp: level?.enemyHpOverrides?.[enemyId] ?? adjustedHp,
+    });
   });
 }
 
-export function decideInvite(enemy: EnemyState, playerPoint?: number, passiveHpThreshold = 3): EnemyDecision {
+/** Shared fresh-state factory for initial rosters, summons and later endless replacements. */
+export function createEnemyState(enemyId: EnemyId, options: {
+  instanceId: string; seatIndex: number; maxHp?: number; hpModifier?: number; summoned?: boolean;
+}): EnemyState {
+  const config = ENEMY_CONFIGS[enemyId];
+  if (!config) throw new Error(`Unknown enemy id: ${enemyId}`);
+  const maxHp = options.maxHp ?? Math.max(1, config.maxHp + (enemyId === 'einherjar' ? 0 : options.hpModifier ?? 0));
+  return {
+    id: enemyId, instanceId: options.instanceId, seatIndex: options.seatIndex,
+    sourceThemeId: getNpcSourceTheme(enemyId), maxHp, hp: maxHp, hand: [],
+    revealed: false, compared: false, passiveTriggered: false, passiveTriggeredThisRound: false,
+    soulRedeemUsed: false, defeated: false, attackBonus: 0, roundAttackBonus: 0,
+    taoistTalismaned: false, talismanSourceInstanceId: undefined, iaijutsuStacks: 0,
+    smokeScreenArmed: false, smokeScreenUsed: false, hanamiFanTargetId: undefined,
+    hanamiFanTargetInstanceId: undefined, hanamiDamageBank: 0,
+    summoned: options.summoned ?? false, summonCount: 0,
+  };
+}
+
+export function decideInvite(enemy: EnemyState, playerPoint?: number, passiveHpThreshold = 3, random: () => number = Math.random): EnemyDecision {
+  const chance = (probability: number, reason: string): EnemyDecision => ({ accepts: random() < probability, reason });
   const point = scoreHand(enemy.hand).point;
 
   if (enemy.id === 'goblin') {
@@ -296,13 +302,6 @@ export function decideInvite(enemy: EnemyState, playerPoint?: number, passiveHpT
   }
 
   return chance(0.68, t('enemy.ai.werewolf.low'));
-}
-
-function chance(probability: number, reason: string): EnemyDecision {
-  return {
-    accepts: Math.random() < probability,
-    reason,
-  };
 }
 
 function hasResonanceOpportunity(enemy: EnemyState): boolean {

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { getBattleIconArt } from '../art';
 import type { BattleStatusState } from '../state/BattleStatusState';
 import { GAME_FONT_FAMILY } from '../themes/typography';
+import { BattleStatusBadge } from './status/BattleStatusBadge';
 
 export type StatusIconState = BattleStatusState;
 
@@ -35,20 +36,11 @@ export class StatusIconRow {
     const visibleStatuses = orderedStatuses.slice(0, 5);
     const hiddenStatuses = orderedStatuses.slice(5);
     const entries = visibleStatuses.map((status) => {
-      const iconSize = status.iconSize ?? 30;
-      const count = status.stacks > 1
-        ? scene.add.text(0, 1, `x${status.stacks}`, {
-          fontFamily: GAME_FONT_FAMILY,
-          fontSize: '12px',
-          color: status.textColor,
-          fontStyle: 'bold',
-        }).setOrigin(0, 0.5)
-        : undefined;
+      const iconSize = status.iconSize ?? 32;
       return {
         status,
         iconSize,
-        count,
-        width: iconSize + (count ? count.width + 3 : 0),
+        width: iconSize,
       };
     });
     const overflowWidth = hiddenStatuses.length > 0 ? 30 : 0;
@@ -57,43 +49,20 @@ export class StatusIconRow {
       + Math.max(0, itemCount - 1) * gap;
     let cursor = -totalWidth / 2;
 
-    entries.forEach(({ status, iconSize, count, width }) => {
+    entries.forEach(({ status, iconSize, width }) => {
       const centerX = cursor + width / 2;
-      const iconX = -width / 2 + iconSize / 2;
       const entry = scene.add.container(centerX, 0);
-      const iconArt = getBattleIconArt(status.iconArtId);
-      const icon = scene.textures.exists(iconArt.textureKey)
-        ? scene.add.image(iconX, 0, iconArt.textureKey).setDisplaySize(iconSize, iconSize)
-        : scene.add.text(iconX, -1, status.fallbackIcon, {
-          fontFamily: GAME_FONT_FAMILY,
-          fontSize: `${Math.round(iconSize * 0.55)}px`,
-          color: status.textColor,
-          fontStyle: 'bold',
-        }).setOrigin(0.5);
-
-      if (icon instanceof Phaser.GameObjects.Text) {
-        icon.setShadow(0, 0, status.textColor, 5, true, true);
-      }
-      entry.add(icon);
-
-      if (count) {
-        count.setPosition(-width / 2 + iconSize + 3, 1);
-        count.setShadow(0, 1, '#120d0c', 3, true, true);
-        entry.add(count);
-      }
-
-      const hitArea = scene.add.rectangle(0, 0, Math.max(28, width), Math.max(32, iconSize), 0xffffff, 0.001)
-        .setInteractive({ useHandCursor: false });
-      entry.add(hitArea);
+      const badge = new BattleStatusBadge(scene, status, iconSize);
+      entry.add(badge.container);
       this.container.add(entry);
-      hitArea.on('pointerover', () => options.onShowTooltip(
+      badge.hitArea.on('pointerover', () => options.onShowTooltip(
         options.x + centerX,
         options.y - Math.max(44, iconSize + 12),
         status.title,
         status.description,
       ));
-      hitArea.on('pointerout', options.onHideTooltip);
-      this.playTransition(scene, entry, hitArea, status.transition);
+      badge.hitArea.on('pointerout', options.onHideTooltip);
+      badge.playTransition(scene, status.transition);
       cursor += width + gap;
     });
 
@@ -115,47 +84,6 @@ export class StatusIconRow {
         hiddenStatuses.map((status) => status.title).join('\n'),
       ));
       hitArea.on('pointerout', options.onHideTooltip);
-    }
-  }
-
-  private playTransition(
-    scene: Phaser.Scene,
-    entry: Phaser.GameObjects.Container,
-    hitArea: Phaser.GameObjects.Rectangle,
-    transition: StatusIconState['transition'],
-  ): void {
-    if (transition === 'added') {
-      entry.setAlpha(0).setScale(0.74);
-      scene.tweens.add({
-        targets: entry,
-        alpha: 1,
-        scale: 1,
-        duration: 190,
-        ease: 'Back.easeOut',
-      });
-      return;
-    }
-
-    if (transition === 'stacked') {
-      scene.tweens.add({
-        targets: entry,
-        scale: 1.16,
-        duration: 110,
-        ease: 'Sine.easeOut',
-        yoyo: true,
-      });
-      return;
-    }
-
-    if (transition === 'removed') {
-      hitArea.disableInteractive();
-      scene.tweens.add({
-        targets: entry,
-        alpha: 0,
-        y: -5,
-        duration: 180,
-        ease: 'Cubic.easeIn',
-      });
     }
   }
 

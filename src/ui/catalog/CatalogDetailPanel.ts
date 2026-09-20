@@ -60,7 +60,13 @@ export class CatalogDetailPanel {
     container.add(scene.add.rectangle(previewX, previewY, 144, 126, 0x111319, 0.82).setStrokeStyle(2, border, 0.78));
     const previewKey = entry.visual.previewTextureKey ?? entry.visual.thumbnailTextureKey;
     if (previewKey && scene.textures.exists(previewKey)) {
-      container.add(scene.add.image(previewX, previewY, previewKey).setDisplaySize(134, 116));
+      if (entry.visual.accentColor !== undefined) {
+        container.add(scene.add.ellipse(previewX, previewY, 118, 88, entry.visual.accentColor, 0.16)
+          .setBlendMode(Phaser.BlendModes.ADD));
+      }
+      const image = scene.add.image(previewX, previewY, previewKey);
+      fitCatalogPreview(image, 124, 106, entry.visual.textureAngle ?? 0);
+      container.add(image);
     } else {
       const icon = scene.add.text(previewX, previewY - 2, entry.visual.fallbackIcon, {
         fontFamily: GAME_FONT_FAMILY,
@@ -82,9 +88,9 @@ export class CatalogDetailPanel {
     }).setOrigin(0.5));
     container.add(scene.add.text(22, 232, t(entry.descriptionKey), {
       fontFamily: GAME_FONT_FAMILY,
-      fontSize: '15px',
+      fontSize: '17px',
       color: options.colors.muted,
-      lineSpacing: 6,
+      lineSpacing: 7,
       wordWrap: { width: width - 44, useAdvancedWrap: true },
     }));
 
@@ -114,4 +120,17 @@ export class CatalogDetailPanel {
     }
     return container;
   }
+}
+
+function fitCatalogPreview(
+  image: Phaser.GameObjects.Image,
+  maxWidth: number,
+  maxHeight: number,
+  angle: number,
+): void {
+  const radians = Phaser.Math.DegToRad(angle);
+  const rotatedWidth = Math.abs(image.width * Math.cos(radians)) + Math.abs(image.height * Math.sin(radians));
+  const rotatedHeight = Math.abs(image.width * Math.sin(radians)) + Math.abs(image.height * Math.cos(radians));
+  const scale = Math.min(maxWidth / rotatedWidth, maxHeight / rotatedHeight);
+  image.setScale(scale).setAngle(angle);
 }

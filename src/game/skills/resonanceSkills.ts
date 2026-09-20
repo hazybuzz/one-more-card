@@ -14,7 +14,7 @@ export function canResonanceShift(cards: Card[]): boolean {
   return chooseResonanceShift(cards) !== undefined;
 }
 
-export function chooseResonanceShift(cards: Card[]): ResonanceShiftChoice | undefined {
+export function chooseResonanceShift(cards: Card[], random: () => number = Math.random): ResonanceShiftChoice | undefined {
   if (cards.length < 2) {
     return undefined;
   }
@@ -47,8 +47,8 @@ export function chooseResonanceShift(cards: Card[]): ResonanceShiftChoice | unde
       return undefined;
     }
 
-    const source = randomItem(cards);
-    const target = randomItem(cards.filter((card) => card !== source && card.suit && card.suit !== source?.suit));
+    const source = randomItem(cards, random);
+    const target = randomItem(cards.filter((card) => card !== source && card.suit && card.suit !== source?.suit), random);
     if (!source || !target?.suit) {
       return undefined;
     }
@@ -64,8 +64,8 @@ export function chooseResonanceShift(cards: Card[]): ResonanceShiftChoice | unde
 
   const majoritySuits = groups.filter(([, group]) => group.length === maxCount).map(([suit]) => suit);
   const minorityCards = groups.filter(([, group]) => group.length === minCount).flatMap(([, group]) => group);
-  const card = randomItem(minorityCards);
-  const targetSuit = randomItem(majoritySuits);
+  const card = randomItem(minorityCards, random);
+  const targetSuit = randomItem(majoritySuits, random);
   if (!card || !targetSuit || card.suit === targetSuit) {
     return undefined;
   }
@@ -73,10 +73,10 @@ export function chooseResonanceShift(cards: Card[]): ResonanceShiftChoice | unde
   return { card, targetSuit };
 }
 
-export function chooseResonanceSummonSuit(cards: Card[]): Suit | undefined {
+export function chooseResonanceSummonSuit(cards: Card[], random: () => number = Math.random): Suit | undefined {
   const suitedCards = cards.filter((card) => !isJoker(card) && card.suit);
   if (suitedCards.length === 0) {
-    return randomItem(['♠', '♥', '♦', '♣']);
+    return randomItem(['♠', '♥', '♦', '♣'], random);
   }
 
   const counts = new Map<Suit, number>();
@@ -89,10 +89,10 @@ export function chooseResonanceSummonSuit(cards: Card[]): Suit | undefined {
   });
 
   const maxCount = Math.max(...counts.values());
-  return randomItem([...counts.entries()].filter(([, count]) => count === maxCount).map(([suit]) => suit));
+  return randomItem([...counts.entries()].filter(([, count]) => count === maxCount).map(([suit]) => suit), random);
 }
 
-export function chooseResonanceSummonTarget(cards: Card[]): ResonanceSummonTarget | undefined {
+export function chooseResonanceSummonTarget(cards: Card[], random: () => number = Math.random): ResonanceSummonTarget | undefined {
   if (cards.length < 2) {
     return undefined;
   }
@@ -103,7 +103,7 @@ export function chooseResonanceSummonTarget(cards: Card[]): ResonanceSummonTarge
     return { kind: 'rank', rank: cards[0].rank };
   }
 
-  const suit = chooseResonanceSummonSuit(cards);
+  const suit = chooseResonanceSummonSuit(cards, random);
   return suit ? { kind: 'suit', suit } : undefined;
 }
 
@@ -127,6 +127,6 @@ export function drawResonanceSummonCard(cards: Card[], targetSuit: Suit): Card |
   return card;
 }
 
-function randomItem<T>(items: T[]): T | undefined {
-  return items[Math.floor(Math.random() * items.length)];
+function randomItem<T>(items: T[], random: () => number = Math.random): T | undefined {
+  return items[Math.floor(random() * items.length)];
 }

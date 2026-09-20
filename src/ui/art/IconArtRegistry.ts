@@ -8,6 +8,7 @@ export type BattleIconId =
   | 'fate-reroll'
   | 'resonance-horn'
   | 'holy-shield'
+  | 'resonance-dice'
   | 'soul-redeem'
   | 'goblin-instinct'
   | 'gambler-blessing'
@@ -18,6 +19,9 @@ export type BattleIconId =
   | 'chivalry'
   | 'red-silk-toast'
   | 'heavenly-insight'
+  | 'iaijutsu-charge'
+  | 'smoke-substitution'
+  | 'hanami-dance'
   | 'status-attack-bonus'
   | 'status-incoming-damage'
   | 'status-holy-shield'
@@ -54,6 +58,10 @@ export const ITEM_CARD_FRAME_ART = {
 } as const;
 
 const BATTLE_ICON_ART: Record<BattleIconId, BattleIconArt> = {
+  'resonance-dice': {
+    id: 'resonance-dice', textureKey: 'icon-item-resonance-dice',
+    path: '/image/icons/items/resonance-dice.svg', pixelArt: false,
+  },
   'resonance-shift': {
     id: 'resonance-shift',
     textureKey: 'icon-skill-resonance-shift',
@@ -156,6 +164,24 @@ const BATTLE_ICON_ART: Record<BattleIconId, BattleIconArt> = {
     path: '/image/icons/passives/heavenly-insight.png',
     pixelArt: true,
   },
+  'iaijutsu-charge': {
+    id: 'iaijutsu-charge',
+    textureKey: 'icon-passive-iaijutsu-charge',
+    path: '/image/icons/passives/iaijutsu-charge.png',
+    pixelArt: true,
+  },
+  'smoke-substitution': {
+    id: 'smoke-substitution',
+    textureKey: 'icon-passive-smoke-substitution',
+    path: '/image/icons/passives/smoke-substitution.png',
+    pixelArt: true,
+  },
+  'hanami-dance': {
+    id: 'hanami-dance',
+    textureKey: 'icon-passive-hanami-dance',
+    path: '/image/icons/passives/hanami-dance.png',
+    pixelArt: true,
+  },
   'status-attack-bonus': {
     id: 'status-attack-bonus',
     textureKey: 'icon-status-attack-bonus',
@@ -204,6 +230,7 @@ export function getBattleIconArtByResourceKey(resourceKey?: string): BattleIconA
     item_fate_reroll: 'fate-reroll',
     item_resonance_horn: 'resonance-horn',
     item_holy_shield: 'holy-shield',
+    item_resonance_dice: 'resonance-dice',
   };
   const iconId = resourceKey ? iconIdByResourceKey[resourceKey] : undefined;
   return iconId ? BATTLE_ICON_ART[iconId] : undefined;

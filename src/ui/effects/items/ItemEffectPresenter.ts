@@ -19,6 +19,7 @@ interface FateBeerEffectConfig extends BaseItemEffectConfig {
 }
 
 interface FateRerollEffectConfig extends BaseItemEffectConfig {
+  resonanceReroll?: boolean;
   cards: Card[];
   hand: EffectPoint;
   cardWidth: number;
@@ -135,7 +136,7 @@ export class ItemEffectPresenter {
         .setDisplaySize(92, 92)
         .setAlpha(0)
         .setScale(0.7);
-      const orbit = this.scene.add.circle(config.hand.x, config.hand.y - 8, 66, 0x6e1d2e, 0.08)
+      const orbit = this.scene.add.circle(config.hand.x, config.hand.y - 8, 66, config.resonanceReroll ? 0x8054bb : 0x6e1d2e, 0.08)
         .setStrokeStyle(3, 0xb78745, 0.78)
         .setDepth(62)
         .setBlendMode(Phaser.BlendModes.ADD);
@@ -147,6 +148,7 @@ export class ItemEffectPresenter {
       }).setDepth(63));
 
       this.scene.sound.play('resonanceEcho', { volume: 0.28, rate: 0.76 });
+      if (config.resonanceReroll) this.scene.tweens.add({ targets: icon, angle: 360, duration: 760, ease: 'Cubic.easeOut' });
       this.scene.tweens.add({ targets: shade, alpha: 0.44, duration: 260, ease: 'Sine.easeOut' });
       this.scene.tweens.add({
         targets: icon,

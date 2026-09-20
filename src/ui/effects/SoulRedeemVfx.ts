@@ -20,33 +20,26 @@ const COLORS = {
   green: '#8ef0a4',
 } as const;
 
+const SOUL_MIST_TEXTURE = 'soul-redeem-soft-mist-v1';
+
 export function playSoulRedeemVfx(scene: Phaser.Scene, options: SoulRedeemVfxOptions): void {
   const { center } = options;
+  const mistTexture = ensureSoulMistTexture(scene);
   const camera = scene.cameras.main;
-  const blocker = scene.add.rectangle(
-    camera.centerX,
-    camera.centerY,
-    camera.width,
-    camera.height,
-    COLORS.shade,
-    0,
-  ).setDepth(68).setInteractive();
-  const lightColumn = scene.add.rectangle(center.x, center.y - 52, 90, 270, COLORS.paleGold, 0)
-    .setDepth(69)
+  let finished = false;
+  const blocker = scene.add.rectangle(camera.centerX, camera.centerY, camera.width, camera.height, COLORS.shade, 0)
+    .setDepth(68).setInteractive();
+  const angel = scene.add.container(center.x, center.y + 96).setDepth(73).setAlpha(0).setScale(0.38);
+  const iconGlow = scene.add.image(0, 0, mistTexture)
+    .setDisplaySize(116, 116).setTint(COLORS.paleGold).setAlpha(0.34)
     .setBlendMode(Phaser.BlendModes.ADD);
-  const angel = scene.add.container(center.x, center.y + 12).setDepth(73).setAlpha(0).setScale(0.38);
-  const haloOuter = scene.add.circle(0, 0, 55, COLORS.gold, 0.08)
-    .setStrokeStyle(4, COLORS.paleGold, 0.82)
-    .setBlendMode(Phaser.BlendModes.ADD);
-  const haloInner = scene.add.circle(0, 0, 40, COLORS.soul, 0.1)
-    .setStrokeStyle(2, COLORS.soul, 0.76)
-    .setBlendMode(Phaser.BlendModes.ADD);
-  const runeRing = createBrokenRuneRing(scene, 48);
-  const wings = createLightWings(scene);
   const icon = scene.add.image(0, 0, options.iconTextureKey).setDisplaySize(76, 76);
-  angel.add([haloOuter, haloInner, runeRing, wings, icon]);
+  const highlight = scene.add.image(0, 0, options.iconTextureKey)
+    .setDisplaySize(80, 80).setTint(COLORS.soul).setAlpha(0.34)
+    .setBlendMode(Phaser.BlendModes.ADD);
+  angel.add([iconGlow, highlight, icon]);
 
-  const title = scene.add.text(center.x, center.y - 154, options.title, {
+  const title = scene.add.text(center.x, center.y - 170, options.title, {
     fontFamily: GAME_FONT_FAMILY,
     fontSize: '30px',
     color: '#f2cc74',
@@ -56,92 +49,95 @@ export function playSoulRedeemVfx(scene: Phaser.Scene, options: SoulRedeemVfxOpt
   }).setOrigin(0.5).setDepth(74).setAlpha(0);
   title.setShadow(0, 0, '#ffe9a8', 18, true, true);
 
+  const cleanup = (): void => {
+    if (finished) return;
+    finished = true;
+    scene.tweens.killTweensOf([blocker, angel, iconGlow, highlight, title]);
+    blocker.destroy();
+    angel.destroy(true);
+    title.destroy();
+  };
+  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
+
   scene.sound.play('resonanceEcho', { volume: 0.46, rate: 0.86 });
-  playSoulParticles(scene, center.x, center.y + 12, 12, COLORS.gold, 70);
-  scene.tweens.add({
-    targets: blocker,
-    alpha: 0.28,
-    duration: 260,
-    ease: 'Sine.easeOut',
-  });
-  scene.tweens.add({
-    targets: lightColumn,
-    alpha: 0.16,
-    scaleX: { from: 0.35, to: 1 },
-    duration: 420,
-    ease: 'Sine.easeOut',
-  });
+  playSoulParticles(scene, center.x, center.y + 42, 22, [COLORS.soul, COLORS.blue, COLORS.paleGold], 71, 'rise');
+  playRisingMist(scene, mistTexture, center.x, center.y + 70, 13, 70);
+  scene.tweens.add({ targets: blocker, alpha: 0.28, duration: 280, ease: 'Sine.easeOut' });
   scene.tweens.add({
     targets: angel,
-    y: center.y - 102,
+    y: center.y - 116,
     alpha: 1,
     scale: 1,
-    duration: 680,
+    duration: 780,
     ease: 'Cubic.easeOut',
+    onUpdate: () => {
+      if (Phaser.Math.Between(0, 3) === 0) spawnSoulMote(scene, angel.x, angel.y + 30, COLORS.soul, 72, 'rise');
+    },
     onComplete: () => {
-      playSoulParticles(scene, angel.x, angel.y, 10, COLORS.soul, 74);
-      scene.tweens.add({
-        targets: title,
-        alpha: 1,
-        y: title.y - 5,
-        duration: 240,
-        ease: 'Back.easeOut',
-      });
-      scene.tweens.add({
-        targets: angel,
-        angle: 7,
-        duration: 520,
-        yoyo: true,
-        ease: 'Sine.easeInOut',
-      });
-      scene.time.delayedCall(360, () => descendSoul(scene, options, {
-        blocker,
-        lightColumn,
-        angel,
-        title,
+      playRisingMist(scene, mistTexture, angel.x, angel.y + 15, 8, 72);
+      playSoulParticles(scene, angel.x, angel.y, 14, [COLORS.soul, COLORS.paleGold], 74, 'gather');
+      scene.tweens.add({ targets: title, alpha: 1, y: title.y - 5, duration: 240, ease: 'Back.easeOut' });
+      scene.tweens.add({ targets: angel, x: angel.x + 5, angle: 4, duration: 170, yoyo: true, repeat: 1, ease: 'Sine.easeInOut' });
+      scene.time.delayedCall(320, () => flySoulHome(scene, options, mistTexture, {
+        blocker, angel, title, cleanup,
+        isFinished: () => finished,
+        finish: () => { finished = true; },
       }));
     },
   });
-  scene.tweens.add({
-    targets: runeRing,
-    angle: 32,
-    duration: 1900,
-    ease: 'Sine.easeInOut',
-  });
+  scene.tweens.add({ targets: iconGlow, alpha: 0.58, scale: 1.18, duration: 520, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 }
 
-function descendSoul(
+function flySoulHome(
   scene: Phaser.Scene,
   options: SoulRedeemVfxOptions,
+  mistTexture: string,
   objects: {
     blocker: Phaser.GameObjects.Rectangle;
-    lightColumn: Phaser.GameObjects.Rectangle;
     angel: Phaser.GameObjects.Container;
     title: Phaser.GameObjects.Text;
+    cleanup: () => void;
+    isFinished: () => boolean;
+    finish: () => void;
   },
 ): void {
-  const { center } = options;
+  if (objects.isFinished() || !objects.angel.active) return;
+  const start = new Phaser.Math.Vector2(objects.angel.x, objects.angel.y);
+  const control = new Phaser.Math.Vector2(options.center.x + 82, options.center.y - 54);
+  const progress = { value: 0 };
+  let lastTrailAt = -Infinity;
   scene.tweens.add({
-    targets: objects.angel,
-    y: center.y,
-    scale: 0.7,
-    angle: 0,
-    duration: 460,
+    targets: progress,
+    value: 1,
+    duration: 540,
     ease: 'Cubic.easeIn',
+    onUpdate: () => {
+      const t = progress.value;
+      const inverse = 1 - t;
+      objects.angel.setPosition(
+        inverse * inverse * start.x + 2 * inverse * t * control.x + t * t * options.center.x,
+        inverse * inverse * start.y + 2 * inverse * t * control.y + t * t * options.center.y,
+      );
+      objects.angel.setScale(1 - t * 0.58).setAlpha(1 - t * 0.12);
+      if (scene.time.now - lastTrailAt >= 34) {
+        lastTrailAt = scene.time.now;
+        spawnSoulTrail(scene, mistTexture, objects.angel.x, objects.angel.y, t);
+      }
+    },
     onComplete: () => {
+      if (objects.isFinished()) return;
       options.onRevive();
       scene.sound.play('healSound', { volume: 0.58 });
-      playReviveImpact(scene, center, options.healAmount);
       objects.angel.setAlpha(0);
-      scene.time.delayedCall(90, () => {
+      playReviveBloom(scene, mistTexture, options.center, options.healAmount);
+      scene.time.delayedCall(110, () => {
         scene.tweens.add({
-          targets: [objects.blocker, objects.lightColumn, objects.title],
-          alpha: 0,
-          duration: 580,
-          ease: 'Sine.easeInOut',
+          targets: [objects.blocker, objects.title], alpha: 0, duration: 650, ease: 'Sine.easeInOut',
           onComplete: () => {
+            if (objects.isFinished()) return;
+            objects.finish();
+            scene.events.off(Phaser.Scenes.Events.SHUTDOWN, objects.cleanup);
             objects.blocker.destroy();
-            objects.lightColumn.destroy();
             objects.angel.destroy(true);
             objects.title.destroy();
             options.onComplete();
@@ -152,92 +148,74 @@ function descendSoul(
   });
 }
 
-function createBrokenRuneRing(scene: Phaser.Scene, radius: number): Phaser.GameObjects.Container {
-  const ring = scene.add.container();
-  for (let index = 0; index < 16; index += 1) {
-    if (index % 5 === 2) {
-      continue;
-    }
-    const angle = (index / 16) * Math.PI * 2;
-    const mark = scene.add.rectangle(
-      Math.cos(angle) * radius,
-      Math.sin(angle) * radius,
-      index % 4 === 0 ? 8 : 5,
-      2,
-      index % 4 === 0 ? COLORS.ivory : COLORS.gold,
-      index % 3 === 0 ? 0.92 : 0.66,
-    ).setRotation(angle + Math.PI / 2);
-    ring.add(mark);
+function ensureSoulMistTexture(scene: Phaser.Scene): string {
+  if (scene.textures.exists(SOUL_MIST_TEXTURE)) return SOUL_MIST_TEXTURE;
+  const texture = scene.textures.createCanvas(SOUL_MIST_TEXTURE, 96, 96);
+  if (!texture) return SOUL_MIST_TEXTURE;
+  const context = texture.getContext();
+  context.clearRect(0, 0, 96, 96);
+  for (const lobe of [{ x: 34, y: 52, radius: 29 }, { x: 54, y: 39, radius: 34 }, { x: 66, y: 57, radius: 25 }]) {
+    const gradient = context.createRadialGradient(lobe.x, lobe.y, 0, lobe.x, lobe.y, lobe.radius);
+    gradient.addColorStop(0, 'rgba(235,246,255,0.34)');
+    gradient.addColorStop(0.42, 'rgba(193,222,240,0.17)');
+    gradient.addColorStop(1, 'rgba(160,205,232,0)');
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 96, 96);
   }
-  return ring;
+  texture.update();
+  return SOUL_MIST_TEXTURE;
 }
 
-function createLightWings(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
-  const wings = scene.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
-  wings.lineStyle(8, COLORS.gold, 0.12);
-  drawWingPaths(wings);
-  wings.lineStyle(3, COLORS.soul, 0.58);
-  drawWingPaths(wings);
-  return wings;
+function playRisingMist(scene: Phaser.Scene, textureKey: string, x: number, y: number, count: number, depth: number): void {
+  for (let index = 0; index < count; index += 1) {
+    const puff = scene.add.image(x + Phaser.Math.Between(-42, 42), y + Phaser.Math.Between(-12, 24), textureKey)
+      .setDepth(depth).setTint(index % 4 === 0 ? COLORS.paleGold : COLORS.soul).setAlpha(0)
+      .setDisplaySize(Phaser.Math.Between(58, 94), Phaser.Math.Between(48, 80)).setBlendMode(Phaser.BlendModes.ADD);
+    scene.tweens.add({
+      targets: puff,
+      x: puff.x + Phaser.Math.Between(-32, 32), y: puff.y - Phaser.Math.Between(85, 155),
+      alpha: { from: 0, to: index % 4 === 0 ? 0.24 : 0.32 },
+      scaleX: Phaser.Math.FloatBetween(1.4, 1.9), scaleY: Phaser.Math.FloatBetween(1.2, 1.65),
+      angle: Phaser.Math.Between(-20, 20), delay: index * 34, duration: Phaser.Math.Between(880, 1320),
+      ease: 'Sine.easeOut', onComplete: () => puff.destroy(),
+    });
+    scene.time.delayedCall(index * 34 + 390, () => {
+      if (puff.active) scene.tweens.add({ targets: puff, alpha: 0, duration: 520, ease: 'Sine.easeIn' });
+    });
+  }
 }
 
-function drawWingPaths(graphics: Phaser.GameObjects.Graphics): void {
-  graphics.beginPath();
-  graphics.moveTo(-24, 4);
-  graphics.lineTo(-48, -12);
-  graphics.lineTo(-70, -4);
-  graphics.lineTo(-52, 12);
-  graphics.lineTo(-72, 22);
-  graphics.lineTo(-40, 28);
-  graphics.strokePath();
-  graphics.beginPath();
-  graphics.moveTo(24, 4);
-  graphics.lineTo(48, -12);
-  graphics.lineTo(70, -4);
-  graphics.lineTo(52, 12);
-  graphics.lineTo(72, 22);
-  graphics.lineTo(40, 28);
-  graphics.strokePath();
+function spawnSoulTrail(scene: Phaser.Scene, textureKey: string, x: number, y: number, progress: number): void {
+  const mist = scene.add.image(x, y + 8, textureKey).setDepth(71).setTint(COLORS.soul).setAlpha(0.24)
+    .setDisplaySize(50 - progress * 14, 42 - progress * 10).setBlendMode(Phaser.BlendModes.ADD);
+  scene.tweens.add({ targets: mist, alpha: 0, scale: 1.6, y: y - 12, duration: 360,
+    ease: 'Sine.easeOut', onComplete: () => mist.destroy() });
+  spawnSoulMote(scene, x + Phaser.Math.Between(-8, 8), y + Phaser.Math.Between(-5, 8),
+    Phaser.Math.Between(0, 2) === 0 ? COLORS.paleGold : COLORS.soul, 72, 'trail');
 }
 
-function playReviveImpact(scene: Phaser.Scene, center: Phaser.Math.Vector2, amount: number): void {
-  const outer = scene.add.circle(center.x, center.y, 28, COLORS.gold, 0.22)
-    .setDepth(73)
-    .setStrokeStyle(5, COLORS.ivory, 0.96)
-    .setBlendMode(Phaser.BlendModes.ADD);
-  const inner = scene.add.circle(center.x, center.y, 15, COLORS.soul, 0.48)
-    .setDepth(74)
-    .setBlendMode(Phaser.BlendModes.ADD);
+function playReviveBloom(scene: Phaser.Scene, textureKey: string, center: Phaser.Math.Vector2, amount: number): void {
+  for (let index = 0; index < 11; index += 1) {
+    const angle = index * Math.PI * 2 / 11;
+    const mist = scene.add.image(center.x, center.y, textureKey).setDepth(72)
+      .setTint(index % 3 === 0 ? COLORS.paleGold : COLORS.soul).setAlpha(0.34)
+      .setDisplaySize(64, 58).setBlendMode(Phaser.BlendModes.ADD);
+    scene.tweens.add({
+      targets: mist,
+      x: center.x + Math.cos(angle) * Phaser.Math.Between(48, 92),
+      y: center.y + Math.sin(angle) * Phaser.Math.Between(38, 78) - 18,
+      alpha: 0, scale: Phaser.Math.FloatBetween(1.45, 2), duration: Phaser.Math.Between(560, 820),
+      ease: 'Cubic.easeOut', onComplete: () => mist.destroy(),
+    });
+  }
+  playSoulParticles(scene, center.x, center.y, 34, [COLORS.ivory, COLORS.paleGold, COLORS.soul], 74, 'burst');
   const text = scene.add.text(center.x, center.y - 82, `HP +${amount}`, {
-    fontFamily: GAME_FONT_FAMILY,
-    fontSize: '30px',
-    color: COLORS.green,
-    fontStyle: 'bold',
-    stroke: '#102014',
-    strokeThickness: 5,
+    fontFamily: GAME_FONT_FAMILY, fontSize: '30px', color: COLORS.green, fontStyle: 'bold',
+    stroke: '#102014', strokeThickness: 5,
   }).setOrigin(0.5).setDepth(75);
   text.setShadow(0, 0, COLORS.green, 14, true, true);
-  playSoulParticles(scene, center.x, center.y, 18, COLORS.paleGold, 74);
-  scene.tweens.add({
-    targets: [outer, inner],
-    scale: 3.2,
-    alpha: 0,
-    duration: 680,
-    ease: 'Cubic.easeOut',
-    onComplete: () => {
-      outer.destroy();
-      inner.destroy();
-    },
-  });
-  scene.tweens.add({
-    targets: text,
-    y: text.y - 42,
-    alpha: 0,
-    delay: 160,
-    duration: 760,
-    ease: 'Cubic.easeOut',
-    onComplete: () => text.destroy(),
-  });
+  scene.tweens.add({ targets: text, y: text.y - 42, alpha: 0, delay: 160, duration: 760,
+    ease: 'Cubic.easeOut', onComplete: () => text.destroy() });
 }
 
 function playSoulParticles(
@@ -245,27 +223,38 @@ function playSoulParticles(
   x: number,
   y: number,
   count: number,
-  color: number,
+  colors: readonly number[],
   depth: number,
+  motion: 'rise' | 'gather' | 'burst',
 ): void {
   for (let index = 0; index < count; index += 1) {
-    const spark = scene.add.rectangle(
-      x + Phaser.Math.Between(-28, 28),
-      y + Phaser.Math.Between(-18, 18),
-      Phaser.Math.Between(3, 6),
-      Phaser.Math.Between(3, 6),
-      color,
-      0.9,
-    ).setDepth(depth).setAngle(45);
-    scene.tweens.add({
-      targets: spark,
-      x: spark.x + Phaser.Math.Between(-58, 58),
-      y: spark.y - Phaser.Math.Between(38, 92),
-      scale: 0.25,
-      alpha: 0,
-      duration: Phaser.Math.Between(520, 820),
-      ease: 'Sine.easeOut',
-      onComplete: () => spark.destroy(),
-    });
+    spawnSoulMote(scene, x, y, colors[index % colors.length] ?? COLORS.soul, depth, motion);
   }
+}
+
+function spawnSoulMote(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  color: number,
+  depth: number,
+  motion: 'rise' | 'gather' | 'burst' | 'trail',
+): void {
+  const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+  const startRadius = motion === 'gather' ? Phaser.Math.Between(48, 88) : Phaser.Math.Between(4, 26);
+  const startX = x + Math.cos(angle) * startRadius;
+  const startY = y + Math.sin(angle) * startRadius;
+  const mote = scene.add.rectangle(startX, startY, Phaser.Math.Between(2, 5), Phaser.Math.Between(3, 7), color, 0.92)
+    .setDepth(depth).setRotation(angle).setBlendMode(Phaser.BlendModes.ADD);
+  const distance = motion === 'burst' ? Phaser.Math.Between(54, 118) : Phaser.Math.Between(28, 78);
+  const targetX = motion === 'gather' ? x : startX + Math.cos(angle) * distance;
+  const targetY = motion === 'gather' ? y
+    : startY + Math.sin(angle) * (motion === 'rise' ? 22 : distance) - (motion === 'rise' ? 82 : 12);
+  scene.tweens.add({
+    targets: mote, x: targetX, y: targetY, alpha: 0, scale: 0.2,
+    delay: motion === 'trail' ? 0 : Phaser.Math.Between(0, 180),
+    duration: motion === 'gather' ? 520 : Phaser.Math.Between(480, 820),
+    ease: motion === 'gather' ? 'Cubic.easeIn' : 'Cubic.easeOut',
+    onComplete: () => mote.destroy(),
+  });
 }

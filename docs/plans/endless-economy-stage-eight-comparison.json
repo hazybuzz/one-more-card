@@ -1,0 +1,556 @@
+{
+  "samplesPerPolicy": 500,
+  "maxRounds": 200,
+  "methodology": "Fixed seeds 1..N; player-visible information only; automatic policies are not human playtest data.",
+  "profiles": {
+    "baseline": {
+      "config": {
+        "rulesVersion": "endless-v1",
+        "entryCost": 100,
+        "playerHp": 12,
+        "coinsPerDefeat": 25,
+        "defeatBonus": 10,
+        "coinsPerResonancePoint": 2,
+        "resonanceBonusCapPerDefeat": 10,
+        "defeatsPerStage": 5,
+        "defeatsPerAttackIncrease": 10,
+        "priceIncreasePerStage": 5,
+        "purchasesPerVisit": 2,
+        "inventoryCapacity": 4,
+        "baseItemPrices": {
+          "heal_potion": 20,
+          "cooling_charm": 15,
+          "resonance_dust": 35,
+          "holy_shield": 55
+        },
+        "backgroundTextureKey": "endless-hell-tavern-background",
+        "backgroundShadeOpacity": 0.5,
+        "backgroundPath": "/image/env-assets/endless/hell-tavern-background-v2.png"
+      },
+      "results": {
+        "none": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 5,
+            "max": 9,
+            "mean": 2.144
+          },
+          "roundsMedian": 11,
+          "spentMean": 0,
+          "netMean": -3.52,
+          "netMedian": -10,
+          "netP90": 125,
+          "profitableRate": 0.398,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0,
+          "maxShieldStreak": 0,
+          "roundsAfterRedeemMean": 2.756,
+          "items": {
+            "heal_potion": {
+              "purchased": 0,
+              "used": 0
+            },
+            "cooling_charm": {
+              "purchased": 0,
+              "used": 0
+            },
+            "resonance_dust": {
+              "purchased": 0,
+              "used": 0
+            },
+            "holy_shield": {
+              "purchased": 0,
+              "used": 0
+            }
+          }
+        },
+        "adaptive": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 6,
+            "max": 11,
+            "mean": 2.518
+          },
+          "roundsMedian": 11,
+          "spentMean": 51.83,
+          "netMean": -38.52,
+          "netMedian": -40,
+          "netP90": 50,
+          "profitableRate": 0.254,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0.02953171143299114,
+          "maxShieldStreak": 4,
+          "roundsAfterRedeemMean": 3.338,
+          "items": {
+            "heal_potion": {
+              "purchased": 487,
+              "used": 487
+            },
+            "cooling_charm": {
+              "purchased": 196,
+              "used": 186
+            },
+            "resonance_dust": {
+              "purchased": 176,
+              "used": 176
+            },
+            "holy_shield": {
+              "purchased": 105,
+              "used": 105
+            }
+          }
+        },
+        "shield": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 6,
+            "max": 14,
+            "mean": 2.756
+          },
+          "roundsMedian": 12,
+          "spentMean": 53.43,
+          "netMean": -29.41,
+          "netMedian": -40,
+          "netP90": 70,
+          "profitableRate": 0.294,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0.08095991561181434,
+          "maxShieldStreak": 4,
+          "roundsAfterRedeemMean": 3.518,
+          "items": {
+            "heal_potion": {
+              "purchased": 434,
+              "used": 434
+            },
+            "cooling_charm": {
+              "purchased": 0,
+              "used": 0
+            },
+            "resonance_dust": {
+              "purchased": 0,
+              "used": 0
+            },
+            "holy_shield": {
+              "purchased": 307,
+              "used": 307
+            }
+          }
+        },
+        "offense": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 5,
+            "max": 10,
+            "mean": 1.968
+          },
+          "roundsMedian": 10,
+          "spentMean": 35.8,
+          "netMean": -47.24,
+          "netMedian": -60,
+          "netP90": 20,
+          "profitableRate": 0.148,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0,
+          "maxShieldStreak": 0,
+          "roundsAfterRedeemMean": 2.588,
+          "items": {
+            "heal_potion": {
+              "purchased": 0,
+              "used": 0
+            },
+            "cooling_charm": {
+              "purchased": 517,
+              "used": 473
+            },
+            "resonance_dust": {
+              "purchased": 273,
+              "used": 273
+            },
+            "holy_shield": {
+              "purchased": 0,
+              "used": 0
+            }
+          }
+        }
+      }
+    },
+    "selected": {
+      "config": {
+        "rulesVersion": "endless-v1",
+        "entryCost": 100,
+        "playerHp": 12,
+        "coinsPerDefeat": 25,
+        "defeatBonus": 10,
+        "coinsPerResonancePoint": 2,
+        "resonanceBonusCapPerDefeat": 10,
+        "defeatsPerStage": 5,
+        "defeatsPerAttackIncrease": 10,
+        "priceIncreasePerStage": 5,
+        "purchasesPerVisit": 2,
+        "inventoryCapacity": 4,
+        "baseItemPrices": {
+          "heal_potion": 20,
+          "cooling_charm": 15,
+          "resonance_dust": 30,
+          "holy_shield": 45
+        },
+        "backgroundTextureKey": "endless-hell-tavern-background",
+        "backgroundShadeOpacity": 0.5,
+        "backgroundPath": "/image/env-assets/endless/hell-tavern-background-v2.png"
+      },
+      "results": {
+        "none": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 5,
+            "max": 9,
+            "mean": 2.144
+          },
+          "roundsMedian": 11,
+          "spentMean": 0,
+          "netMean": -3.52,
+          "netMedian": -10,
+          "netP90": 125,
+          "profitableRate": 0.398,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0,
+          "maxShieldStreak": 0,
+          "roundsAfterRedeemMean": 2.756,
+          "items": {
+            "heal_potion": {
+              "purchased": 0,
+              "used": 0
+            },
+            "cooling_charm": {
+              "purchased": 0,
+              "used": 0
+            },
+            "resonance_dust": {
+              "purchased": 0,
+              "used": 0
+            },
+            "holy_shield": {
+              "purchased": 0,
+              "used": 0
+            }
+          }
+        },
+        "adaptive": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 6,
+            "max": 19,
+            "mean": 2.628
+          },
+          "roundsMedian": 12,
+          "spentMean": 54.67,
+          "netMean": -36.41,
+          "netMedian": -35,
+          "netP90": 50,
+          "profitableRate": 0.236,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0.054478926683832495,
+          "maxShieldStreak": 4,
+          "roundsAfterRedeemMean": 3.416,
+          "items": {
+            "heal_potion": {
+              "purchased": 482,
+              "used": 482
+            },
+            "cooling_charm": {
+              "purchased": 109,
+              "used": 104
+            },
+            "resonance_dust": {
+              "purchased": 181,
+              "used": 181
+            },
+            "holy_shield": {
+              "purchased": 201,
+              "used": 201
+            }
+          }
+        },
+        "shield": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 7,
+            "max": 14,
+            "mean": 2.808
+          },
+          "roundsMedian": 12,
+          "spentMean": 55.04,
+          "netMean": -28.68,
+          "netMedian": -30,
+          "netP90": 55,
+          "profitableRate": 0.306,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0.10958549222797928,
+          "maxShieldStreak": 6,
+          "roundsAfterRedeemMean": 3.436,
+          "items": {
+            "heal_potion": {
+              "purchased": 359,
+              "used": 359
+            },
+            "cooling_charm": {
+              "purchased": 0,
+              "used": 0
+            },
+            "resonance_dust": {
+              "purchased": 0,
+              "used": 0
+            },
+            "holy_shield": {
+              "purchased": 423,
+              "used": 423
+            }
+          }
+        },
+        "offense": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 5,
+            "max": 10,
+            "mean": 2.012
+          },
+          "roundsMedian": 10,
+          "spentMean": 35.37,
+          "netMean": -44.83,
+          "netMedian": -55,
+          "netP90": 25,
+          "profitableRate": 0.172,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0,
+          "maxShieldStreak": 0,
+          "roundsAfterRedeemMean": 2.656,
+          "items": {
+            "heal_potion": {
+              "purchased": 0,
+              "used": 0
+            },
+            "cooling_charm": {
+              "purchased": 495,
+              "used": 455
+            },
+            "resonance_dust": {
+              "purchased": 320,
+              "used": 320
+            },
+            "holy_shield": {
+              "purchased": 0,
+              "used": 0
+            }
+          }
+        }
+      }
+    },
+    "generous": {
+      "config": {
+        "rulesVersion": "endless-v1",
+        "entryCost": 100,
+        "playerHp": 12,
+        "coinsPerDefeat": 25,
+        "defeatBonus": 10,
+        "coinsPerResonancePoint": 2,
+        "resonanceBonusCapPerDefeat": 10,
+        "defeatsPerStage": 5,
+        "defeatsPerAttackIncrease": 10,
+        "priceIncreasePerStage": 5,
+        "purchasesPerVisit": 2,
+        "inventoryCapacity": 4,
+        "baseItemPrices": {
+          "heal_potion": 15,
+          "cooling_charm": 10,
+          "resonance_dust": 25,
+          "holy_shield": 40
+        },
+        "backgroundTextureKey": "endless-hell-tavern-background",
+        "backgroundShadeOpacity": 0.5,
+        "backgroundPath": "/image/env-assets/endless/hell-tavern-background-v2.png"
+      },
+      "results": {
+        "none": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 5,
+            "max": 9,
+            "mean": 2.144
+          },
+          "roundsMedian": 11,
+          "spentMean": 0,
+          "netMean": -3.52,
+          "netMedian": -10,
+          "netP90": 125,
+          "profitableRate": 0.398,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0,
+          "maxShieldStreak": 0,
+          "roundsAfterRedeemMean": 2.756,
+          "items": {
+            "heal_potion": {
+              "purchased": 0,
+              "used": 0
+            },
+            "cooling_charm": {
+              "purchased": 0,
+              "used": 0
+            },
+            "resonance_dust": {
+              "purchased": 0,
+              "used": 0
+            },
+            "holy_shield": {
+              "purchased": 0,
+              "used": 0
+            }
+          }
+        },
+        "adaptive": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 6,
+            "max": 11,
+            "mean": 2.482
+          },
+          "roundsMedian": 11,
+          "spentMean": 52.86,
+          "netMean": -41.17,
+          "netMedian": -40,
+          "netP90": 45,
+          "profitableRate": 0.224,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0.05115161791719655,
+          "maxShieldStreak": 4,
+          "roundsAfterRedeemMean": 3.202,
+          "items": {
+            "heal_potion": {
+              "purchased": 420,
+              "used": 420
+            },
+            "cooling_charm": {
+              "purchased": 310,
+              "used": 292
+            },
+            "resonance_dust": {
+              "purchased": 332,
+              "used": 331
+            },
+            "holy_shield": {
+              "purchased": 181,
+              "used": 181
+            }
+          }
+        },
+        "shield": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 7,
+            "max": 15,
+            "mean": 2.956
+          },
+          "roundsMedian": 12,
+          "spentMean": 56.07,
+          "netMean": -23.05,
+          "netMedian": -25,
+          "netP90": 85,
+          "profitableRate": 0.324,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0.1153130812151271,
+          "maxShieldStreak": 10,
+          "roundsAfterRedeemMean": 3.784,
+          "items": {
+            "heal_potion": {
+              "purchased": 502,
+              "used": 502
+            },
+            "cooling_charm": {
+              "purchased": 0,
+              "used": 0
+            },
+            "resonance_dust": {
+              "purchased": 0,
+              "used": 0
+            },
+            "holy_shield": {
+              "purchased": 467,
+              "used": 465
+            }
+          }
+        },
+        "offense": {
+          "samples": 500,
+          "kills": {
+            "p10": 0,
+            "median": 2,
+            "p90": 5,
+            "max": 10,
+            "mean": 2.132
+          },
+          "roundsMedian": 10,
+          "spentMean": 38.87,
+          "netMean": -42.93,
+          "netMedian": -35,
+          "netP90": 20,
+          "profitableRate": 0.202,
+          "firstShopFailureRate": 0.288,
+          "cappedRuns": 0,
+          "shieldCoverage": 0,
+          "maxShieldStreak": 0,
+          "roundsAfterRedeemMean": 2.558,
+          "items": {
+            "heal_potion": {
+              "purchased": 0,
+              "used": 0
+            },
+            "cooling_charm": {
+              "purchased": 323,
+              "used": 303
+            },
+            "resonance_dust": {
+              "purchased": 618,
+              "used": 618
+            },
+            "holy_shield": {
+              "purchased": 0,
+              "used": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

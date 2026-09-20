@@ -1,0 +1,10 @@
+Generated with the built-in image_gen tool using preview-northern-master.png as the edit target.
+
++Use case: precise-object-edit
+Asset type: 16:9 battle background for a dark fantasy card game
+Input image: the supplied Northern Longhouse background is the edit target and strict composition reference.
+Primary request: redraw the same image as a much sharper, higher-detail dark pixel-art background. Increase pixel density and fine pixel craftsmanship so it remains crisp when displayed at 1280×720.
+Preserve exactly: the symmetrical front-facing longhouse composition; central stone fireplace and orange fire; central wooden card table with fur pelt and blue rune medallion; central wheel ornament above the fireplace; the same two tall windows, moon in the left window, snowy mountains; the same shields, braziers, benches, barrels, roof beams, floor, rugs, and all object positions, proportions, camera angle, framing, and negative space.
+Style/medium: refined dark fantasy pixel art, crisp deliberate pixel clusters, high-resolution pixel detailing, clean readable silhouettes, detailed charred wood grain, stone blocks, iron rims, fur fibers, rune carvings, firelight and cold moonlight. Dark but readable.
+Color and lighting: retain the original near-black and charcoal wooden interior, restrained cold blue moonlight and runes, warm orange fireplace and brazier highlights. Improve local contrast and material separation without making the scene brighter overall.
+Constraints: change only rendering fidelity and clarity; preserve every scene element and the full 16:9 composition; no characters, cards, text, UI, logos, watermark, blur, painterly brushwork, smooth 3D rendering, added objects, removed objects, rearranged objects, cropped edges, or altered perspective.

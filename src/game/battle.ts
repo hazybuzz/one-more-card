@@ -1,15 +1,26 @@
+import { EndlessRandom } from './endless/EndlessRandom';
+import { rerollResonancePoint } from './resonanceReroll';
+import type { EndlessBattleSnapshot } from './endless/EndlessSnapshot';
+import type { EndlessEndReason } from './endless/EndlessSettlement';
+import type { ItemId } from './types/item';
+import type { EndlessPurchaseResult } from './endless/EndlessShop';
+import { EndlessLedger } from './endless/EndlessLedger';
+import { ENDLESS_CONFIG } from './endless/EndlessConfig';
+import { EndlessRoster } from './endless/EndlessRoster';
 import { Card, RANKS, SUITS, cardFromCode, formatCard, isJoker } from './card';
 import type { BattleState } from './core/BattleState';
 import { getLevelById } from './data/levelRegistry';
 import { getStakeDifficulty } from './data/stakeDifficulties';
 import { enemyName, t } from './i18n';
 import { Deck } from './deck';
-import { EnemyState, createEnemiesForLevel, decideInvite } from './enemy';
+import { getNpcBasePassiveThreshold } from './data/npcOrigins';
+import { EnemyState, createEnemyState, createEnemyInstancePrefix, createEnemiesForLevel, decideInvite } from './enemy';
 import { EnemyType } from './enemy';
 import { ResonanceKind, ScoreResult, compareScoreResults, scoreHand } from './scoring';
 import { chooseResonanceShift, chooseResonanceSummonTarget, isResonanceSummonMatch } from './skills/resonanceSkills';
 import type { BattlePresentationEvent } from './engine/BattleEvents';
 import type { BattleMechanicId, FixedRoundConfig, FixedRoundEnemyConfig, LevelConfig } from './types/level';
+import type { SkillId } from './types/skill';
 import type { EntryStakeMultiplier, StakeDifficultyConfig, TableThemeConfig } from './types/tableTheme';
 
 export type BattlePhase = 'choice' | 'enemy-turn' | 'player-turn' | 'round-result' | 'battle-result';
@@ -47,15 +58,18 @@ export interface DamageEvent {
   type: 'damage' | 'clash';
   attacker?: 'player' | 'enemy';
   enemyId: EnemyType;
+  enemyInstanceId?: string;
   amount: number;
   resonance?: ResonanceKind;
   hpAfter?: number;
   evaded?: boolean;
   shielded?: boolean;
   originalAmount?: number;
+  iaijutsuBonus?: number;
   killRewardHeal?: number;
   guard?: {
     protectorEnemyId: EnemyType;
+    protectorEnemyInstanceId?: string;
     protectorEnemyIndex: number;
     protectorHpAfter: number;
     preventedDamage: number;
@@ -71,6 +85,13 @@ export interface SkillResult {
 }
 
 export interface BattleInitOptions {
+  mode?: 'story' | 'formal' | 'endless';
+  enemyIds?: EnemyType[];
+  runId?: string;
+  endlessSeed?: number;
+  endlessSnapshot?: EndlessBattleSnapshot;
+  /** Supplied by the paid reservation; absent on legacy runs. */
+  startingSupplyCoins?: number;
   levelId?: string;
   levelConfig?: LevelConfig;
   tableThemeConfig?: TableThemeConfig;
@@ -78,6 +99,14 @@ export interface BattleInitOptions {
 }
 
 export class Battle {
+  readonly mode: 'story' | 'formal' | 'endless';
+  readonly endlessRoster?: EndlessRoster;
+  readonly endlessLedger?: EndlessLedger;
+  private nextLogicAction = 0;
+  private currentLogicActionId?: string;
+  private enemyDamageActions = new Map<string, string>();
+  private readonly instancePrefix: string;
+  private nextEnemyInstance = 0;
   readonly player: PlayerState;
   readonly enemies: EnemyState[];
   readonly log: string[];
@@ -88,6 +117,7 @@ export class Battle {
 
   phase: BattlePhase;
   battleOutcome: BattleOutcome;
+  endlessEndReason?: EndlessEndReason;
   currentEnemyIndex: number;
   round: number;
   roundRevealed: boolean;
@@ -98,14 +128,23 @@ export class Battle {
   passiveEffectEvents: BattlePresentationEvent[];
 
   private deck: Deck;
+  private endlessRandom?: EndlessRandom;
+  pendingItemReveal = false;
+  private transactionDepth = 0;
+  private persistence?: { before: () => void; commit: (snapshot: EndlessBattleSnapshot) => void; onError?: (error: unknown) => void };
 
   constructor(options: BattleInitOptions = {}) {
-    this.deck = new Deck();
+    if (options.mode === 'endless') this.endlessRandom = new EndlessRandom(options.endlessSnapshot?.randomState ?? options.endlessSeed ?? 1);
+    this.deck = new Deck(this.random, options.endlessSnapshot?.deck);
     this.levelConfig = options.levelConfig ?? (options.levelId ? getLevelById(options.levelId) : undefined);
     this.tableThemeConfig = options.tableThemeConfig;
-    this.stakeMultiplier = options.tableThemeConfig ? options.stakeMultiplier : undefined;
+    this.mode = options.mode ?? (this.levelConfig ? 'story' : 'formal');
+    this.instancePrefix = options.endlessSnapshot?.runId ?? options.runId ?? createEnemyInstancePrefix();
+    if (this.mode === 'endless') this.endlessLedger = new EndlessLedger(options.startingSupplyCoins ?? 0);
+    if (this.mode === 'endless') this.endlessRoster = new EndlessRoster(options.endlessSeed ?? Math.floor(Math.random() * 0x100000000));
+    this.stakeMultiplier = this.mode === 'endless' ? 3 : options.tableThemeConfig ? options.stakeMultiplier : undefined;
     this.stakeDifficulty = this.stakeMultiplier ? getStakeDifficulty(this.stakeMultiplier) : undefined;
-    const playerHp = this.levelConfig?.playerHp ?? this.tableThemeConfig?.playerHp ?? 12;
+    const playerHp = this.mode === 'endless' ? ENDLESS_CONFIG.playerHp : this.levelConfig?.playerHp ?? this.tableThemeConfig?.playerHp ?? 12;
     this.player = {
       hp: playerHp,
       maxHp: playerHp,
@@ -125,7 +164,17 @@ export class Battle {
       this.levelConfig,
       this.tableThemeConfig,
       this.stakeDifficulty?.enemyHpModifier ?? 0,
+      this.instancePrefix,
     );
+    if (this.mode === 'endless') {
+      const roster = options.enemyIds ?? [0, 1, 2].map((seat) => this.endlessRoster!.draw(seat));
+      if (options.enemyIds) roster.forEach((id, seat) => this.endlessRoster!.rememberInitialOccupant(seat, id));
+      this.enemies = roster.map((id, index) => createEnemyState(id, {
+        instanceId: `${this.instancePrefix}:${index + 1}`, seatIndex: index,
+        hpModifier: 1,
+      }));
+    }
+    this.nextEnemyInstance = this.enemies.length;
     this.log = [];
     this.phase = 'choice';
     this.battleOutcome = undefined;
@@ -137,11 +186,86 @@ export class Battle {
     this.results = [];
     this.damageEvents = [];
     this.passiveEffectEvents = [];
-    this.startRound();
+    if (options.endlessSnapshot) this.restoreEndlessSnapshot(options.endlessSnapshot);
+    else if (this.endlessLedger && this.endlessLedger.startingSupplyCoins > 0) this.endlessLedger.shop.openStartingShop();
+    else this.startRound();
+  }
+
+  private random = (): number => this.endlessRandom?.next() ?? Math.random();
+
+  exportEndlessSnapshot(): EndlessBattleSnapshot {
+    if (!this.endlessRoster || !this.endlessLedger || !this.endlessRandom) throw new Error('Not an endless battle');
+    return JSON.parse(JSON.stringify({ version: 1, runId: this.instancePrefix, randomState: this.endlessRandom.state,
+      nextEnemyInstance: this.nextEnemyInstance, nextLogicAction: this.nextLogicAction,
+      enemyDamageActions: [...this.enemyDamageActions], roster: this.endlessRoster.getState(), ledger: this.endlessLedger.getSaveState(),
+      player: this.player, enemies: this.enemies, deck: this.deck.getState(), log: this.log,
+      phase: this.phase, battleOutcome: this.battleOutcome, endlessEndReason: this.endlessEndReason,
+      currentEnemyIndex: this.currentEnemyIndex, round: this.round, roundRevealed: this.roundRevealed,
+      pendingSoulRedeem: this.pendingSoulRedeem, pendingEnemySoulRedeem: this.pendingEnemySoulRedeem,
+      pendingItemReveal: this.pendingItemReveal, results: this.results,
+    }));
+  }
+
+  private restoreEndlessSnapshot(saved: EndlessBattleSnapshot): void {
+    const state: EndlessBattleSnapshot = JSON.parse(JSON.stringify(saved));
+    this.endlessRandom!.state = state.randomState;
+    this.nextEnemyInstance = state.nextEnemyInstance; this.nextLogicAction = state.nextLogicAction;
+    this.enemyDamageActions = new Map(state.enemyDamageActions);
+    this.endlessRoster!.restore(state.roster); this.endlessLedger!.restore(state.ledger);
+    Object.assign(this.player, state.player); this.enemies.splice(0, this.enemies.length, ...state.enemies);
+    this.deck = new Deck(this.random, state.deck); this.log.splice(0, this.log.length, ...state.log);
+    this.phase = state.phase; this.battleOutcome = state.battleOutcome; this.endlessEndReason = state.endlessEndReason;
+    this.currentEnemyIndex = state.currentEnemyIndex; this.round = state.round; this.roundRevealed = state.roundRevealed;
+    this.pendingSoulRedeem = state.pendingSoulRedeem; this.pendingEnemySoulRedeem = state.pendingEnemySoulRedeem;
+    this.pendingItemReveal = state.pendingItemReveal;
+    this.results = state.results.map((result) => ({ ...result, enemy: this.enemies.find((enemy) => enemy.instanceId === result.enemy.instanceId) ?? result.enemy }));
+    this.clearDamageEvents(); this.passiveEffectEvents = [];
+  }
+
+  configureEndlessPersistence(persistence: { before: () => void; commit: (snapshot: EndlessBattleSnapshot) => void; onError?: (error: unknown) => void }): void {
+    if (this.mode !== 'endless' || this.persistence) return;
+    this.persistence = persistence;
+    // Nested public calls form a single synchronous logic transaction.
+    const methods = ['execute', 'chooseViewHand', 'chooseFate', 'inviteCurrentEnemy', 'compareCurrentEnemy', 'playerDraw',
+      'playerStand', 'nextRound', 'revealByItem', 'useResonanceShift', 'useResonanceSummon', 'resolveSoulRedeem',
+      'resolveEnemySoulRedeem', 'rerollPlayerResonance', 'openEndlessShop', 'buyEndlessItem', 'finishEndlessShopVisit', 'endEndlessRun'];
+    const self = this as unknown as Record<string, unknown>;
+    for (const name of methods) {
+      const original = self[name];
+      if (typeof original === 'function') self[name] = (...args: unknown[]) => {
+        try { return this.endlessTransaction(() => original.apply(this, args)); }
+        catch (error) {
+          if (!this.persistence?.onError) throw error;
+          if (name === 'buyEndlessItem') return { bought: false, reason: 'closed' };
+          if (name.startsWith('useResonance')) return { used: false, success: false, message: t('endless.save.storage-unavailable') };
+          return false;
+        }
+      };
+    }
+  }
+
+  endlessTransaction<T>(operation: () => T): T {
+    if (!this.persistence || this.transactionDepth > 0) return operation();
+    try { this.persistence.before(); }
+    catch (error) { this.persistence.onError?.(error); throw error; }
+    const before = this.exportEndlessSnapshot();
+    this.transactionDepth += 1;
+    try {
+      const result = operation();
+      const after = this.exportEndlessSnapshot();
+      if (JSON.stringify(after) !== JSON.stringify(before)) this.persistence.commit(after);
+      return result;
+    } catch (error) {
+      this.restoreEndlessSnapshot(before);
+      const engine = this as unknown as { clearPendingPresentationEvents?: () => void };
+      engine.clearPendingPresentationEvents?.();
+      this.persistence.onError?.(error);
+      throw error;
+    } finally { this.transactionDepth -= 1; }
   }
 
   chooseViewHand(): void {
-    if (this.phase !== 'choice') {
+    if (this.phase !== 'choice' || this.round === 0) {
       return;
     }
 
@@ -154,7 +278,7 @@ export class Battle {
   }
 
   chooseFate(): void {
-    if (this.phase !== 'choice') {
+    if (this.phase !== 'choice' || this.round === 0) {
       return;
     }
 
@@ -191,7 +315,7 @@ export class Battle {
         accepts: fixedEnemy.scriptedInviteResult === 'accept',
         reason: fixedEnemy.scriptedInviteReasonKey ? t(fixedEnemy.scriptedInviteReasonKey) : t('enemy.ai.goblin.mid'),
       }
-      : decideInvite(enemy, this.playerScore().point, this.enemyPassiveHpThreshold(enemy.id));
+      : decideInvite(enemy, this.playerScore().point, this.enemyPassiveHpThreshold(enemy.id), this.random);
     enemy.invited = true;
     enemy.invitedDrawCount = drawCount;
     enemy.acceptedInvite = decision.accepts;
@@ -231,6 +355,7 @@ export class Battle {
 
     if (this.player.hp <= 0) {
       this.battleOutcome = 'defeat';
+      if (this.mode === 'endless') this.endlessEndReason = 'defeat';
       this.phase = 'battle-result';
       this.logEvent(t('log.playerHpZero'));
       return;
@@ -266,7 +391,7 @@ export class Battle {
 
   useResonanceShift(): SkillResult {
     this.clearDamageEvents();
-    if (!this.hasMechanic('skills')) {
+    if (!this.hasMechanic('skills') || !this.isSkillAvailable('resonance_shift')) {
       return { used: false, success: false, message: t('skill.invalid.playerTurnOnly') };
     }
 
@@ -292,7 +417,7 @@ export class Battle {
       return { used: false, success: false, message: t('skill.invalid.notEnoughSuitedCards') };
     }
 
-    const conversion = chooseResonanceShift(candidates);
+    const conversion = chooseResonanceShift(candidates, this.random);
     if (!conversion) {
       this.logEvent(t('log.shiftNoNeed'));
       return { used: false, success: false, message: t('skill.invalid.noShiftPath') };
@@ -311,7 +436,7 @@ export class Battle {
 
   useResonanceSummon(): SkillResult {
     this.clearDamageEvents();
-    if (!this.hasMechanic('skills')) {
+    if (!this.hasMechanic('skills') || !this.isSkillAvailable('resonance_summon')) {
       return { used: false, success: false, message: t('skill.invalid.playerTurnOnly') };
     }
 
@@ -333,7 +458,7 @@ export class Battle {
       return { used: false, success: false, message: t('skill.invalid.noResonance') };
     }
 
-    const summonTarget = chooseResonanceSummonTarget(this.player.hand);
+    const summonTarget = chooseResonanceSummonTarget(this.player.hand, this.random);
     if (!summonTarget) {
       this.logEvent(t('log.summonNoTarget'));
       return { used: false, success: false, message: t('skill.invalid.noSummonTarget') };
@@ -372,15 +497,22 @@ export class Battle {
   }
 
   nextRound(): void {
-    this.clearDamageEvents();
-    if (this.phase !== 'round-result') {
+    if (this.phase !== 'round-result' || this.pendingSoulRedeem || this.pendingEnemySoulRedeem) {
       return;
     }
 
+    if (this.player.hp <= 0) {
+      this.updateBattleOutcome();
+      return;
+    }
+    if (this.openEndlessShop()) return;
+    this.clearDamageEvents();
     this.startRound();
   }
 
   revealByItem(): void {
+    if (this.round === 0) return;
+    this.pendingItemReveal = false;
     this.clearDamageEvents();
     this.revealRound();
   }
@@ -393,8 +525,41 @@ export class Battle {
     return this.enemies.filter((enemy) => !enemy.defeated);
   }
 
+  endEndlessRun(): boolean {
+    if (this.mode !== 'endless' || this.battleOutcome || this.pendingSoulRedeem || this.pendingEnemySoulRedeem
+      || this.player.hp <= 0 || !['choice', 'enemy-turn', 'player-turn', 'round-result'].includes(this.phase)) return false;
+    this.endlessEndReason = 'exit';
+    this.battleOutcome = 'defeat';
+    this.phase = 'battle-result';
+    return true;
+  }
+
+  openEndlessShop(): boolean {
+    if (this.endlessLedger?.shop.isOpeningVisit) return this.round === 0 && this.phase === 'choice' && !this.battleOutcome;
+    if (!this.endlessLedger || this.phase !== 'round-result' || this.battleOutcome
+      || this.player.hp <= 0 || this.pendingSoulRedeem || this.pendingEnemySoulRedeem) return false;
+    return this.endlessLedger.shop.open(this.endlessLedger.getState().defeatedCount);
+  }
+
+  buyEndlessItem(itemId: ItemId, visitId: number): EndlessPurchaseResult {
+    if (!this.openEndlessShop()) return { bought: false, reason: 'closed' };
+    return this.endlessLedger!.shop.buy(itemId, visitId, this.endlessLedger!.getState().earnedCoins + this.endlessLedger!.startingSupplyCoins);
+  }
+
+  finishEndlessShopVisit(visitId: number): boolean {
+    if (!this.openEndlessShop()) return false;
+    const opening = this.endlessLedger!.shop.isOpeningVisit;
+    const finished = this.endlessLedger!.shop.finishVisit(visitId);
+    if (finished && opening) this.startRound();
+    return finished;
+  }
+
   getState(): BattleState {
     return {
+      mode: this.mode,
+      endlessRoster: this.endlessRoster?.getState(),
+      endlessAccounting: this.endlessLedger?.getState(),
+      endlessEndReason: this.endlessEndReason,
       levelId: this.levelConfig?.id,
       levelConfig: this.levelConfig,
       levelIntroLessonKey: this.levelConfig?.levelIntroLessonKey,
@@ -402,12 +567,14 @@ export class Battle {
       battleOutcome: this.battleOutcome,
       currentEnemyIndex: this.currentEnemyIndex,
       currentEnemyId: this.currentEnemy?.id,
+      currentEnemyInstanceId: this.currentEnemy?.instanceId,
       round: this.round,
       currentFixedRoundId: this.currentFixedRound()?.id,
       currentLessonKey: this.currentFixedRound()?.lessonKey,
       currentTutorialBeforeCompareKey: this.currentFixedRound()?.tutorialBeforeCompareKey,
       currentPlayerTurnLessonKey: this.currentFixedRound()?.playerTurnLessonKey,
       availableActions: this.currentFixedRound()?.availableActions,
+      availableSkills: this.currentFixedRound()?.availableSkills,
       maxPlayerDrawsThisRound: this.maxPlayerDrawsThisRound(),
       roundRevealed: this.roundRevealed,
       pendingSoulRedeem: this.pendingSoulRedeem,
@@ -432,6 +599,7 @@ export class Battle {
       },
       enemies: this.enemies.map((enemy) => ({
         id: enemy.id,
+        instanceId: enemy.instanceId, seatIndex: enemy.seatIndex, sourceThemeId: enemy.sourceThemeId,
         hp: enemy.hp,
         maxHp: enemy.maxHp,
         hand: enemy.hand.map((card) => ({ ...card })),
@@ -447,10 +615,12 @@ export class Battle {
         attackBonus: enemy.attackBonus,
         roundAttackBonus: enemy.roundAttackBonus,
         taoistTalismaned: enemy.taoistTalismaned,
+        talismanSourceInstanceId: enemy.talismanSourceInstanceId,
         iaijutsuStacks: enemy.iaijutsuStacks,
         smokeScreenArmed: enemy.smokeScreenArmed,
         smokeScreenUsed: enemy.smokeScreenUsed,
         hanamiFanTargetId: enemy.hanamiFanTargetId,
+        hanamiFanTargetInstanceId: enemy.hanamiFanTargetInstanceId,
         hanamiDamageBank: enemy.hanamiDamageBank,
         summoned: enemy.summoned,
         summonCount: enemy.summonCount,
@@ -476,7 +646,7 @@ export class Battle {
   }
 
   canUseResonanceShift(): boolean {
-    if (this.phase !== 'player-turn' || this.player.resonanceShiftUsed || this.player.resonanceShiftCooldown > 0 || this.playerScore().resonance !== 'none') {
+    if (!this.isSkillAvailable('resonance_shift') || this.phase !== 'player-turn' || this.player.resonanceShiftUsed || this.player.resonanceShiftCooldown > 0 || this.playerScore().resonance !== 'none') {
       return false;
     }
 
@@ -485,7 +655,8 @@ export class Battle {
   }
 
   canUseResonanceSummon(): boolean {
-    return this.phase === 'player-turn'
+    return this.isSkillAvailable('resonance_summon')
+      && this.phase === 'player-turn'
       && !this.player.resonanceSummonUsed
       && this.player.resonanceSummonCooldown <= 0
       && this.playerScore().resonance !== 'none';
@@ -539,9 +710,20 @@ export class Battle {
     return this.player.hand;
   }
 
+  rerollPlayerResonance(): boolean {
+    if (this.phase !== 'player-turn' || this.battleOutcome || this.pendingSoulRedeem || this.pendingEnemySoulRedeem) return false;
+    const before = this.playerScore().point;
+    const hand = rerollResonancePoint(this.player.hand, this.random);
+    if (!hand) return false;
+    this.player.hand = hand;
+    this.logEvent(t('itemEffect.resonanceDice.used', { before, after: this.playerScore().point }));
+    return true;
+  }
+
   private startRound(): void {
-    this.deck = new Deck();
+    this.deck = new Deck(this.random);
     this.round += 1;
+    this.endlessLedger?.beginRound(this.round, `${this.instancePrefix}:round:${this.round}`);
     this.results = [];
     this.phase = 'choice';
     this.battleOutcome = undefined;
@@ -609,6 +791,9 @@ export class Battle {
   }
 
   private compareEnemy(enemy: EnemyState, playerScoreOverride?: ScoreResult): BattleResult {
+    const actionId = `${this.instancePrefix}:attack:${++this.nextLogicAction}`;
+    this.currentLogicActionId = actionId;
+    this.enemyDamageActions.set(enemy.instanceId, actionId);
     this.applyPreComparePassive(enemy);
     const playerScore = playerScoreOverride ?? this.scoreFor(this.player.hand);
     const fateDamageMultiplier = this.player.fateMode ? 2 : 1;
@@ -618,6 +803,7 @@ export class Battle {
     let evaded = false;
     let shielded = false;
     let originalDamage: number | undefined;
+    let iaijutsuBonus = 0;
     let guard: DamageEvent['guard'];
 
     const comparison = compareScoreResults(playerScore, enemyScore);
@@ -628,14 +814,23 @@ export class Battle {
       originalDamage = damage;
       const smokeEvaded = this.applySmokeSubstitutionIfNeeded(enemy, originalDamage);
       evaded = smokeEvaded;
+      const protectorHpBefore = this.enemies.find((candidate) => candidate.id === 'swordsman' && candidate !== enemy && !candidate.defeated && !candidate.passiveTriggeredThisRound)?.hp;
       const bladeRescue = smokeEvaded ? undefined : this.applyBladeToRescueIfNeeded(enemy, damage);
       damage = smokeEvaded ? 0 : (bladeRescue?.damageAfter ?? damage);
       guard = bladeRescue?.guard;
+      const hpBefore = enemy.hp;
       enemy.hp = Math.max(0, enemy.hp - damage);
+      const protector = guard ? this.enemies.find((candidate) => candidate.instanceId === guard?.protectorEnemyInstanceId) : undefined;
+      const recipient = protector ?? enemy;
+      const actualDamage = guard ? Math.min(guard.preventedDamage, protectorHpBefore ?? 0) : hpBefore - enemy.hp;
+      if (!enemy.summoned && enemy.id !== 'einherjar' && !recipient.summoned && recipient.id !== 'einherjar' && playerScore.resonance !== 'none') {
+        this.endlessLedger?.recordResonance(actionId, recipient.instanceId, playerScore.multiplier, actualDamage);
+      }
       this.damageEvents.push({
         type: 'damage',
         attacker: 'player',
         enemyId: enemy.id,
+        enemyInstanceId: enemy.instanceId,
         amount: damage,
         resonance: playerScore.resonance,
         hpAfter: enemy.hp,
@@ -645,7 +840,7 @@ export class Battle {
       });
     } else if (comparison < 0) {
       outcome = 'lose';
-      const iaijutsuBonus = this.consumeIaijutsuOnWin(enemy);
+      iaijutsuBonus = this.consumeIaijutsuOnWin(enemy);
       damage = enemyScore.multiplier + this.player.incomingDamageBonus + this.enemyAttackBonus(enemy) + iaijutsuBonus;
       originalDamage = damage;
       if (this.player.shieldCharges > 0 && damage > 0) {
@@ -661,15 +856,18 @@ export class Battle {
         type: 'damage',
         attacker: 'enemy',
         enemyId: enemy.id,
+        enemyInstanceId: enemy.instanceId,
         amount: damage,
         resonance: enemyScore.resonance,
         shielded,
         originalAmount: shielded ? originalDamage : undefined,
+        ...(iaijutsuBonus > 0 ? { iaijutsuBonus } : {}),
       });
     } else {
-      this.damageEvents.push({ type: 'clash', enemyId: enemy.id, amount: 0 });
+      this.damageEvents.push({ type: 'clash', enemyId: enemy.id, enemyInstanceId: enemy.instanceId, amount: 0 });
     }
 
+    this.currentLogicActionId = undefined;
     return {
       enemy,
       enemyScore,
@@ -782,7 +980,8 @@ export class Battle {
     }
 
     enemy.defeated = true;
-    if (enemy.summoned) {
+    this.endlessLedger?.recordDefeat(this.currentLogicActionId ?? this.enemyDamageActions.get(enemy.instanceId) ?? `${this.instancePrefix}:defeat:${enemy.instanceId}`, enemy.instanceId, enemy.id, enemy.summoned || enemy.id === 'einherjar');
+    if (enemy.summoned || this.mode === 'endless' && enemy.id === 'einherjar') {
       this.logEvent(t('log.summonedEnemyDefeated', { enemy: enemyName(enemy.id) }));
       return 0;
     }
@@ -813,35 +1012,41 @@ export class Battle {
       enemy.roundAttackBonus = 0;
       enemy.passiveTriggeredThisRound = false;
       enemy.taoistTalismaned = false;
+      enemy.talismanSourceInstanceId = undefined;
     });
 
     if (!this.hasMechanic('enemy_passives')) {
       return;
     }
 
-    if (this.isNorthernLonghouse()) {
-      this.applyRuneBlessing();
+    if (this.mode === 'endless') {
       this.applyEinherjarSummon();
-      return;
+      this.refillEndlessSeats();
     }
+    this.applyRuneBlessing();
+    if (this.mode !== 'endless') this.applyEinherjarSummon();
+    this.applyRedSilkToast();
+    this.applyTaoistTalisman();
+    this.applyHanamiDance();
+    this.applySmokeScreenArm();
+  }
 
-    if (this.isDragonGate()) {
-      this.applyRedSilkToast();
-      this.applyTaoistTalisman();
-      return;
-    }
-
-    if (this.isEdoTeahouse()) {
-      this.applyHanamiDance();
-      this.applySmokeScreenArm();
-    }
+  private refillEndlessSeats(): void {
+    this.enemies.forEach((enemy, index) => {
+      if (!enemy.defeated) return;
+      const id = this.endlessRoster!.draw(index);
+      const next = this.replaceEnemyAt(index, id);
+      this.logEvent(t('endless.npcEntered', { enemy: enemyName(id) }));
+      this.passiveEffectEvents.push({ type: 'enemy-entered', enemyId: id,
+        enemyInstanceId: next.instanceId, enemyIndex: index, sourceThemeId: next.sourceThemeId });
+    });
   }
 
   private applyBladeToRescueIfNeeded(enemy: EnemyState, damage: number): {
     damageAfter: number;
     guard: NonNullable<DamageEvent['guard']>;
   } | undefined {
-    if (!this.hasMechanic('enemy_passives') || !this.isDragonGate() || damage < enemy.hp) {
+    if (!this.hasMechanic('enemy_passives') || damage < enemy.hp) {
       return undefined;
     }
 
@@ -868,6 +1073,7 @@ export class Battle {
         damageAfter,
         guard: {
           protectorEnemyId: swordsman.id,
+          protectorEnemyInstanceId: swordsman.instanceId,
           protectorEnemyIndex: this.enemies.indexOf(swordsman),
           protectorHpAfter: swordsman.hp,
           preventedDamage: damage,
@@ -880,6 +1086,7 @@ export class Battle {
       damageAfter,
       guard: {
         protectorEnemyId: swordsman.id,
+        protectorEnemyInstanceId: swordsman.instanceId,
         protectorEnemyIndex: this.enemies.indexOf(swordsman),
         protectorHpAfter: swordsman.hp,
         preventedDamage: damage,
@@ -895,9 +1102,9 @@ export class Battle {
     }
 
     const candidates = this.aliveEnemies.filter((enemy) => enemy.id !== 'rune_shaman');
-    const attackTarget = candidates[Math.floor(Math.random() * candidates.length)] ?? shaman;
+    const attackTarget = candidates[Math.floor(this.random() * candidates.length)] ?? shaman;
     const woundedTargets = this.aliveEnemies.filter((enemy) => enemy.hp < enemy.maxHp);
-    const shouldHeal = woundedTargets.length > 0 && Math.random() >= 0.5;
+    const shouldHeal = woundedTargets.length > 0 && this.random() >= 0.5;
     if (!shouldHeal) {
       const target = attackTarget;
       target.roundAttackBonus += 1;
@@ -907,7 +1114,7 @@ export class Battle {
       return;
     }
 
-    const target = woundedTargets[Math.floor(Math.random() * woundedTargets.length)];
+    const target = woundedTargets[Math.floor(this.random() * woundedTargets.length)];
     const beforeHp = target.hp;
     target.hp = Math.min(target.maxHp, target.hp + 1);
     const healed = target.hp - beforeHp;
@@ -931,37 +1138,15 @@ export class Battle {
       return;
     }
 
-    defeatedSlot.id = 'einherjar';
-    defeatedSlot.maxHp = 1;
-    defeatedSlot.hp = 1;
-    defeatedSlot.hand = [];
-    defeatedSlot.revealed = false;
-    defeatedSlot.compared = false;
-    defeatedSlot.invited = undefined;
-    defeatedSlot.acceptedInvite = undefined;
-    defeatedSlot.invitedDrawCount = undefined;
-    defeatedSlot.passiveTriggered = false;
-    defeatedSlot.passiveTriggeredThisRound = false;
-    defeatedSlot.soulRedeemUsed = false;
-    defeatedSlot.defeated = false;
-    defeatedSlot.attackBonus = 0;
-    defeatedSlot.roundAttackBonus = 0;
-    defeatedSlot.taoistTalismaned = false;
-    defeatedSlot.iaijutsuStacks = 0;
-    defeatedSlot.smokeScreenArmed = false;
-    defeatedSlot.smokeScreenUsed = false;
-    defeatedSlot.hanamiFanTargetId = undefined;
-    defeatedSlot.hanamiDamageBank = 0;
-    defeatedSlot.summoned = true;
-    defeatedSlot.summonCount = 0;
+    const summoned = this.replaceEnemyAt(this.enemies.indexOf(defeatedSlot), 'einherjar', { maxHp: 1, summoned: true });
     valkyrie.summonCount += 1;
     valkyrie.passiveTriggeredThisRound = true;
-    this.pushPassiveEffect('einherjar_summon', valkyrie, [defeatedSlot], 'summon', valkyrie.summonCount);
+    this.pushPassiveEffect('einherjar_summon', valkyrie, [summoned], 'summon', valkyrie.summonCount);
     this.logEvent(t('log.einherjarSummon', { count: valkyrie.summonCount }));
   }
 
   private applyWarHornIfNeeded(enemy: EnemyState): void {
-    if (!this.hasMechanic('enemy_passives') || !this.isNorthernLonghouse() || enemy.id !== 'viking_warrior' || enemy.summoned || enemy.hp >= this.enemyPassiveHpThreshold(enemy.id) || enemy.passiveTriggered) {
+    if (!this.hasMechanic('enemy_passives') || enemy.id !== 'viking_warrior' || enemy.summoned || enemy.hp >= this.enemyPassiveHpThreshold(enemy.id) || enemy.passiveTriggered) {
       return;
     }
 
@@ -990,7 +1175,7 @@ export class Battle {
 
     const lowestHp = Math.min(...candidates.map((enemy) => enemy.hp));
     const lowestHpCandidates = candidates.filter((enemy) => enemy.hp === lowestHp);
-    const target = lowestHpCandidates[Math.floor(Math.random() * lowestHpCandidates.length)];
+    const target = lowestHpCandidates[Math.floor(this.random() * lowestHpCandidates.length)];
     target.hp = Math.min(target.maxHp, target.hp + 1);
     target.roundAttackBonus += 1;
     songstress.passiveTriggeredThisRound = true;
@@ -1009,15 +1194,16 @@ export class Battle {
       return;
     }
 
-    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    const target = candidates[Math.floor(this.random() * candidates.length)];
     target.taoistTalismaned = true;
+    target.talismanSourceInstanceId = taoist.instanceId;
     taoist.passiveTriggeredThisRound = true;
     this.pushPassiveEffect('heavenly_insight', taoist, [target], 'sense');
     this.logEvent(t('log.heavenlyInsightMark', { enemy: enemyName(target.id) }));
   }
 
   private applyHeavenlyInsightIfNeeded(enemy: EnemyState, drawnCard: Card | undefined): void {
-    if (!drawnCard || !this.hasMechanic('enemy_passives') || !this.isDragonGate() || !enemy.taoistTalismaned) {
+    if (!drawnCard || !this.hasMechanic('enemy_passives') || !enemy.taoistTalismaned) {
       return;
     }
 
@@ -1026,7 +1212,8 @@ export class Battle {
       return;
     }
 
-    const taoist = this.enemies.find((candidate) => candidate.id === 'taoist');
+    const taoist = this.enemies.find((candidate) => candidate.instanceId === enemy.talismanSourceInstanceId && candidate.id === 'taoist');
+    enemy.talismanSourceInstanceId = undefined;
     if (!taoist) {
       return;
     }
@@ -1040,7 +1227,7 @@ export class Battle {
   }
 
   private applyIaijutsuChargeIfNeeded(enemy: EnemyState): void {
-    if (!this.hasMechanic('enemy_passives') || !this.isEdoTeahouse() || enemy.id !== 'shogun_samurai' || enemy.defeated || enemy.iaijutsuStacks >= 2) {
+    if (!this.hasMechanic('enemy_passives') || enemy.id !== 'shogun_samurai' || enemy.defeated || enemy.iaijutsuStacks >= 2) {
       return;
     }
 
@@ -1050,7 +1237,7 @@ export class Battle {
   }
 
   private consumeIaijutsuOnWin(enemy: EnemyState): number {
-    if (!this.hasMechanic('enemy_passives') || !this.isEdoTeahouse() || enemy.id !== 'shogun_samurai' || enemy.iaijutsuStacks <= 0) {
+    if (!this.hasMechanic('enemy_passives') || enemy.id !== 'shogun_samurai' || enemy.iaijutsuStacks <= 0) {
       return 0;
     }
 
@@ -1073,7 +1260,7 @@ export class Battle {
   }
 
   private applySmokeSubstitutionIfNeeded(enemy: EnemyState, damage: number): boolean {
-    if (!this.hasMechanic('enemy_passives') || !this.isEdoTeahouse() || enemy.id !== 'ninja' || !enemy.smokeScreenArmed || damage <= 0) {
+    if (!this.hasMechanic('enemy_passives') || enemy.id !== 'ninja' || !enemy.smokeScreenArmed || damage <= 0) {
       return false;
     }
 
@@ -1083,12 +1270,12 @@ export class Battle {
   }
 
   private recordHanamiDamage(damage: number): void {
-    if (!this.hasMechanic('enemy_passives') || !this.isEdoTeahouse() || damage <= 0) {
+    if (!this.hasMechanic('enemy_passives') || damage <= 0) {
       return;
     }
 
     const oiran = this.enemies.find((enemy) => enemy.id === 'oiran' && !enemy.defeated);
-    if (!oiran || !oiran.hanamiFanTargetId) {
+    if (!oiran || !oiran.hanamiFanTargetInstanceId) {
       return;
     }
 
@@ -1101,16 +1288,17 @@ export class Battle {
       return;
     }
 
-    const previousTarget = oiran.hanamiFanTargetId
-      ? this.enemies.find((enemy) => enemy.id === oiran.hanamiFanTargetId && !enemy.defeated)
+    const previousTarget = oiran.hanamiFanTargetInstanceId
+      ? this.enemies.find((enemy) => enemy.instanceId === oiran.hanamiFanTargetInstanceId && !enemy.defeated)
       : undefined;
     const rewardAmount = Math.min(2, oiran.hanamiDamageBank);
     oiran.hanamiFanTargetId = undefined;
+    oiran.hanamiFanTargetInstanceId = undefined;
     oiran.hanamiDamageBank = 0;
 
     if (previousTarget && rewardAmount > 0) {
       const canHeal = previousTarget.hp < previousTarget.maxHp;
-      const shouldHeal = canHeal && Math.random() < 0.5;
+      const shouldHeal = canHeal && this.random() < 0.5;
       if (shouldHeal) {
         const hpBefore = previousTarget.hp;
         previousTarget.hp = Math.min(previousTarget.maxHp, previousTarget.hp + rewardAmount);
@@ -1129,31 +1317,42 @@ export class Battle {
       return;
     }
 
-    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    const target = candidates[Math.floor(this.random() * candidates.length)];
     oiran.hanamiFanTargetId = target.id;
+    oiran.hanamiFanTargetInstanceId = target.instanceId;
     this.pushPassiveEffect('hanami_dance', oiran, [target], 'mark', undefined, 'round-start');
     this.logEvent(t('log.hanamiMark', { enemy: enemyName(target.id) }));
   }
 
   private enemyAttackBonus(enemy: EnemyState): number {
-    return Math.max(0, enemy.attackBonus + enemy.roundAttackBonus);
-  }
-
-  private isNorthernLonghouse(): boolean {
-    return this.tableThemeConfig?.id === 'northern_longhouse';
-  }
-
-  private isDragonGate(): boolean {
-    return this.tableThemeConfig?.id === 'dragon_gate';
-  }
-
-  private isEdoTeahouse(): boolean {
-    return this.tableThemeConfig?.id === 'edo_teahouse';
+    return Math.max(0, enemy.attackBonus + enemy.roundAttackBonus) + (this.endlessLedger?.currentAttackBonus ?? 0);
   }
 
   enemyPassiveHpThreshold(enemyId: EnemyType): number {
-    const baseThreshold = this.tableThemeConfig?.passiveHpThresholds?.[enemyId] ?? 3;
+    const baseThreshold = this.mode === 'endless'
+      ? getNpcBasePassiveThreshold(enemyId)
+      : this.tableThemeConfig?.passiveHpThresholds?.[enemyId] ?? (this.tableThemeConfig ? getNpcBasePassiveThreshold(enemyId) : 3);
     return Math.max(1, baseThreshold + (this.stakeDifficulty?.passiveHpThresholdModifier ?? 0));
+  }
+
+  /** Replacing a seat invalidates relationships to the departed instance. */
+  replaceEnemyAt(index: number, enemyId: EnemyType, options: { maxHp?: number; summoned?: boolean } = {}): EnemyState {
+    const previous = this.enemies[index];
+    if (!previous) throw new Error(`Unknown enemy seat: ${index}`);
+    for (const enemy of this.enemies) {
+      if (enemy.hanamiFanTargetInstanceId === previous.instanceId) {
+        enemy.hanamiFanTargetId = undefined;
+        enemy.hanamiFanTargetInstanceId = undefined;
+        enemy.hanamiDamageBank = 0;
+      }
+      if (enemy.talismanSourceInstanceId === previous.instanceId) {
+        enemy.taoistTalismaned = false;
+        enemy.talismanSourceInstanceId = undefined;
+      }
+    }
+    const next = createEnemyState(enemyId, { hpModifier: (this.stakeDifficulty?.enemyHpModifier ?? 0) + (this.endlessLedger?.currentStage ?? 0), ...options, instanceId: `${this.instancePrefix}:${++this.nextEnemyInstance}`, seatIndex: index });
+    this.enemies[index] = next;
+    return next;
   }
 
   consumePassiveEffectEvents(): BattlePresentationEvent[] {
@@ -1174,8 +1373,10 @@ export class Battle {
       type: 'passive-effect',
       passiveId,
       sourceEnemyId: source.id,
+      sourceEnemyInstanceId: source.instanceId,
       sourceEnemyIndex: this.enemies.indexOf(source),
       targetEnemyIds: targets.map((target) => target.id),
+      targetEnemyInstanceIds: targets.map((target) => target.instanceId),
       targetEnemyIndexes: targets.map((target) => this.enemies.indexOf(target)),
       effect,
       amount,
@@ -1188,6 +1389,7 @@ export class Battle {
       type: 'cards-redealt',
       target: enemy.id,
       targetEnemyIndex: this.enemies.indexOf(enemy),
+      targetEnemyInstanceId: enemy.instanceId,
       count,
     });
   }
@@ -1197,6 +1399,7 @@ export class Battle {
       type: 'card-replaced',
       target: enemy.id,
       targetEnemyIndex: this.enemies.indexOf(enemy),
+      targetEnemyInstanceId: enemy.instanceId,
       cardIndex,
       previousCard,
       replacementCard,
@@ -1210,6 +1413,11 @@ export class Battle {
 
     this.pendingSoulRedeem = false;
     this.player.hp = Math.min(this.player.maxHp, 3);
+    if (this.endlessLedger?.shop.hasPending(this.endlessLedger.getState().defeatedCount)) {
+      this.phase = 'round-result';
+      this.roundRevealed = true;
+      return;
+    }
     this.startRound();
   }
 
@@ -1245,7 +1453,7 @@ export class Battle {
   }
 
   private markSoulRedeemPending(): boolean {
-    if (!this.hasMechanic('soul_redeem') || this.player.hp > 0 || this.player.soulRedeemUsed || this.enemies.every((enemy) => enemy.defeated)) {
+    if (!this.hasMechanic('soul_redeem') || this.player.hp > 0 || this.player.soulRedeemUsed || this.mode !== 'endless' && this.enemies.every((enemy) => enemy.defeated)) {
       return false;
     }
 
@@ -1270,7 +1478,7 @@ export class Battle {
         }));
         return;
       }
-      if (result.evaded && this.isEdoTeahouse() && result.enemy.id === 'ninja') {
+      if (result.evaded && result.enemy.id === 'ninja') {
         this.logEvent(t('log.smokeScreenEvaded', { damage: result.originalDamage ?? 0 }));
         return;
       }
@@ -1314,7 +1522,8 @@ export class Battle {
   }
 
   private updateBattleOutcome(): void {
-    if (this.enemies.every((enemy) => enemy.defeated)) {
+    if (this.pendingSoulRedeem || this.pendingEnemySoulRedeem) return;
+    if (this.mode !== 'endless' && this.enemies.every((enemy) => enemy.defeated)) {
       this.battleOutcome = 'victory';
       this.phase = 'battle-result';
       this.logEvent(t('log.battleVictory'));
@@ -1327,6 +1536,7 @@ export class Battle {
 
     if (this.player.hp <= 0) {
       this.battleOutcome = 'defeat';
+      if (this.mode === 'endless') this.endlessEndReason = 'defeat';
       this.phase = 'battle-result';
       this.logEvent(t('log.playerHpZero'));
       return;
@@ -1411,29 +1621,34 @@ export class Battle {
       ?? 2;
   }
 
+  private isSkillAvailable(skillId: SkillId): boolean {
+    const availableSkills = this.currentFixedRound()?.availableSkills;
+    return !availableSkills || availableSkills.includes(skillId);
+  }
+
   private currentFixedEnemyConfig(enemyId: EnemyType): FixedRoundEnemyConfig | undefined {
     return this.currentFixedRound()?.enemies.find((config) => config.enemyId === enemyId);
   }
 
   private shouldSkipEnemyHandlingPhase(): boolean {
-    return this.levelConfig?.id === 'chapter1_6' || this.levelConfig?.id === 'chapter1_7';
+    return this.levelConfig?.tutorialFocus === 'skills';
   }
 
   private createRandomResonantPair(): Card[] {
-    if (Math.random() < 0.5) {
-      const suit = randomItem(SUITS) ?? '♠';
+    if (this.random() < 0.5) {
+      const suit = randomItem(SUITS, this.random) ?? '♠';
       return [
-        { suit, rank: randomItem(RANKS) ?? 'A' },
-        { suit, rank: randomItem(RANKS) ?? '2' },
+        { suit, rank: randomItem(RANKS, this.random) ?? 'A' },
+        { suit, rank: randomItem(RANKS, this.random) ?? '2' },
       ];
     }
 
-    const rank = randomItem(RANKS) ?? 'A';
-    const firstSuit = randomItem(SUITS) ?? '♠';
+    const rank = randomItem(RANKS, this.random) ?? 'A';
+    const firstSuit = randomItem(SUITS, this.random) ?? '♠';
     const otherSuits = SUITS.filter((suit) => suit !== firstSuit);
     return [
       { suit: firstSuit, rank },
-      { suit: randomItem(otherSuits) ?? '♥', rank },
+      { suit: randomItem(otherSuits, this.random) ?? '♥', rank },
     ];
   }
 
@@ -1468,6 +1683,6 @@ function describeOutcome(result: BattleResult): string {
   return t('score.outcome.draw');
 }
 
-function randomItem<T>(items: T[]): T | undefined {
-  return items[Math.floor(Math.random() * items.length)];
+function randomItem<T>(items: T[], random: () => number = Math.random): T | undefined {
+  return items[Math.floor(random() * items.length)];
 }

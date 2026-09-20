@@ -19,23 +19,23 @@ export interface MedievalTooltipOptions {
 
 export class MedievalTooltip {
   static render(scene: Phaser.Scene, options: MedievalTooltipOptions): Phaser.GameObjects.Container {
-    const width = options.width ?? 336;
+    const width = options.width ?? 360;
     const horizontalPadding = 24;
     const title = scene.add.text(-width / 2 + horizontalPadding, 0, options.title, {
       fontFamily: GAME_FONT_FAMILY,
-      fontSize: '17px',
+      fontSize: '19px',
       color: MEDIEVAL_UI_COLORS.textBright,
       fontStyle: 'bold',
       wordWrap: { width: width - horizontalPadding * 2, useAdvancedWrap: true },
     });
     const body = scene.add.text(-width / 2 + horizontalPadding, 0, options.body, {
       fontFamily: GAME_FONT_FAMILY,
-      fontSize: '14px',
+      fontSize: '16px',
       color: MEDIEVAL_UI_COLORS.text,
-      lineSpacing: 5,
+      lineSpacing: 6,
       wordWrap: { width: width - horizontalPadding * 2, useAdvancedWrap: true },
     });
-    const height = Math.max(112, title.height + body.height + 68);
+    const height = Math.max(120, title.height + body.height + 70);
     const bounds = options.bounds ?? new Phaser.Geom.Rectangle(0, 0, 1280, 720);
     const safeX = Phaser.Math.Clamp(options.x, bounds.left + width / 2 + 12, bounds.right - width / 2 - 12);
     const safeY = Phaser.Math.Clamp(options.y, bounds.top + height / 2 + 12, bounds.bottom - height / 2 - 12);

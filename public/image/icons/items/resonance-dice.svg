@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+<defs><radialGradient id="crystal"><stop stop-color="#ba9feb"/><stop offset=".45" stop-color="#7556a8"/><stop offset="1" stop-color="#302344"/></radialGradient><linearGradient id="gold" x2="0" y2="1"><stop stop-color="#f5dca0"/><stop offset=".5" stop-color="#b98a43"/><stop offset="1" stop-color="#65491f"/></linearGradient></defs>
+<path d="M12 43V26L25 12H65L79 24V63L65 78H27L13 66" fill="#0d0a13" stroke="#201614" stroke-width="5"/>
+<path d="M25 17H62L74 28V61L62 73H28L18 62V29Z" fill="url(#crystal)" stroke="url(#gold)" stroke-width="4"/>
+<path d="M25 23L35 18H61L68 27V60L60 68H34L25 59Z" fill="none" stroke="#d6b077" stroke-width="1.5" opacity=".7"/>
+<path d="M24 28L34 21H59L67 29L57 39H36Z" fill="#d2b9f0" opacity=".19"/>
+<g fill="#f4e8bf" stroke="#846735" stroke-width="1"><rect x="31" y="32" width="9" height="9" rx="1"/><rect x="43" y="44" width="9" height="9" rx="1"/><rect x="55" y="56" width="9" height="9" rx="1"/></g>
+<path d="M8 58C4 31 21 7 46 6" fill="none" stroke="#d6a65a" stroke-width="4"/><path d="M39 1L52 6L40 14Z" fill="#f0cf83"/>
+<path d="M86 36C94 62 77 87 53 89" fill="none" stroke="#d6a65a" stroke-width="4"/><path d="M59 80L47 89L61 95Z" fill="#f0cf83"/>
+<path d="M79 10V22M73 16H85" stroke="#e4d6ff" stroke-width="2"/>
+</svg>

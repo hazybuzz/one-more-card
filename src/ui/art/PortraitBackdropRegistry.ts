@@ -1,6 +1,7 @@
 import type { EnemyId } from '../../game/types/enemy';
 import type { TableThemeId } from '../../game/types/tableTheme';
 import { DRAGON_GATE_PALETTE } from './dragonGateArt';
+import { EDO_TEAHOUSE_PALETTE } from './edoTeahouseArt';
 import type { PortraitBackdropConfig } from './types';
 
 export type PortraitCombatantId = 'player' | EnemyId;
@@ -155,6 +156,49 @@ const DRAGON_GATE_BACKDROPS: Partial<Record<PortraitCombatantId, PortraitBackdro
   },
 };
 
+const EDO_TEAHOUSE_BACKDROPS: Partial<Record<PortraitCombatantId, PortraitBackdropConfig>> = {
+  player: {
+    id: 'edo-player-golden-fate',
+    baseColor: EDO_TEAHOUSE_PALETTE.ink,
+    secondaryColor: 0x38251f,
+    accentColor: EDO_TEAHOUSE_PALETTE.oldGold,
+    motif: 'fate',
+    seed: 211,
+    rimColor: EDO_TEAHOUSE_PALETTE.ricePaper,
+    rimStrength: 0.62,
+  },
+  shogun_samurai: {
+    id: 'edo-samurai-vermilion-blade',
+    baseColor: EDO_TEAHOUSE_PALETTE.ink,
+    secondaryColor: EDO_TEAHOUSE_PALETTE.lacquer,
+    accentColor: 0xc64f48,
+    motif: 'cards',
+    seed: 223,
+    rimColor: 0xf0a06c,
+    rimStrength: 0.7,
+  },
+  ninja: {
+    id: 'edo-ninja-moonlit-smoke',
+    baseColor: 0x0d0e14,
+    secondaryColor: 0x282538,
+    accentColor: 0x9185b8,
+    motif: 'moon',
+    seed: 239,
+    rimColor: 0xd8d5e8,
+    rimStrength: 0.56,
+  },
+  oiran: {
+    id: 'edo-oiran-sakura-lantern',
+    baseColor: 0x1b0f15,
+    secondaryColor: EDO_TEAHOUSE_PALETTE.deepVermilion,
+    accentColor: EDO_TEAHOUSE_PALETTE.mutedRose,
+    motif: 'tavern',
+    seed: 251,
+    rimColor: 0xf2b5c5,
+    rimStrength: 0.62,
+  },
+};
+
 export function getPortraitBackdrop(
   themeId: TableThemeId,
   combatantId: PortraitCombatantId,
@@ -169,6 +213,10 @@ export function getPortraitBackdrop(
 
   if (themeId === 'dragon_gate') {
     return DRAGON_GATE_BACKDROPS[combatantId];
+  }
+
+  if (themeId === 'edo_teahouse') {
+    return EDO_TEAHOUSE_BACKDROPS[combatantId];
   }
 
   return undefined;

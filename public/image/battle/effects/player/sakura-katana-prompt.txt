@@ -1,0 +1,8 @@
+Use case: stylized-concept
+Asset type: transparent PNG weapon sprite for a fantasy card battle game
+Reference: uploaded katana photograph for blade curvature, proportions, guard, and wrapped handle
+Primary request: one elegant sakura-themed Japanese katana, perfectly horizontal, handle on the left and blade tip pointing right
+Subject: gently curved polished silver-white blade with subtle hamon, dark burgundy-brown wrapped handle, five-petal cherry blossom tsuba, restrained antique-gold fittings, delicate sakura engravings near the blade base, and muted sakura-red lacquer accents
+Style: premium polished 2D game asset, painterly realism, crisp silhouette and readable detail at approximately 150 pixels long
+Composition: complete weapon centered in strict side view with transparent padding, no cropping or perspective foreshortening
+Constraints: genuinely transparent background, one unsheathed katana only, no scabbard, petals, baked glow, trail, motion blur, aura, text, frame, hand, character, watermark, or scenery

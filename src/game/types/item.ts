@@ -1,6 +1,6 @@
-export type ItemId = 'heal_potion' | 'cooling_charm' | 'resonance_dust' | 'holy_shield';
+export type ItemId = 'heal_potion' | 'cooling_charm' | 'resonance_dust' | 'holy_shield' | 'resonance_dice';
 export type ItemUseTiming = 'unknown-hand' | 'player-turn';
-export type ItemEffectId = 'fate_beer' | 'fate_reroll' | 'resonance_horn' | 'holy_shield';
+export type ItemEffectId = 'fate_beer' | 'fate_reroll' | 'resonance_horn' | 'holy_shield' | 'resonance_reroll';
 
 export interface ItemConfig {
   id: ItemId;

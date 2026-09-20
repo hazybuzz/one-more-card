@@ -90,6 +90,7 @@ export interface BattleThemeArtManifest {
 }
 
 export interface BattleArtSelection {
+  preloadAllNpcArt?: boolean;
   themeId: TableThemeId;
   enemyIds: EnemyId[];
 }

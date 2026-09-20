@@ -1,0 +1,10 @@
+Generated with the built-in image_gen tool using the user-provided hammer image as a visual reference.
+
+Use case: stylized-concept
+Asset type: transparent game projectile sprite for a dark fantasy card battler
+Input image: Image 1 is the visual reference for the hammer's silhouette, short leather-wrapped handle, heavy rectangular head, engraved metal side panels, and three-quarter perspective.
+Primary request: create one isolated thunder hammer in refined high-detail dark fantasy pixel art. Preserve the recognizable proportions and viewing angle of the reference, but render it as crisp deliberate pixel art suitable for this game's combat effects.
+Subject: one massive short-handled war hammer; dark iron and weathered silver hammer head, engraved Nordic edge panels, brown leather-wrapped grip, small leather wrist strap, a subtle branching pale-blue energy crack across the front face.
+Composition: square canvas; the complete hammer centered with generous transparent padding; hammer head toward lower-left and handle toward upper-right, exactly one object, no cropping.
+Lighting: dramatic cool blue-white rim light with restrained warm highlights; sharp readable silhouette.
+Constraints: genuinely transparent background and clean alpha edges; no floor, shadow, frame, text, logo, watermark, character, hand, scenery, particle effects, lightning bolts outside the hammer, glow cloud, or motion trail. Keep all dynamic lightning and trails out of the PNG because the game adds them procedurally.

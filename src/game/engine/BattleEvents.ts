@@ -1,10 +1,13 @@
+import type { TableThemeId } from '../types/tableTheme';
 import { Card } from '../card';
+import type { EnemySpeechIntent } from '../data/enemySpeech';
 import { EnemyType } from '../enemy';
 import { ResonanceKind } from '../scoring';
 
 export type BattlePresentationEvent =
+  | { type: 'enemy-entered'; enemyId: EnemyType; enemyInstanceId: string; enemyIndex: number; sourceThemeId: TableThemeId }
   | { type: 'card-dealt'; target: 'player' | EnemyType; card: Card; cardIndex: number; context: 'round-start' | 'action' }
-  | { type: 'enemy-speech'; enemyId: EnemyType; text: string }
+  | { type: 'enemy-speech'; enemyId: EnemyType; intent: EnemySpeechIntent }
   | {
     type: 'passive-effect';
     passiveId:
@@ -21,8 +24,10 @@ export type BattlePresentationEvent =
       | 'smoke_substitution'
       | 'hanami_dance';
     sourceEnemyId: EnemyType;
+    sourceEnemyInstanceId?: string;
     sourceEnemyIndex: number;
     targetEnemyIds: EnemyType[];
+    targetEnemyInstanceIds?: string[];
     targetEnemyIndexes: number[];
     effect:
       | 'attack'
@@ -41,9 +46,10 @@ export type BattlePresentationEvent =
     amount?: number;
     timing?: 'round-start' | 'combat';
   }
-  | { type: 'cards-redealt'; target: EnemyType; targetEnemyIndex: number; count: number }
+  | { type: 'cards-redealt'; target: EnemyType; targetEnemyIndex: number; targetEnemyInstanceId?: string; count: number }
   | {
     type: 'card-replaced';
+    targetEnemyInstanceId?: string;
     target: EnemyType;
     targetEnemyIndex: number;
     cardIndex: number;
@@ -54,15 +60,18 @@ export type BattlePresentationEvent =
     type: 'damage';
     attacker: 'player' | 'enemy';
     enemyId: EnemyType;
+    enemyInstanceId?: string;
     amount: number;
     resonance?: ResonanceKind;
     hpAfter?: number;
     evaded?: boolean;
     shielded?: boolean;
     originalAmount?: number;
+    iaijutsuBonus?: number;
     killRewardHeal?: number;
     guard?: {
       protectorEnemyId: EnemyType;
+      protectorEnemyInstanceId?: string;
       protectorEnemyIndex: number;
       protectorHpAfter: number;
       preventedDamage: number;
@@ -70,7 +79,7 @@ export type BattlePresentationEvent =
       killRewardHeal?: number;
     };
   }
-  | { type: 'clash'; enemyId: EnemyType; amount: number }
+  | { type: 'clash'; enemyId: EnemyType; enemyInstanceId?: string; amount: number }
   | { type: 'heal'; target: 'player' | EnemyType; amount: number }
   | { type: 'round-revealed'; round: number }
   | { type: 'round-ended'; round: number }

@@ -67,7 +67,7 @@ export const PC_BATTLE_LAYOUT: BattleLayoutConfig = {
   enemyHud: {
     left: {
       health: { x: -120, y: -78 },
-      statuses: { x: -120, y: 92 },
+      statuses: { x: -120, y: 98 },
       portrait: { x: -120, y: 0, width: 142, height: 142 },
       name: { x: -120, y: 70 },
       hand: { x: 68, y: 8 },
@@ -80,7 +80,7 @@ export const PC_BATTLE_LAYOUT: BattleLayoutConfig = {
     },
     top: {
       health: { x: -120, y: -78 },
-      statuses: { x: -120, y: 92 },
+      statuses: { x: -120, y: 98 },
       portrait: { x: -120, y: 0, width: 142, height: 142 },
       name: { x: -120, y: 70 },
       hand: { x: 68, y: 8 },
@@ -93,7 +93,7 @@ export const PC_BATTLE_LAYOUT: BattleLayoutConfig = {
     },
     right: {
       health: { x: 120, y: -78 },
-      statuses: { x: 120, y: 92 },
+      statuses: { x: 120, y: 98 },
       portrait: { x: 120, y: 0, width: 142, height: 142 },
       name: { x: 120, y: 70 },
       hand: { x: -68, y: 8 },

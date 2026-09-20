@@ -12,6 +12,13 @@ export function completeStoryLevelAndUnlockNext(levelId: string): StoryLevelComp
   completeStoryLevel(levelId);
 
   const nextLevel = getNextStoryLevel(levelId);
+  for (const chapter of CHAPTERS) {
+    for (const level of chapter.levels) {
+      if (level.optional && level.unlockAfterLevelId === levelId) {
+        unlockStoryLevel(level.id);
+      }
+    }
+  }
   if (!nextLevel) {
     return {
       completedLevelId: levelId,
@@ -31,12 +38,13 @@ export function completeStoryLevelAndUnlockNext(levelId: string): StoryLevelComp
 
 export function getNextStoryLevel(levelId: string): LevelConfig | undefined {
   for (const chapter of CHAPTERS) {
-    const index = chapter.levels.findIndex((level) => level.id === levelId);
+    const requiredLevels = chapter.levels.filter((level) => !level.optional);
+    const index = requiredLevels.findIndex((level) => level.id === levelId);
     if (index < 0) {
       continue;
     }
 
-    return chapter.levels[index + 1];
+    return requiredLevels[index + 1];
   }
 
   return undefined;

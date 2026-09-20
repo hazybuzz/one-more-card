@@ -1,4 +1,8 @@
-import { addItem, getProgress, grantSoulCoins, recordBattleResult, recordFormalTableResult, spendSoulCoins } from './progress';
+import { getRuntimeMode } from './runtimeMode';
+import type { EndlessSettlementSummary, EndlessSettlementResult } from './endless/EndlessSettlement';
+import { isEndlessBattleReady } from './endless/EndlessConfig';
+import type { EndlessEntryResult } from './endless/EndlessState';
+import { addItem, getProgress, grantSoulCoins, recordBattleResult, recordFormalTableResult, reserveEndlessEntry, settleEndlessProgress, spendSoulCoins } from './progress';
 import type { EconomyTransactionContext } from './types/economy';
 import type { RewardConfig } from './types/level';
 import type { EntryStakeMultiplier, TableThemeId } from './types/tableTheme';
@@ -72,7 +76,7 @@ export function settleBattleEconomy(
   stakeMultiplier?: EntryStakeMultiplier,
 ): EconomyChange {
   if (tableThemeId) {
-    recordFormalTableResult(outcome, tableThemeId);
+    recordFormalTableResult(outcome, tableThemeId, stakeMultiplier);
   } else {
     recordBattleResult(outcome);
   }
@@ -173,4 +177,21 @@ export function settlePvpDuelEconomy(outcome: 'victory' | 'defeat'): EconomyChan
     amount: -loss,
     total: getProgress().soulCoins,
   };
+}
+
+/** Optional Web Lock serializes future paid entry across tabs; reservation itself is idempotent. */
+export async function tryEnterEndlessMode(): Promise<EndlessEntryResult> {
+  if (!isEndlessBattleReady(getRuntimeMode())) return { status: 'not-ready', amount: 0, total: getProgress().soulCoins };
+  const runId = globalThis.crypto?.randomUUID?.() ?? `endless-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request('one-more-card-endless-entry', () => reserveEndlessEntry(runId));
+  }
+  return reserveEndlessEntry(runId);
+}
+
+export async function settleEndlessEconomy(summary: EndlessSettlementSummary, ownerId?: string): Promise<EndlessSettlementResult> {
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request('one-more-card-endless-entry', () => settleEndlessProgress(summary, ownerId));
+  }
+  return settleEndlessProgress(summary, ownerId);
 }

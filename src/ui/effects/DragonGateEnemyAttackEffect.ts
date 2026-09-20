@@ -253,9 +253,6 @@ function playImpact(
 
   scene.time.delayedCall(82, () => {
     options.onHit();
-    if (options.resonance === 'strong' || options.resonance === 'boom') {
-      scene.cameras.main.shake(130, 0.003);
-    }
     destroyProjectile();
     scene.tweens.add({
       targets: [ring, flash],

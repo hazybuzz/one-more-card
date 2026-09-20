@@ -3,6 +3,7 @@ import { t } from '../../game/i18n';
 import { getBattleIconArt } from '../art';
 import type { SkillSlotId, SkillSlotState } from '../state/UIState';
 import { AbilitySlot } from './AbilitySlot';
+import { addTutorialGuide } from './TutorialGuide';
 
 interface SkillBarOptions {
   x: number;
@@ -28,6 +29,7 @@ interface SkillBarOptions {
   onUse: (id: SkillSlotId, title: string, tooltip: string, tooltipX: number, tooltipY: number) => void;
   direction?: 'vertical' | 'horizontal';
   slotGap?: number;
+  guideTarget?: SkillSlotId;
 }
 
 export class SkillBar {
@@ -39,6 +41,9 @@ export class SkillBar {
       const offsetX = options.direction === 'horizontal' ? index * gap : 0;
       const offsetY = options.direction === 'horizontal' ? 0 : index * gap;
       container.add(this.renderSlot(scene, options, id, offsetX, offsetY));
+      if (id === options.guideTarget) {
+        addTutorialGuide(scene, container, offsetX, offsetY, 66, 66);
+      }
     });
     return container;
   }

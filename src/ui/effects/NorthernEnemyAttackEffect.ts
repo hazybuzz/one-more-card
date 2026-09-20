@@ -230,9 +230,6 @@ function playImpact(
   // The short hold lets the eye register contact before HP and damage text update.
   scene.time.delayedCall(82, () => {
     options.onHit();
-    if (options.resonance === 'strong' || options.resonance === 'boom') {
-      scene.cameras.main.shake(130, 0.0032);
-    }
     scene.tweens.add({
       targets: [ring, flash],
       scale: tier.impactRadius / 14,

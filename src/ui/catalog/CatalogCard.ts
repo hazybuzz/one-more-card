@@ -77,7 +77,13 @@ export class CatalogCard {
     const visualY = -height / 2 + 42;
     container.add(scene.add.rectangle(0, visualY, 58, 54, 0x160d09, 0.94).setStrokeStyle(1, 0x8e683c, 0.88));
     if (entry.visual.thumbnailTextureKey && scene.textures.exists(entry.visual.thumbnailTextureKey)) {
-      container.add(scene.add.image(0, visualY, entry.visual.thumbnailTextureKey).setDisplaySize(50, 46));
+      if (entry.visual.accentColor !== undefined) {
+        container.add(scene.add.ellipse(0, visualY, 48, 34, entry.visual.accentColor, 0.18)
+          .setBlendMode(Phaser.BlendModes.ADD));
+      }
+      const image = scene.add.image(0, visualY, entry.visual.thumbnailTextureKey);
+      fitCatalogImage(image, 50, 46, entry.visual.textureAngle ?? 0);
+      container.add(image);
     } else {
       const icon = scene.add.text(0, visualY - 1, entry.visual.fallbackIcon, {
         fontFamily: GAME_FONT_FAMILY,
@@ -145,4 +151,17 @@ export class CatalogCard {
 
     return container;
   }
+}
+
+function fitCatalogImage(
+  image: Phaser.GameObjects.Image,
+  maxWidth: number,
+  maxHeight: number,
+  angle: number,
+): void {
+  const radians = Phaser.Math.DegToRad(angle);
+  const rotatedWidth = Math.abs(image.width * Math.cos(radians)) + Math.abs(image.height * Math.sin(radians));
+  const rotatedHeight = Math.abs(image.width * Math.sin(radians)) + Math.abs(image.height * Math.cos(radians));
+  const scale = Math.min(maxWidth / rotatedWidth, maxHeight / rotatedHeight);
+  image.setScale(scale).setAngle(angle);
 }

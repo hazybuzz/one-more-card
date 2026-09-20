@@ -60,6 +60,7 @@ export interface FixedRoundConfig {
   playerTurnLessonKey?: string;
   enemies: FixedRoundEnemyConfig[];
   availableActions?: BattleActionId[];
+  availableSkills?: SkillId[];
   preferredAction?: BattleActionId;
   triggerDialogue?: Record<string, DialogueLine[]>;
   wrongChoiceHintKey?: string;
@@ -88,6 +89,9 @@ export interface LevelConfig {
   tutorialTips?: TutorialTip[];
   rewards?: RewardConfig[];
   bossConfig?: BossConfig;
+  tutorialFocus?: 'core' | 'risk' | 'skills' | 'items' | 'graduation' | 'challenge';
+  optional?: boolean;
+  unlockAfterLevelId?: string;
 }
 
 export interface ChapterConfig {

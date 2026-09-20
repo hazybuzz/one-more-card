@@ -1,0 +1,11 @@
+{
+  "checks": [
+    "Chapter five Next renders as a real interactive medieval button and advances",
+    "Free action CTA renders as a button and closes the guide",
+    "Shared skill/status/item tooltip body is 16px",
+    "Battle item-card description is 15px with expanded card height"
+  ],
+  "errors": [],
+  "missingAssets": [],
+  "passed": true
+}

@@ -1,0 +1,8 @@
+Use case: stylized-concept
+Asset type: transparent PNG projectile sprite for a fantasy card battle game
+Reference: uploaded green-edged Chinese sword image for blade silhouette and jade fittings
+Primary request: one elegant Chinese fantasy flying sword, isolated and perfectly vertical, blade tip upward and handle downward
+Subject: long slender polished silver-white double-edged blade, a thin luminous jade-green center line, dark emerald jade grip and pommel, restrained antique-gold guard and fittings, refined engraved details
+Style: highly polished 2D game asset, painterly realism with crisp readable edges, detailed enough to remain clear at 60–80 pixels
+Composition: complete sword centered with generous transparent padding, no cropping, tilt, or perspective foreshortening
+Constraints: genuinely transparent background, one sword only, no baked trail, large aura, ground shadow, frame, text, or watermark

@@ -1,0 +1,12 @@
+{
+  "checks": [
+    "Real homepage entry charges 100 once and loads endless scene",
+    "Second window blocked by actual Web Lock",
+    "Reload restores exact logical snapshot without fee",
+    "Opening supplies, purchased stock and RNG restore exactly; first round starts only after confirmation",
+    "Three replacements fade in with stagger; render preserves fade; passives and cards wait; reload does not replay arrival"
+  ],
+  "errors": [],
+  "missingAssets": [],
+  "passed": true
+}

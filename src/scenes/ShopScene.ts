@@ -5,6 +5,7 @@ import { COSMETICS, type CosmeticConfig } from '../game/cosmetics';
 import { t } from '../game/i18n';
 import { ITEMS, type ItemDefinition } from '../game/items';
 import { configureBattleIconTextures, getBattleIconArtByResourceKey, preloadBattleIcons } from '../ui/art';
+import { getCosmeticCatalogArt, preloadCosmeticCatalogArt } from '../ui/art/CosmeticArtRegistry';
 import { EVERNIGHT_BUTTON_SKIN } from '../ui/art/commonUiArt';
 import { MedievalButton } from '../ui/components/MedievalButton';
 import {
@@ -62,6 +63,7 @@ export class ShopScene extends Phaser.Scene {
   preload(): void {
     preloadLobbyMusic(this);
     preloadBattleIcons(this);
+    preloadCosmeticCatalogArt(this);
     CatalogSceneShell.preload(this);
     if (!this.cache.audio.exists('buttonClick')) {
       this.load.audio('buttonClick', '/audio/switch28.ogg');
@@ -112,11 +114,18 @@ export class ShopScene extends Phaser.Scene {
         previewTextureKey: iconArt?.textureKey,
       });
     });
-    const cosmeticEntries = COSMETICS.map((cosmetic) => createCosmeticCatalogEntry(cosmetic, {
-      soulCoins: progress.soulCoins,
-      ownedCount: ownsCosmetic(cosmetic.id) ? 1 : 0,
-      equipped: progress.equippedAttackEffect === cosmetic.id,
-    }));
+    const cosmeticEntries = COSMETICS.map((cosmetic) => {
+      const art = getCosmeticCatalogArt(cosmetic.id);
+      return createCosmeticCatalogEntry(cosmetic, {
+        soulCoins: progress.soulCoins,
+        ownedCount: ownsCosmetic(cosmetic.id) ? 1 : 0,
+        equipped: progress.equippedAttackEffect === cosmetic.id,
+        thumbnailTextureKey: art.textureKey,
+        previewTextureKey: art.textureKey,
+        textureAngle: art.angle,
+        accentColor: art.accentColor,
+      });
+    });
     return [...itemEntries, ...cosmeticEntries];
   }
 

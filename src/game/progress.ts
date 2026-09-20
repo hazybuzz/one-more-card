@@ -1,3 +1,9 @@
+import { validEndlessSnapshot, type EndlessBattleSnapshot } from './endless/EndlessSnapshot';
+import { normalizeEndlessReceipt, type EndlessSettlementReceipt, type EndlessSettlementSummary, type EndlessSettlementResult } from './endless/EndlessSettlement';
+import { ENDLESS_CONFIG } from './endless/EndlessConfig';
+import { getEndlessUnlockProgress } from './endless/EndlessRules';
+import { cloneEndlessSession, createEndlessSession, normalizeEndlessSession } from './endless/EndlessSession';
+import type { EndlessEntryResult, EndlessSession, FormalDifficultyWins } from './endless/EndlessState';
 import { CHAPTERS } from './data/chapters';
 import { getRuntimeMode, setRuntimeMode, type RuntimeMode } from './runtimeMode';
 import type { CosmeticId } from './types/cosmetic';
@@ -10,7 +16,7 @@ import {
   type EconomyTransaction,
   type EconomyTransactionContext,
 } from './types/economy';
-import { TABLE_THEME_IDS, type TableThemeId } from './types/tableTheme';
+import { TABLE_THEME_IDS, type TableThemeId, type EntryStakeMultiplier } from './types/tableTheme';
 
 export interface BattleStats {
   wins: number;
@@ -20,6 +26,7 @@ export interface BattleStats {
 
 export interface FormalTableStats extends BattleStats {
   winsByTheme: Partial<Record<TableThemeId, number>>;
+  winsByThemeAndDifficulty: FormalDifficultyWins;
 }
 
 export type TableThemePurchaseStatus = 'unlocked' | 'already-unlocked' | 'wins-required' | 'not-enough-coins';
@@ -39,6 +46,9 @@ export interface StoryProgress {
 
 export interface GameProgress {
   soulCoins: number;
+  endlessSession?: EndlessSession;
+  lastEndlessSettlement?: EndlessSettlementReceipt;
+  endlessBestScore?: EndlessSettlementReceipt;
   ownedItems: Record<string, number>;
   ownedCosmetics: CosmeticId[];
   unlockedTableThemeIds: TableThemeId[];
@@ -75,6 +85,7 @@ const DEFAULT_PROGRESS: GameProgress = {
     losses: 0,
     battlesPlayed: 0,
     winsByTheme: {},
+    winsByThemeAndDifficulty: {},
   },
   economyStats: {
     openingBalance: 100,
@@ -85,9 +96,11 @@ const DEFAULT_PROGRESS: GameProgress = {
       formal_victory: 0,
       relief: 0,
       pvp_victory: 0,
+      endless_settlement: 0,
     },
     spendingBySink: {
       formal_entry: 0,
+      endless_entry: 0,
       item_purchase: 0,
       cosmetic_purchase: 0,
       theme_unlock: 0,
@@ -107,6 +120,9 @@ function createTestProgress(): GameProgress {
   testProgress.economyStats.openingBalance = 9999;
   testProgress.unlockedTableThemeIds = [...TABLE_THEME_IDS];
   testProgress.complimentaryTableEntryThemeIds = [];
+  testProgress.formalTableStats.winsByThemeAndDifficulty = Object.fromEntries(
+    TABLE_THEME_IDS.map((themeId) => [themeId, { 1: 1, 2: 1, 3: 1 }]),
+  );
   testProgress.story.unlockedLevelIds = CHAPTERS.flatMap((chapter) => chapter.levels.map((level) => level.id));
   testProgress.story.completedLevelIds = [];
   return testProgress;
@@ -134,7 +150,7 @@ export function resetTestProgress(): void {
   }
 
   progress = createTestProgress();
-  saveProgress();
+  saveProgress(false);
 }
 
 export function grantSoulCoins(
@@ -142,6 +158,7 @@ export function grantSoulCoins(
   amount: number,
   context: EconomyTransactionContext = {},
 ): number {
+  refreshStoredProgress();
   const reward = Math.max(0, Math.floor(amount));
   if (reward <= 0) {
     return 0;
@@ -160,6 +177,7 @@ export function spendSoulCoins(
   amount: number,
   context: EconomyTransactionContext = {},
 ): boolean {
+  refreshStoredProgress();
   const cost = Math.max(0, Math.floor(amount));
   if (progress.soulCoins < cost) {
     return false;
@@ -179,6 +197,7 @@ export function getEconomyDebugSnapshot(): Pick<GameProgress, 'soulCoins' | 'eco
 }
 
 export function addItem(itemId: string, count = 1): void {
+  refreshStoredProgress();
   const amount = Math.max(0, Math.floor(count));
   if (amount <= 0) {
     return;
@@ -189,6 +208,7 @@ export function addItem(itemId: string, count = 1): void {
 }
 
 export function consumeItem(itemId: string, count = 1): boolean {
+  refreshStoredProgress();
   const amount = Math.max(0, Math.floor(count));
   if (amount <= 0) {
     return true;
@@ -215,6 +235,7 @@ export function ownsCosmetic(cosmeticId: CosmeticId): boolean {
 }
 
 export function addCosmetic(cosmeticId: CosmeticId): void {
+  refreshStoredProgress();
   if (ownsCosmetic(cosmeticId)) {
     return;
   }
@@ -228,6 +249,7 @@ export function isTableThemeUnlocked(themeId: TableThemeId): boolean {
 }
 
 export function unlockTableTheme(themeId: TableThemeId): boolean {
+  refreshStoredProgress();
   if (isTableThemeUnlocked(themeId)) {
     return false;
   }
@@ -243,6 +265,7 @@ export function hasComplimentaryTableEntry(themeId: TableThemeId): boolean {
 }
 
 export function consumeComplimentaryTableEntry(themeId: TableThemeId): boolean {
+  refreshStoredProgress();
   const index = progress.complimentaryTableEntryThemeIds.indexOf(themeId);
   if (index < 0) {
     return false;
@@ -258,6 +281,7 @@ export function tryPurchaseTableTheme(
   coinCost: number,
   requiredFormalWins: number,
 ): TableThemePurchaseResult {
+  refreshStoredProgress();
   const cost = Math.max(0, Math.floor(coinCost));
   const requiredWins = Math.max(0, Math.floor(requiredFormalWins));
   const currentWins = progress.formalTableStats.wins;
@@ -295,6 +319,7 @@ function grantComplimentaryTableEntry(themeId: TableThemeId): void {
 }
 
 export function equipAttackEffect(cosmeticId: CosmeticId): boolean {
+  refreshStoredProgress();
   if (!ownsCosmetic(cosmeticId)) {
     return false;
   }
@@ -305,11 +330,13 @@ export function equipAttackEffect(cosmeticId: CosmeticId): boolean {
 }
 
 export function unequipAttackEffect(): void {
+  refreshStoredProgress();
   progress.equippedAttackEffect = undefined;
   saveProgress();
 }
 
 export function recordBattleResult(outcome: 'victory' | 'defeat'): void {
+  refreshStoredProgress();
   progress.stats.battlesPlayed += 1;
   if (outcome === 'victory') {
     progress.stats.wins += 1;
@@ -320,7 +347,8 @@ export function recordBattleResult(outcome: 'victory' | 'defeat'): void {
   saveProgress();
 }
 
-export function recordFormalTableResult(outcome: 'victory' | 'defeat', themeId: TableThemeId): void {
+export function recordFormalTableResult(outcome: 'victory' | 'defeat', themeId: TableThemeId, difficulty?: EntryStakeMultiplier): void {
+  refreshStoredProgress();
   progress.stats.battlesPlayed += 1;
   progress.formalTableStats.battlesPlayed += 1;
 
@@ -328,12 +356,156 @@ export function recordFormalTableResult(outcome: 'victory' | 'defeat', themeId: 
     progress.stats.wins += 1;
     progress.formalTableStats.wins += 1;
     progress.formalTableStats.winsByTheme[themeId] = (progress.formalTableStats.winsByTheme[themeId] ?? 0) + 1;
+    if (difficulty === 1 || difficulty === 2 || difficulty === 3) {
+      const wins = progress.formalTableStats.winsByThemeAndDifficulty[themeId] ??= {};
+      wins[difficulty] = (wins[difficulty] ?? 0) + 1;
+    }
   } else {
     progress.stats.losses += 1;
     progress.formalTableStats.losses += 1;
   }
 
   saveProgress();
+}
+
+/** Persist the fee and reservation together; a repeated request resumes without paying again. */
+export function reserveEndlessEntry(runId: string): EndlessEntryResult {
+  // Re-read inside the optional entry Web Lock so another tab's reservation wins.
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS[getRuntimeMode()]);
+    if (saved) progress = normalizeProgress(JSON.parse(saved));
+  } catch {
+    return { status: 'storage-unavailable', amount: 0, total: progress.soulCoins };
+  }
+  if (progress.endlessSession?.status === 'invalid') return { status: 'invalid-save', amount: 0, total: progress.soulCoins };
+  if (progress.endlessSession) {
+    return { status: 'resumed', amount: 0, total: progress.soulCoins, session: cloneEndlessSession(progress.endlessSession) };
+  }
+  if (!getEndlessUnlockProgress(progress.formalTableStats.winsByThemeAndDifficulty).unlocked) {
+    return { status: 'locked', amount: 0, total: progress.soulCoins };
+  }
+  if (progress.soulCoins < ENDLESS_CONFIG.entryCost) {
+    return { status: 'not-enough-coins', amount: 0, total: progress.soulCoins };
+  }
+  const next = cloneProgress(progress);
+  next.endlessSession = createEndlessSession(runId);
+  next.soulCoins -= ENDLESS_CONFIG.entryCost;
+  next.economyStats.totalSpent += ENDLESS_CONFIG.entryCost;
+  next.economyStats.spendingBySink.endless_entry += ENDLESS_CONFIG.entryCost;
+  next.economyTransactions.push({ timestamp: Date.now(), direction: 'expense', category: 'endless_entry',
+    amount: ENDLESS_CONFIG.entryCost, balanceAfter: next.soulCoins, runId });
+  next.economyTransactions = next.economyTransactions.slice(-100);
+  try {
+    localStorage.setItem(STORAGE_KEYS[getRuntimeMode()], JSON.stringify(next));
+  } catch {
+    return { status: 'storage-unavailable', amount: 0, total: progress.soulCoins };
+  }
+  progress = next;
+  return { status: 'created', amount: ENDLESS_CONFIG.entryCost, total: next.soulCoins,
+    session: cloneEndlessSession(next.endlessSession) };
+}
+
+export type EndlessSaveResult = { status: 'saved'; session: EndlessSession } | { status: 'busy' | 'stale' | 'invalid-save' | 'storage-unavailable' };
+// Ordinary progress writes also read the latest shared save so stale tabs cannot erase fees or payouts.
+function refreshStoredProgress(): boolean {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS[getRuntimeMode()]);
+    if (saved) progress = normalizeProgress(JSON.parse(saved));
+    return true;
+  } catch { return false; }
+}
+function commitEndlessProgress(next: GameProgress): boolean {
+  try { localStorage.setItem(STORAGE_KEYS[getRuntimeMode()], JSON.stringify(next)); }
+  catch { return false; }
+  progress = next;
+  return true;
+}
+export function claimEndlessRun(runId: string, ownerId: string, now = Date.now()): EndlessSaveResult {
+  if (!refreshStoredProgress()) return { status: 'storage-unavailable' };
+  const session = progress.endlessSession;
+  if (!session || session.runId !== runId || session.status === 'invalid') return { status: 'invalid-save' };
+  if (session.owner && session.owner.id !== ownerId && session.owner.expiresAt > now) return { status: 'busy' };
+  const next = cloneProgress(progress);
+  next.endlessSession!.owner = { id: ownerId, expiresAt: now + 15000 };
+  next.endlessSession!.revision ??= 0;
+  if (!commitEndlessProgress(next)) return { status: 'storage-unavailable' };
+  return { status: 'saved', session: cloneEndlessSession(next.endlessSession!) };
+}
+export function checkEndlessOwner(runId: string, ownerId: string, revision: number): EndlessSaveResult {
+  if (!refreshStoredProgress()) return { status: 'storage-unavailable' };
+  const session = progress.endlessSession;
+  if (!session || session.runId !== runId || session.owner?.id !== ownerId || (session.revision ?? 0) !== revision) return { status: 'stale' };
+  return { status: 'saved', session: cloneEndlessSession(session) };
+}
+export function saveEndlessBattle(runId: string, ownerId: string, revision: number, snapshot: EndlessBattleSnapshot): EndlessSaveResult {
+  const checked = checkEndlessOwner(runId, ownerId, revision);
+  if (checked.status !== 'saved') return checked;
+  if (!validEndlessSnapshot(snapshot, runId)) return { status: 'invalid-save' };
+  const next = cloneProgress(progress), session = next.endlessSession!;
+  const ledger = snapshot.ledger;
+  Object.assign(session, { snapshot: JSON.parse(JSON.stringify(snapshot)), revision: revision + 1,
+    status: snapshot.phase === 'battle-result' ? 'ended' : 'active', playerHp: snapshot.player.hp,
+    maxPlayerHp: snapshot.player.maxHp, round: snapshot.round, defeatedCount: ledger.defeats,
+    clearedSpiritCount: ledger.spirits, resonancePoints: ledger.points, spentCoins: ledger.shop.spent,
+    startingSupplyCoins: ledger.startingSupplyCoins ?? 0,
+    wallet: ledger.defeats * ENDLESS_CONFIG.coinsPerDefeat + (ledger.startingSupplyCoins ?? 0) - ledger.shop.spent, ownedItems: { ...ledger.shop.ownedItems },
+    owner: { id: ownerId, expiresAt: Date.now() + 15000 } });
+  if (!commitEndlessProgress(next)) return { status: 'storage-unavailable' };
+  return { status: 'saved', session: cloneEndlessSession(session) };
+}
+export function renewEndlessOwner(runId: string, ownerId: string): boolean {
+  if (!refreshStoredProgress() || progress.endlessSession?.runId !== runId || progress.endlessSession.owner?.id !== ownerId) return false;
+  const next = cloneProgress(progress);
+  next.endlessSession!.owner!.expiresAt = Date.now() + 15000;
+  return commitEndlessProgress(next);
+}
+export function releaseEndlessOwner(runId: string, ownerId: string): void {
+  if (!refreshStoredProgress() || progress.endlessSession?.runId !== runId || progress.endlessSession.owner?.id !== ownerId) return;
+  const next = cloneProgress(progress);
+  next.endlessSession!.owner = undefined;
+  commitEndlessProgress(next);
+}
+
+/** Receipt, payout and reservation removal commit in one storage write. */
+export function settleEndlessProgress(summary: EndlessSettlementSummary, ownerId?: string): EndlessSettlementResult {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS[getRuntimeMode()]);
+    if (saved) progress = normalizeProgress(JSON.parse(saved));
+  } catch { return { status: 'storage-unavailable' }; }
+  if (progress.lastEndlessSettlement?.runId === summary.runId) {
+    return { status: 'already-settled', receipt: { ...progress.lastEndlessSettlement } };
+  }
+  if (progress.endlessSession?.runId !== summary.runId || progress.endlessSession.entryPaid !== summary.entryPaid) {
+    return { status: 'invalid-run' };
+  }
+  const session = progress.endlessSession;
+  if (session.status === 'invalid' || session.owner && session.owner.id !== ownerId) return { status: 'invalid-run' };
+  if (session.snapshot) {
+    const saved = session.snapshot;
+    if (session.status !== 'ended' || saved.endlessEndReason !== summary.reason || saved.round !== summary.round
+      || saved.ledger.defeats !== summary.defeatedCount || saved.ledger.spirits !== summary.clearedSpiritCount
+      || saved.ledger.points !== summary.resonancePoints || saved.ledger.shop.spent !== summary.spent
+      || (saved.ledger.startingSupplyCoins ?? 0) !== (summary.startingSupplyCoins ?? 0)) return { status: 'invalid-run' };
+  }
+  const receipt = normalizeEndlessReceipt({ ...summary, settledAt: Date.now(), balanceAfter: progress.soulCoins + summary.total });
+  if (!receipt) return { status: 'invalid-run' };
+  const next = cloneProgress(progress);
+  next.soulCoins = receipt.balanceAfter;
+  next.economyStats.totalEarned += receipt.total;
+  next.economyStats.incomeBySource.endless_settlement += receipt.total;
+  next.economyTransactions.push({ timestamp: receipt.settledAt, direction: 'income', category: 'endless_settlement',
+    amount: receipt.total, balanceAfter: next.soulCoins, runId: receipt.runId });
+  next.economyTransactions = next.economyTransactions.slice(-100);
+  next.endlessSession = undefined;
+  next.lastEndlessSettlement = receipt;
+  const best = next.endlessBestScore;
+  if (!best || receipt.defeatedCount > best.defeatedCount || receipt.defeatedCount === best.defeatedCount && receipt.resonancePoints > best.resonancePoints) {
+    next.endlessBestScore = { ...receipt };
+  }
+  try { localStorage.setItem(STORAGE_KEYS[getRuntimeMode()], JSON.stringify(next)); }
+  catch { return { status: 'storage-unavailable' }; }
+  progress = next;
+  return { status: 'settled', receipt: { ...receipt } };
 }
 
 export function isStoryLevelUnlocked(levelId: string): boolean {
@@ -345,6 +517,7 @@ export function isStoryLevelCompleted(levelId: string): boolean {
 }
 
 export function unlockStoryLevel(levelId: string): void {
+  refreshStoredProgress();
   if (progress.story.unlockedLevelIds.includes(levelId)) {
     return;
   }
@@ -354,6 +527,7 @@ export function unlockStoryLevel(levelId: string): void {
 }
 
 export function completeStoryLevel(levelId: string): void {
+  refreshStoredProgress();
   if (progress.story.completedLevelIds.includes(levelId)) {
     return;
   }
@@ -364,7 +538,7 @@ export function completeStoryLevel(levelId: string): void {
 
 export function resetProgress(): void {
   progress = defaultProgressForCurrentMode();
-  saveProgress();
+  saveProgress(false);
 }
 
 function loadProgress(): GameProgress {
@@ -382,8 +556,17 @@ function loadProgress(): GameProgress {
   }
 }
 
-function saveProgress(): void {
+function saveProgress(preserveEndless = true): void {
   try {
+    if (preserveEndless) {
+      const saved = localStorage.getItem(storageKeyForCurrentMode());
+      if (saved) {
+        const current = normalizeProgress(JSON.parse(saved));
+        progress.endlessSession = current.endlessSession;
+        progress.lastEndlessSettlement = current.lastEndlessSettlement;
+        progress.endlessBestScore = current.endlessBestScore;
+      }
+    }
     localStorage.setItem(storageKeyForCurrentMode(), JSON.stringify(progress));
   } catch {
     // Saving can fail in private or embedded browser contexts.
@@ -443,6 +626,9 @@ function normalizeProgress(value: Partial<GameProgress>, defaultProgress = clone
       battlesPlayed: normalizeNumber(value.stats?.battlesPlayed, defaultProgress.stats.battlesPlayed),
     },
     formalTableStats: normalizeFormalTableStats(value.formalTableStats),
+    endlessSession: normalizeEndlessSession(value.endlessSession),
+    lastEndlessSettlement: normalizeEndlessReceipt(value.lastEndlessSettlement),
+    endlessBestScore: normalizeEndlessReceipt(value.endlessBestScore),
     economyStats: normalizeEconomyStats(value.economyStats, soulCoins),
     economyTransactions: normalizeEconomyTransactions(value.economyTransactions),
     story: normalizeStoryProgress(value.story, defaultProgress.story),
@@ -506,6 +692,7 @@ function normalizeEconomyTransactions(transactions: unknown): EconomyTransaction
       category: category as EconomyTransaction['category'],
       amount: normalizeNumber(value.amount, 0),
       balanceAfter: normalizeNumber(value.balanceAfter, 0),
+      ...(typeof value.runId === 'string' ? { runId: value.runId } : {}),
       ...(typeof value.levelId === 'string' ? { levelId: value.levelId } : {}),
       ...(TABLE_THEME_IDS.includes(value.themeId as TableThemeId) ? { themeId: value.themeId as TableThemeId } : {}),
       ...(value.stakeMultiplier === 1 || value.stakeMultiplier === 2 || value.stakeMultiplier === 3
@@ -529,7 +716,22 @@ function normalizeFormalTableStats(stats: unknown): FormalTableStats {
     losses: normalizeNumber(value.losses, defaultStats.losses),
     battlesPlayed: normalizeNumber(value.battlesPlayed, defaultStats.battlesPlayed),
     winsByTheme: normalizeWinsByTheme(value.winsByTheme),
+    winsByThemeAndDifficulty: normalizeDifficultyWins(value.winsByThemeAndDifficulty),
   };
+}
+
+function normalizeDifficultyWins(value: unknown): FormalDifficultyWins {
+  const result: FormalDifficultyWins = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
+  for (const theme of TABLE_THEME_IDS) {
+    const source = (value as Record<string, unknown>)[theme];
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    for (const difficulty of [1, 2, 3] as const) {
+      const wins = normalizeNumber((source as Record<number, unknown>)[difficulty], 0);
+      if (wins > 0) (result[theme] ??= {})[difficulty] = wins;
+    }
+  }
+  return result;
 }
 
 function normalizeWinsByTheme(winsByTheme: unknown): Partial<Record<TableThemeId, number>> {
@@ -630,6 +832,12 @@ function normalizeStoryProgress(story: unknown, defaultValue = DEFAULT_PROGRESS.
 function migrateStoryUnlocks(unlockedLevelIds: string[], completedLevelIds: string[]): string[] {
   const unlocked = new Set(unlockedLevelIds);
 
+  // Chapter one was condensed from eight required lessons to five. Preserve the
+  // furthest milestone reached by existing saves without granting later content.
+  if (completedLevelIds.includes('chapter1_2') || unlocked.has('chapter1_3')) unlocked.add('chapter1_3');
+  if (completedLevelIds.includes('chapter1_4') || unlocked.has('chapter1_6')) unlocked.add('chapter1_6');
+  if (completedLevelIds.includes('chapter1_8') || unlocked.has('chapter1_9')) unlocked.add('chapter1_9');
+
   // The removed "Heating Table" used chapter1_5. Players who had reached it
   // should now land on the new fifth level, internally still chapter1_6.
   if (unlocked.has('chapter1_5')) {
@@ -637,14 +845,21 @@ function migrateStoryUnlocks(unlockedLevelIds: string[], completedLevelIds: stri
   }
 
   CHAPTERS.forEach((chapter) => {
-    chapter.levels.forEach((level, index) => {
+    const requiredLevels = chapter.levels.filter((level) => !level.optional);
+    requiredLevels.forEach((level, index) => {
       if (!completedLevelIds.includes(level.id)) {
         return;
       }
 
-      const nextLevel = chapter.levels[index + 1];
+      const nextLevel = requiredLevels[index + 1];
       if (nextLevel) {
         unlocked.add(nextLevel.id);
+      }
+    });
+
+    chapter.levels.forEach((level) => {
+      if (level.optional && level.unlockAfterLevelId && completedLevelIds.includes(level.unlockAfterLevelId)) {
+        unlocked.add(level.id);
       }
     });
   });
@@ -667,6 +882,9 @@ function uniqueStrings(values: string[]): string[] {
 function cloneProgress(value: GameProgress): GameProgress {
   return {
     soulCoins: value.soulCoins,
+    endlessSession: value.endlessSession ? cloneEndlessSession(value.endlessSession) : undefined,
+    lastEndlessSettlement: value.lastEndlessSettlement ? { ...value.lastEndlessSettlement } : undefined,
+    endlessBestScore: value.endlessBestScore ? { ...value.endlessBestScore } : undefined,
     ownedItems: { ...value.ownedItems },
     ownedCosmetics: [...value.ownedCosmetics],
     unlockedTableThemeIds: [...value.unlockedTableThemeIds],
@@ -696,6 +914,7 @@ function cloneFormalTableStats(value: FormalTableStats): FormalTableStats {
     losses: value.losses,
     battlesPlayed: value.battlesPlayed,
     winsByTheme: { ...value.winsByTheme },
+    winsByThemeAndDifficulty: Object.fromEntries(Object.entries(value.winsByThemeAndDifficulty).map(([theme, wins]) => [theme, { ...wins }])),
   };
 }
 

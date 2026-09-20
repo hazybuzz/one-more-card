@@ -7,10 +7,12 @@ export const ECONOMY_INCOME_SOURCES = [
   'formal_victory',
   'relief',
   'pvp_victory',
+  'endless_settlement',
 ] as const;
 
 export const ECONOMY_EXPENSE_SINKS = [
   'formal_entry',
+  'endless_entry',
   'item_purchase',
   'cosmetic_purchase',
   'theme_unlock',
@@ -22,6 +24,7 @@ export type EconomyExpenseSink = typeof ECONOMY_EXPENSE_SINKS[number];
 export type EconomyCategory = EconomyIncomeSource | EconomyExpenseSink;
 
 export interface EconomyTransactionContext {
+  runId?: string;
   levelId?: string;
   themeId?: TableThemeId;
   stakeMultiplier?: EntryStakeMultiplier;

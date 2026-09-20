@@ -94,6 +94,9 @@ export function canUseBattleItemFromState(itemId: ItemId, state: BattleState): b
   if (itemId === 'cooling_charm') {
     return state.phase === 'player-turn';
   }
+  if (itemId === 'resonance_dice') {
+    return state.phase === 'player-turn' && state.player.score.resonance !== 'none';
+  }
 
   if (itemId === 'holy_shield') {
     return state.phase === 'player-turn' && state.player.shieldCharges <= 0;
@@ -204,7 +207,7 @@ function canUseAction(state: BattleState, action: BattleActionId): boolean {
 
 function createShiftSkillState(state: BattleState, inputLocked: boolean): SkillSlotState {
   const cooldown = state.player.resonanceShiftCooldown;
-  const visible = hasMechanic(state, 'skills');
+  const visible = hasMechanic(state, 'skills') && isSkillAvailable(state, 'resonance_shift');
   const canShift = state.phase === 'player-turn'
     && hasMechanic(state, 'skills')
     && !inputLocked
@@ -223,7 +226,7 @@ function createShiftSkillState(state: BattleState, inputLocked: boolean): SkillS
 
 function createSummonSkillState(state: BattleState, inputLocked: boolean): SkillSlotState {
   const cooldown = state.player.resonanceSummonCooldown;
-  const visible = hasMechanic(state, 'skills');
+  const visible = hasMechanic(state, 'skills') && isSkillAvailable(state, 'resonance_summon');
   const canSummon = state.phase === 'player-turn'
     && hasMechanic(state, 'skills')
     && !inputLocked
@@ -270,4 +273,8 @@ function hasMechanic(state: BattleState, mechanic: BattleMechanicId): boolean {
   }
 
   return state.levelConfig.unlockedMechanics.includes(mechanic);
+}
+
+function isSkillAvailable(state: BattleState, skillId: 'resonance_shift' | 'resonance_summon'): boolean {
+  return !state.availableSkills || state.availableSkills.includes(skillId);
 }

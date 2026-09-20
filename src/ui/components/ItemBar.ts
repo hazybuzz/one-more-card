@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { getBattleIconArt } from '../art';
 import { AbilitySlot } from './AbilitySlot';
+import { addTutorialGuide } from './TutorialGuide';
 
 interface ItemBarOptions {
   x: number;
@@ -21,11 +22,12 @@ interface ItemBarOptions {
   onShowTooltip?: () => void;
   onHideTooltip?: () => void;
   onOpen: () => void;
+  guided?: boolean;
 }
 
 export class ItemBar {
   static render(scene: Phaser.Scene, options: ItemBarOptions): Phaser.GameObjects.Container {
-    return new AbilitySlot(scene, {
+    const container = new AbilitySlot(scene, {
       x: options.x,
       y: options.y,
       icon: '□',
@@ -45,5 +47,9 @@ export class ItemBar {
       onHideTooltip: options.onHideTooltip,
       onActivate: options.onOpen,
     }).container;
+    if (options.guided) {
+      addTutorialGuide(scene, container, 0, 0, 66, 66);
+    }
+    return container;
   }
 }

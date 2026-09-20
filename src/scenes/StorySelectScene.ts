@@ -85,8 +85,9 @@ export class StorySelectScene extends Phaser.Scene {
       }).setOrigin(0.5);
     }
 
-    const completedCount = CHAPTER_ONE.levels.filter((level) => isStoryLevelCompleted(level.id)).length;
-    this.add.text(640, 178, t('story.progress', { completed: completedCount, total: CHAPTER_ONE.levels.length }), {
+    const requiredLevels = CHAPTER_ONE.levels.filter((level) => !level.optional);
+    const completedCount = requiredLevels.filter((level) => isStoryLevelCompleted(level.id)).length;
+    this.add.text(640, 178, t('story.progress', { completed: completedCount, total: requiredLevels.length }), {
       fontFamily: GAME_FONT_FAMILY,
       fontSize: '16px',
       color: COLORS.green,
@@ -124,7 +125,7 @@ export class StorySelectScene extends Phaser.Scene {
   }
 
   private currentLevelId(): string | undefined {
-    return CHAPTER_ONE.levels.find((level) => isStoryLevelUnlocked(level.id) && !isStoryLevelCompleted(level.id))?.id;
+    return CHAPTER_ONE.levels.find((level) => !level.optional && isStoryLevelUnlocked(level.id) && !isStoryLevelCompleted(level.id))?.id;
   }
 
   private renderLevelCard(x: number, y: number, level: LevelConfig, _index: number, current: boolean): void {

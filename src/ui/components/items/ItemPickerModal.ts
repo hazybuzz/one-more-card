@@ -5,6 +5,7 @@ import { MedievalButton } from '../MedievalButton';
 import { MedievalPanel } from '../MedievalPanel';
 import { BattleItemCard } from './BattleItemCard';
 import type { BattleItemCardState } from './BattleItemCardState';
+import { addTutorialGuide } from '../TutorialGuide';
 
 export interface ItemPickerModalOptions {
   items: BattleItemCardState[];
@@ -34,12 +35,14 @@ export interface ItemPickerModalOptions {
   onUse: (id: BattleItemCardState['id']) => void;
   onPageChange: (page: number) => void;
   onClose: () => void;
+  guideItemId?: BattleItemCardState['id'];
+  guideUseButton?: boolean;
 }
 
 const PANEL_WIDTH = 960;
 const PANEL_HEIGHT = 520;
 const CARD_WIDTH = 188;
-const CARD_HEIGHT = 282;
+const CARD_HEIGHT = 300;
 const CARD_GAP = 20;
 const DEFAULT_PAGE_SIZE = 4;
 
@@ -114,6 +117,9 @@ export class ItemPickerModal {
         }
         cardContainers.set(item.id, card);
         container.add(card);
+        if (item.id === options.guideItemId) {
+          addTutorialGuide(scene, container, card.x, card.y, CARD_WIDTH, CARD_HEIGHT);
+        }
       });
     }
 
@@ -144,6 +150,9 @@ export class ItemPickerModal {
       });
       container.add(useButton);
       footerObjects.push(useButton);
+      if (options.guideUseButton) {
+        addTutorialGuide(scene, container, -104, footerY, 184, 48);
+      }
     } else {
       const selectionHint = scene.add.text(-104, footerY, selected?.unavailableReason ?? options.selectHint, {
         fontFamily: GAME_FONT_FAMILY,

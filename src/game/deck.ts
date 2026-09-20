@@ -3,9 +3,9 @@ import { Card, RANKS, SUITS } from './card';
 export class Deck {
   private cards: Card[];
 
-  constructor() {
-    this.cards = this.createDeck();
-    this.shuffle();
+  constructor(private readonly random: () => number = Math.random, cards?: Card[]) {
+    this.cards = cards ? cards.map((card) => ({ ...card })) : this.createDeck();
+    if (!cards) this.shuffle();
   }
 
   draw(): Card {
@@ -27,6 +27,8 @@ export class Deck {
     return card;
   }
 
+  getState(): Card[] { return this.cards.map((card) => ({ ...card })); }
+
   remaining(): number {
     return this.cards.length;
   }
@@ -37,7 +39,7 @@ export class Deck {
 
   private shuffle(): void {
     for (let index = this.cards.length - 1; index > 0; index -= 1) {
-      const swapIndex = Math.floor(Math.random() * (index + 1));
+      const swapIndex = Math.floor(this.random() * (index + 1));
       [this.cards[index], this.cards[swapIndex]] = [this.cards[swapIndex], this.cards[index]];
     }
   }

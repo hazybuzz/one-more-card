@@ -1,3 +1,6 @@
+import { isEndlessBattleReady } from '../game/endless/EndlessConfig';
+import { tryEnterEndlessMode } from '../game/economy';
+import { renderEndlessEntryModal } from '../ui/components/EndlessEntryModal';
 import Phaser from 'phaser';
 import { DISPLAY_FONT_FAMILY, GAME_FONT_FAMILY } from '../ui/themes/typography';
 import { preloadCardImages } from '../game/assets';
@@ -5,7 +8,7 @@ import { playLobbyMusic, preloadLobbyMusic } from '../game/audio';
 import { getLanguage, t, toggleLanguage } from '../game/i18n';
 import { getEconomyDebugSnapshot, getProgress, resetTestProgress, switchProgressMode } from '../game/progress';
 import { getRuntimeMode, isTestMode } from '../game/runtimeMode';
-import { EVERNIGHT_BUTTON_SKIN } from '../ui/art/commonUiArt';
+import { CATALOG_LEATHER_PANEL_SKIN, EVERNIGHT_BUTTON_SKIN } from '../ui/art/commonUiArt';
 import { MedievalButton, type MedievalButtonVariant } from '../ui/components/MedievalButton';
 import { SoulCoinDisplay } from '../ui/components/SoulCoinDisplay';
 import { START_LAYOUT } from '../ui/layout/startLayout';
@@ -64,6 +67,9 @@ export class StartScene extends Phaser.Scene {
       }
     });
     SoulCoinDisplay.preload(this);
+    if (!this.textures.exists(CATALOG_LEATHER_PANEL_SKIN.textureKey)) {
+      this.load.image(CATALOG_LEATHER_PANEL_SKIN.textureKey, CATALOG_LEATHER_PANEL_SKIN.path);
+    }
     if (!this.cache.audio.exists('buttonClick')) {
       this.load.audio('buttonClick', '/audio/switch28.ogg');
     }
@@ -195,7 +201,8 @@ export class StartScene extends Phaser.Scene {
     const utilityRowWidth = layout.utilityWidth * 2 + layout.utilityGap;
     const utilityLeft = (layout.primaryWidth - utilityRowWidth) / 2;
     const secondaryTop = layout.primaryHeight + layout.rowGap;
-    const utilityTop = secondaryTop + layout.secondaryHeight + layout.rowGap;
+    const endlessTop = secondaryTop + layout.secondaryHeight + layout.rowGap;
+    const utilityTop = endlessTop + layout.secondaryHeight + layout.rowGap;
 
     menu.add(this.menuButton(primaryCenterX, layout.primaryHeight / 2, layout.primaryWidth, layout.primaryHeight, t('start.game'), () => {
       this.scene.start('TableSelectScene');
@@ -203,6 +210,10 @@ export class StartScene extends Phaser.Scene {
 
     menu.add(this.menuButton(primaryCenterX, secondaryTop + layout.secondaryHeight / 2, layout.secondaryWidth, layout.secondaryHeight, t('start.story'), () => {
       this.scene.start('StorySelectScene');
+    }, '21px', 'secondary'));
+
+    menu.add(this.menuButton(primaryCenterX, endlessTop + layout.secondaryHeight / 2, layout.secondaryWidth, layout.secondaryHeight, t('endless.title'), () => {
+      this.openEndlessEntry();
     }, '21px', 'secondary'));
 
     menu.add([
@@ -222,13 +233,37 @@ export class StartScene extends Phaser.Scene {
     }
 
     const statusLayout = START_LAYOUT.status;
-    this.statusText = this.add.text(statusLayout.centerX, statusLayout.y, '', {
+    this.statusText = this.add.text(statusLayout.centerX, statusLayout.y + (isTestMode() ? layout.secondaryHeight : 0), '', {
       fontFamily: GAME_FONT_FAMILY,
       fontSize: '17px',
       color: COLORS.accentText,
       align: 'center',
       wordWrap: { width: statusLayout.width },
     }).setOrigin(0.5);
+  }
+
+  private openEndlessEntry(): void {
+    let overlay: Phaser.GameObjects.Container;
+    let entering = false;
+    const show = (message?: string) => {
+      const current = getProgress();
+      overlay = renderEndlessEntryModal(this, {
+        wins: current.formalTableStats.winsByThemeAndDifficulty, coins: current.soulCoins,
+        battleReady: isEndlessBattleReady(getRuntimeMode()), hasSession: !!current.endlessSession, bestScore: current.endlessBestScore, message, closeLabel: t('start.endlessClose'),
+        onClose: () => { if (entering) return; this.playButtonClick(); overlay.destroy(true); },
+        onEnter: () => {
+          if (entering) return;
+          entering = true;
+          void tryEnterEndlessMode().then((result) => {
+            entering = false;
+            if (result.status === 'created' || result.status === 'resumed') {
+              this.scene.start('BattleScene', { mode: 'endless', runId: result.session.runId, seed: result.session.seed });
+            } else { overlay.destroy(true); show(t(`endless.entry.${result.status}`)); }
+          }).catch(() => { entering = false; overlay.destroy(true); show(t('endless.result.storage-unavailable')); });
+        },
+      });
+    };
+    show();
   }
 
   private renderDebugActions(): void {
@@ -295,9 +330,11 @@ export class StartScene extends Phaser.Scene {
       t('economyDebug.formalVictory', { amount: stats.incomeBySource.formal_victory }),
       t('economyDebug.relief', { amount: stats.incomeBySource.relief }),
       t('economyDebug.pvpVictory', { amount: stats.incomeBySource.pvp_victory }),
+      t('endless.debugIncome', { amount: stats.incomeBySource.endless_settlement }),
     ]));
     modal.add(this.economyDebugColumn(20, -128, t('economyDebug.expenseTitle'), [
       t('economyDebug.formalEntry', { amount: stats.spendingBySink.formal_entry }),
+      t('endless.debugEntry', { amount: stats.spendingBySink.endless_entry }),
       t('economyDebug.itemPurchase', { amount: stats.spendingBySink.item_purchase }),
       t('economyDebug.cosmeticPurchase', { amount: stats.spendingBySink.cosmetic_purchase }),
       t('economyDebug.themeUnlock', { amount: stats.spendingBySink.theme_unlock }),

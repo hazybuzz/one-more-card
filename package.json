@@ -7,7 +7,10 @@
     "dev": "vite --host 0.0.0.0",
     "pvp": "node server/pvpServer.js",
     "build": "tsc && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test tests/*.test.cjs",
+    "qa:endless:balance": "node scripts/qa/endless-balance.cjs",
+    "qa:endless:browser": "node scripts/qa/endless-browser.cjs"
   },
   "dependencies": {
     "phaser": "^3.90.0",

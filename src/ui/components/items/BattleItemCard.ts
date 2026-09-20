@@ -90,10 +90,10 @@ export class BattleItemCard {
 
     const description = scene.add.text(0, iconY + 74, state.description, {
       fontFamily: GAME_FONT_FAMILY,
-      fontSize: '13px',
+      fontSize: '15px',
       color: state.available ? CARD_COLORS.text : CARD_COLORS.muted,
       align: 'center',
-      lineSpacing: 4,
+      lineSpacing: 5,
       wordWrap: { width: width - 26, useAdvancedWrap: true },
     }).setOrigin(0.5, 0);
     const maxDescriptionBottom = height / 2 - 50;
